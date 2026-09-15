@@ -1,0 +1,11 @@
+{
+  "_comment": "开局预置贸易路线，取自《世界模拟量化规则》9.5 节（该节经技术设计文档第 9 章修订后的版本）。路线本身不进存档里的配置副本——存档只记已建立的路线，这张表是「新世界开局时建立哪些路线」的脚本。",
+  "routes": [
+    { "cityA": "aedran", "cityB": "hammerhold", "kind": "regular", "note": "双方发展度 70/65 均 ≥ 60，距离阈值放宽至 60，实际距离 45" },
+    { "cityA": "aedran", "cityB": "silvermoon_spire", "kind": "regular", "note": "距离 30 ≤ 40，双方治安 60/70 达标" },
+    { "cityA": "aedran", "cityB": "frostspeak_keep", "kind": "regular", "note": "距离 38 ≤ 40，双方治安 60/55 达标" },
+    { "cityA": "aedran", "cityB": "crossroad", "kind": "smuggling", "note": "十字路治安 20 < 40，正规不成立；艾德兰有黑市渠道，距离 30" },
+    { "cityA": "port_thorne", "cityB": "crossroad", "kind": "smuggling", "note": "十字路治安 20 < 40；距离 55 ≤ 60" },
+    { "cityA": "greenwade", "cityB": "red_sands", "kind": "smuggling", "note": "赤沙治安 30 < 40；黑市渠道在赤沙一端（9.5 节原文写作「绿荫有黑市渠道」，与 9.4 节的黑市城市名单及 cities.json 不符，已按名单取赤沙）" }
+  ]
+}

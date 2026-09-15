@@ -1,0 +1,7 @@
+# Godot 的导入缓存与编辑器状态：可重新生成，不进版本库
+.godot/
+# 系统与编辑器临时文件
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak

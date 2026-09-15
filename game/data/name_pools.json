@@ -1,0 +1,77 @@
+{
+  "_comment": "种族配置与模拟 NPC 姓名池。寿命与属性偏移取自《数值框架》2.2 节，属性偏移是「起始属性偏移」而非上限，叠加在普通成年基准 10 之上（M3.1 自由生成）。cityTendency 让城市出现明显的种族构成（绿荫多精灵、铁锤堡多矮人），这是《城市特色建筑与人口设定》里各城种族面貌的来源。populationWeight 按《城市特色建筑与人口设定》2.1 节的大陆占比定：龙裔与返魂者各不足 1%，因此权重很小，但它们仍是可玩种族。",
+  "races": [
+    {
+      "raceId": "human",
+      "displayName": "人类",
+      "playable": true,
+      "lifespan": 80,
+      "populationWeight": 0.71,
+      "attributeOffsets": {"strength": 0, "dexterity": 0, "constitution": 0, "intelligence": 0, "perception": 0, "charisma": 0, "soul": 0},
+      "givenNames": ["艾德蒙", "凯拉", "罗恩", "米拉", "塞尔", "薇拉", "阿尔文", "莉丝", "加雷斯", "诺拉", "戴伦", "伊莎", "科尔", "塔莉亚", "布兰", "赛琳娜"],
+      "familyNames": ["卡莱尔", "蒙特", "石匠", "灰堡", "河湾", "银针", "沃德", "布雷克", "霍尔", "兰斯", "索恩", "芬奇"]
+    },
+    {
+      "raceId": "elf",
+      "displayName": "精灵",
+      "playable": true,
+      "lifespan": 500,
+      "populationWeight": 0.1,
+      "attributeOffsets": {"strength": -2, "dexterity": 3, "constitution": -2, "intelligence": 2, "perception": 3, "charisma": 1, "soul": 0},
+      "givenNames": ["艾尔莎", "瑟兰", "露娜", "薇丝", "艾隆", "希雅", "洛林", "月歌", "塞莉", "伊凡", "娜瑞", "奥尔", "芙蕾雅", "星河"],
+      "familyNames": ["月影", "银叶", "晨露", "林息", "星语", "白桦", "长夜", "溪谷"]
+    },
+    {
+      "raceId": "dwarf",
+      "displayName": "矮人",
+      "playable": true,
+      "lifespan": 300,
+      "populationWeight": 0.1,
+      "attributeOffsets": {"strength": 3, "dexterity": -2, "constitution": 4, "intelligence": -1, "perception": 0, "charisma": -1, "soul": 0},
+      "givenNames": ["杜林", "布洛", "格瑞", "索林", "娜拉", "石心", "汉姆", "薇达", "巴林", "铎尔", "凯莎", "穆拉丁"],
+      "familyNames": ["铁锤", "深炉", "石须", "铜脉", "落锤", "岩盾", "黑石"]
+    },
+    {
+      "raceId": "half_orc",
+      "displayName": "半兽人",
+      "playable": true,
+      "lifespan": 60,
+      "populationWeight": 0.08,
+      "attributeOffsets": {"strength": 4, "dexterity": 0, "constitution": 3, "intelligence": -2, "perception": 0, "charisma": -3, "soul": -1},
+      "givenNames": ["格罗姆", "乌莎", "卡格", "娜什", "佐格", "姆拉", "塔克", "维格"],
+      "familyNames": ["断牙", "血斧", "战痕", "灰皮", "铁颚"]
+    },
+    {
+      "raceId": "dragonborn",
+      "displayName": "龙裔",
+      "playable": true,
+      "lifespan": 150,
+      "populationWeight": 0.005,
+      "attributeOffsets": {"strength": 2, "dexterity": 1, "constitution": 2, "intelligence": 0, "perception": 1, "charisma": -1, "soul": 2},
+      "givenNames": ["阿卡诺斯", "瑟拉丝", "巴拉贡", "伊格尼斯", "沃伦", "涅莎", "阿什兰", "格里昂", "塔洛斯", "齐拉", "奥瑞恩", "德拉贡"],
+      "familyNames": ["焰裔", "石鳞", "雷喉", "黑翼", "金鳞", "寒息", "赤爪"]
+    },
+    {
+      "raceId": "reborn",
+      "displayName": "返魂者",
+      "playable": true,
+      "lifespan": 60,
+      "lifespanNote": "种族寿命取自《数值框架》2.2 节那张表的「约 N 年」。返魂者在表上没有岁数，60 是代用基准；它「视魂力而定」这一条由 balance.lifecycle 的魂力系数承担——每个种族都吃这个系数，魂力越高活得越久。没有直译成「灵魂 ÷ 20 × 10 年」：那样 15 点魂力的返魂者只有 7 年可活，而创建期的起点年龄是 20，一个可玩种族会当场寿终。见《技术设计文档》9.12 节 D-58。",
+      "populationWeight": 0.005,
+      "attributeOffsets": {"strength": -1, "dexterity": -1, "constitution": -2, "intelligence": 2, "perception": 1, "charisma": -3, "soul": 5},
+      "givenNames": ["归尘", "残页", "忘川", "旧影", "拾遗", "夜归", "断章", "忆空", "灰烬", "复生"],
+      "familyNames": ["无姓", "失名", "遗录", "往生", "断线"]
+    }
+  ],
+  "cityTendency": {
+    "aedran": "human",
+    "port_thorne": "human",
+    "hammerhold": "dwarf",
+    "silvermoon_spire": "elf",
+    "greenwade": "elf",
+    "crossroad": "human",
+    "frostspeak_keep": "half_orc",
+    "red_sands": "half_orc"
+  },
+  "tendencyWeightMultiplier": 6.0
+}

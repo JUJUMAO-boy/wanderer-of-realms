@@ -1,0 +1,58 @@
+{
+  "_comment": "天赋与缺陷。《数值框架》7 节原表，共 5 条。当量（weight）用于创建期平衡，不影响后期成长。配对口径按《技术设计文档》8.4 节 M3.1 的验收标准（正面与负面数量相等）叠加《数值框架》7 节的平衡约束（正面总当量不得超过负面总当量）——两条同时成立才允许开局。",
+  "talents": [
+    {
+      "talentId": "iron_will",
+      "displayName": "钢铁意志",
+      "category": "talent",
+      "weight": 3,
+      "effectKind": "soul_resist",
+      "effectValue": 20,
+      "effectAttribute": "",
+      "effectText": "抗灵魂攻击 +20%"
+    },
+    {
+      "talentId": "sharp_senses",
+      "displayName": "敏锐",
+      "category": "talent",
+      "weight": 3,
+      "effectKind": "attribute",
+      "effectValue": 3,
+      "effectAttribute": "perception",
+      "effectText": "感知 +3"
+    },
+    {
+      "talentId": "frail_body",
+      "displayName": "体弱",
+      "category": "flaw",
+      "weight": -3,
+      "effectKind": "attribute",
+      "effectValue": -3,
+      "effectAttribute": "constitution",
+      "effectText": "体质 -3"
+    },
+    {
+      "talentId": "deep_in_debt",
+      "displayName": "债台高筑",
+      "category": "flaw",
+      "weight": -3,
+      "effectKind": "debt",
+      "effectValue": 500,
+      "effectAttribute": "",
+      "effectUnit": "copper",
+      "effectText": "开局负债 500 金币",
+      "effectNote": "原文写的是 500 金币，但《数值框架》9.1 节 1 金 = 10000 铜，即 5,000,000 铜；而 9.2 节一间小商铺才 200 金。对开局角色这是永不可偿的数字，货币系统会失去意义，也与本条 -3 的当量（与「敏锐 +3」同价）不相称。此处按 500 铜取值，约 5 银、约等于两把普通长剑，保住「有代价」的量级。"
+    },
+    {
+      "talentId": "blood_feud",
+      "displayName": "仇家",
+      "category": "flaw",
+      "weight": -4,
+      "effectKind": "hostile_faction",
+      "effectValue": 1,
+      "effectAttribute": "",
+      "effectText": "开局有一方势力敌对",
+      "effectNote": "势力系统属 Beta（《技术设计文档》8.3 节「明确不做」），MVP 内没有势力实体可敌对。实现上先写入一条世界标记，等势力系统接入后再消费它。"
+    }
+  ]
+}

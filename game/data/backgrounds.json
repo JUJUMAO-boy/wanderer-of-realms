@@ -1,0 +1,121 @@
+{
+  "_comment": "出身背景。名称清单来自《游戏设计文档》4.1 节「贵族、商人、农夫、孤儿、佣兵、学者、逃犯、异乡人」，但该节只列了名字，四个效果维度（起始属性、起始城市、起始债务或资源、开局人际关系网）一个数值都没给。下表把这四个维度落成字段，数值按《数值框架》9.1/9.2 节的物价标尺（1 金 = 100 银 = 10000 铜；一把普通长剑 3 银 = 300 铜）拟定，属实现期补齐，已记入《技术设计文档》9.5 节。",
+  "backgrounds": [
+    {
+      "backgroundId": "noble",
+      "displayName": "贵族",
+      "description": "生在钟鸣鼎食之家。你的姓氏替你开门，也替你树敌。",
+      "startAge": 25,
+      "initialMoney": 5000,
+      "initialItems": ["weapon_longsword_common", "armor_leather_common"],
+      "initialSkills": {"sword_slash": 21},
+      "startCityId": "aedran",
+      "startCityReputation": 10,
+      "initialDebtCopper": 0,
+      "initialRelations": [
+        {"professionId": "merchant", "relationType": "kin", "relationValue": 50, "description": "打理家族生意的堂亲"}
+      ]
+    },
+    {
+      "backgroundId": "merchant",
+      "displayName": "商人",
+      "description": "你算得清每一笔账，也因此知道有些账不该算得太清。",
+      "startAge": 30,
+      "initialMoney": 3000,
+      "initialItems": ["consumable_healing_potion", "consumable_healing_potion"],
+      "initialSkills": {},
+      "startCityId": "port_thorne",
+      "startCityReputation": 5,
+      "initialDebtCopper": 0,
+      "initialRelations": [
+        {"professionId": "merchant", "relationType": "colleague", "relationValue": 30, "description": "同行，也是债主"}
+      ]
+    },
+    {
+      "backgroundId": "farmer",
+      "displayName": "农夫",
+      "description": "你的手掌认得出每一寸土的脾气。",
+      "startAge": 22,
+      "initialMoney": 300,
+      "initialItems": ["consumable_bread", "consumable_bread"],
+      "initialSkills": {},
+      "startCityId": "",
+      "startCityReputation": 0,
+      "initialDebtCopper": 0,
+      "initialRelations": [
+        {"professionId": "farmer", "relationType": "kin", "relationValue": 60, "description": "留在村里的家人"}
+      ]
+    },
+    {
+      "backgroundId": "orphan",
+      "displayName": "孤儿",
+      "description": "没有人替你安排过什么，所以你什么都会一点，什么都不精。",
+      "startAge": 16,
+      "initialMoney": 50,
+      "initialItems": [],
+      "initialSkills": {},
+      "startCityId": "",
+      "startCityReputation": 0,
+      "initialDebtCopper": 0,
+      "initialRelations": []
+    },
+    {
+      "backgroundId": "mercenary",
+      "displayName": "佣兵",
+      "description": "你在几场记不清名字的围城战里活了下来，这就够了。",
+      "startAge": 28,
+      "initialMoney": 1200,
+      "initialItems": ["weapon_longsword_common", "armor_leather_common"],
+      "initialSkills": {"sword_slash": 21, "tech_block": 10},
+      "startCityId": "",
+      "startCityReputation": 0,
+      "initialDebtCopper": 0,
+      "initialRelations": [
+        {"professionId": "mercenary", "relationType": "colleague", "relationValue": 40, "description": "同一面旗子下的老搭档"}
+      ]
+    },
+    {
+      "backgroundId": "scholar",
+      "displayName": "学者",
+      "description": "你读过太多不该读的东西，于是知道了一些不该知道的事。",
+      "startAge": 32,
+      "initialMoney": 800,
+      "initialItems": ["consumable_mana_potion"],
+      "initialSkills": {"fire_fireball": 21},
+      "startCityId": "silvermoon_spire",
+      "startCityReputation": 5,
+      "initialDebtCopper": 0,
+      "initialRelations": [
+        {"professionId": "scholar", "relationType": "colleague", "relationValue": 35, "description": "同门的师兄弟"}
+      ]
+    },
+    {
+      "backgroundId": "outlaw",
+      "displayName": "逃犯",
+      "description": "你身上有一桩不敢声张的事，而它一直在追你。",
+      "startAge": 26,
+      "initialMoney": 200,
+      "initialItems": ["weapon_dagger_common"],
+      "initialSkills": {"sword_thrust": 21},
+      "startCityId": "crossroad",
+      "startCityReputation": -10,
+      "initialDebtCopper": 800,
+      "initialRelations": [
+        {"professionId": "guard", "relationType": "enemy", "relationValue": 50, "description": "在追你的那队人"}
+      ]
+    },
+    {
+      "backgroundId": "stranger",
+      "displayName": "异乡人",
+      "description": "你从很远的地方来，远到没有人能核实你的说法。",
+      "startAge": 24,
+      "initialMoney": 600,
+      "initialItems": ["consumable_dried_meat"],
+      "initialSkills": {},
+      "startCityId": "",
+      "startCityReputation": 0,
+      "initialDebtCopper": 0,
+      "initialRelations": []
+    }
+  ]
+}

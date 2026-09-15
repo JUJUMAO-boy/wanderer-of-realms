@@ -1,0 +1,102 @@
+{
+  "_comment": "城市事件内容表。《城市事件剧本》EV-01~08 给流程、分支与关键对白；《世界模拟量化规则》4 章给冲击量；《数值框架》10 章给触发阈值。《技术设计文档》8.5 节的内容裁剪是「城市事件 8 → 只做 EV-02」，所以这里只有一条。",
+  "_comment_branches": "分支的 changes 是**结算增量**，不是绝对值——与委托一样只描述「这一下让城市往哪动多少」（技术设计文档 D-31 的同一条理由）。封港触发时已经扣过一笔（onslaught.changes），所以讨伐的 +30 是恢复量而非白拿：净效果 0。",
+  "_comment_combat": "带战斗的分支（讨伐）另给胜负两套后果，键名 victory / defeat。它不复用委托那四种倒地处置——利维坦是巨兽，没有「生擒押回城」这回事。",
+  "events": [
+    {
+      "templateId": "ev_02_kraken_blockade",
+      "displayName": "海怪封港",
+      "scriptRef": "EV-02",
+      "cityId": "port_thorne",
+      "summary": "深海巨兽被血腥引来，封堵了港口航线，整座贸易城濒临瘫痪。",
+      "trigger": {
+        "dimension": "wealth",
+        "atLeast": 75,
+        "_comment_smell": "血腥味：该城参与的走私航线，或世界标记里的战斗痕迹。索恩港开局就有「索恩港 ↔ 十字路」这条走私航线（trade_routes.json），所以条件开局即满足——8.2 节「不需玩家先做前置任务」正指此。战斗标记不带城市（格式是 combat.<处置>.<单位>），只能按全局读，见 D-38。",
+        "smellSmugglingRoutes": 1,
+        "smellCombatFlags": 1
+      },
+      "blockade": {
+        "changes": { "wealth": -30 },
+        "haltRoutes": true,
+        "drainPerMonth": { "dimension": "wealth", "delta": -3 },
+        "text": "利维坦盘踞航道口，商船不敢进出",
+        "_comment_keys": "changes 取《世界模拟量化规则》4 章「海怪封港：财富 -30，贸易路线全断」。haltRoutes 实现为「该城航线收益中断」而非注销——「断」指航运停摆，解封即恢复，见 D-37。drainPerMonth 是剧本「财富每月下降」的落点：不管它，城会一直流血。"
+      },
+      "dialogue": [
+        "码头商（绝望地拍着栏杆）：三天了！利维坦堵在航道上，一粒盐都运不进来！再这样下去，全城都要饿死！",
+        "玩家：它怎么会突然来这里？",
+        "独眼水手（压低声音）：听说银鳞的人前阵子在外海倒了批「货」……不是货，是人和尸体。海怪是被血腥味引来的。",
+        "银鳞（在港口仓库的货箱上擦着匕首，不抬头）：找我？带够钱没有——买消息一个价，买命，另算。"
+      ],
+      "branches": [
+        {
+          "branchId": "hunt",
+          "label": "讨伐利维坦",
+          "detail": "把船开到航道口，正面打一场。赢了这个月就能解封，输了你得活着回来。",
+          "isCombat": true,
+          "outcomes": {
+            "victory": {
+              "label": "利维坦伏诛",
+              "detail": "巨兽的尸身被拖回港内，血腥味散去，航道重开。行会当众认下了你的名字。",
+              "changes": { "wealth": 30 },
+              "reputation": 8,
+              "karma": 4,
+              "flags": ["kraken_slain"],
+              "unlockRoute": {
+                "kind": "legendary",
+                "otherCity": "red_sands",
+                "note": "「传奇航线」落地为一条绕过内海的跨海直航（索恩港 ↔ 赤沙），收益高于走私、不受治安门槛约束、也不会因治安崩坏而中断。剧本只写了「解锁传奇航线」，没有说通向哪里，取赤沙是因为它是唯一与本城没有既有航线的远岸城市，见 D-39。"
+              }
+            },
+            "defeat": {
+              "label": "从雾里退回来",
+              "detail": "船被撞碎了半边，你捡回一条命。港口还是封着，什么都没变。",
+              "changes": {},
+              "reputation": -6,
+              "karma": 0,
+              "flags": ["kraken_failed"],
+              "resolved": false,
+              "_comment_resolved": "打输了**不了结**这件事：剧本写的是「港口还是封着，什么都没变」，所以封港、断航、每月流血都照旧，玩家可以整备之后再来一次（也可以改走另外两个做法）。缺省是了结，只有这里要写明。"
+            }
+          }
+        },
+        {
+          "branchId": "expose",
+          "label": "调查银鳞并揭发",
+          "detail": "顺着他倒货的水路查下去，把证据摆到行会面前。银鳞伏法，海怪失去血腥源头，自己退走。",
+          "changes": { "wealth": 15 },
+          "reputation": 6,
+          "karma": 5,
+          "flags": ["silverscale_exposed"]
+        },
+        {
+          "branchId": "deal",
+          "label": "与银鳞合作分赃",
+          "detail": "他把这批货分你一份，你替他瞒下倒货的事。港口能开，血腥味还在。",
+          "changes": { "wealth": 20 },
+          "reputation": -8,
+          "karma": -6,
+          "flags": ["silverscale_deal"],
+          "recurrence": true
+        }
+      ],
+      "combat": {
+        "label": "讨伐利维坦",
+        "detail": "一头盘踞在航道口的深海巨兽。它不是反派，只是一头被血腥引来的野兽。",
+        "opponent": {
+          "name": "利维坦",
+          "attributes": {
+            "strength": 30, "dexterity": 12, "constitution": 24,
+            "intelligence": 4, "perception": 12, "charisma": 1, "soul": 8
+          },
+          "hp": 160,
+          "maxHp": 160,
+          "armor": 10,
+          "threatLevel": 20,
+          "_comment": "初值，需实测。力量 30 → 每击约 18 点基础伤害，玩家起手血量约 60–100，所以这是一场「带够药再上」的仗；血量 160 是为了让高等级角色也要打十几个回合，而不是一击定胜负。"
+        }
+      }
+    }
+  ]
+}

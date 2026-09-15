@@ -1,0 +1,34 @@
+{
+  "_comment": "模拟 NPC 职业表。《世界模拟量化规则》11.2 列出六类职业，MVP 按 8.5 节每类取 2 至 3 个。category 是 11.3 节职业权重调制的分组键；baseWeight 是组内相对权重；citySpecialty 是该城专属高权重职业（11.3 节末）。",
+  "professions": [
+    { "professionId": "farmer", "displayName": "农夫", "category": "production", "baseWeight": 1.0 },
+    { "professionId": "miner", "displayName": "矿工", "category": "production", "baseWeight": 0.7 },
+    { "professionId": "hunter", "displayName": "猎人", "category": "production", "baseWeight": 0.6 },
+    { "professionId": "blacksmith", "displayName": "铁匠", "category": "processing", "baseWeight": 1.0 },
+    { "professionId": "baker", "displayName": "面包师", "category": "processing", "baseWeight": 1.0 },
+    { "professionId": "merchant", "displayName": "商人", "category": "commerce", "baseWeight": 1.0 },
+    { "professionId": "tavern_keeper", "displayName": "酒馆老板", "category": "commerce", "baseWeight": 0.8 },
+    { "professionId": "scholar", "displayName": "学者", "category": "knowledge", "baseWeight": 0.7 },
+    { "professionId": "priest", "displayName": "祭司", "category": "knowledge", "baseWeight": 0.8 },
+    { "professionId": "mage", "displayName": "法师", "category": "knowledge", "baseWeight": 0.6 },
+    { "professionId": "guard", "displayName": "守卫", "category": "military", "baseWeight": 1.0 },
+    { "professionId": "mercenary", "displayName": "佣兵", "category": "military", "baseWeight": 0.9 },
+    { "professionId": "thief", "displayName": "盗贼", "category": "gray", "baseWeight": 0.8 },
+    { "professionId": "beggar", "displayName": "乞丐", "category": "gray", "baseWeight": 1.0 }
+  ],
+  "citySpecialty": {
+    "aedran": "scholar",
+    "port_thorne": "merchant",
+    "hammerhold": "miner",
+    "silvermoon_spire": "mage",
+    "greenwade": "hunter",
+    "crossroad": "thief",
+    "frostspeak_keep": "guard",
+    "red_sands": "mercenary"
+  },
+  "specialtyWeightMultiplier": 4.0,
+  "positionTemplates": [
+    { "positionId": "guard_captain", "displayName": "守卫队长", "fromProfession": "guard", "countPerCity": 1 },
+    { "positionId": "high_priest", "displayName": "大祭司", "fromProfession": "priest", "countPerCity": 1 }
+  ]
+}

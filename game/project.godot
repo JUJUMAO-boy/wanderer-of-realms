@@ -1,0 +1,37 @@
+; Engine configuration file.
+; 《轮回之书》Wanderer of Realms
+;
+; 渲染方式选 gl_compatibility（OpenGL），而非 Vulkan。
+; 原因：低配机器与集显都能跑，且本作是 2D 像素，不需要 Vulkan 的渲染能力。
+
+config_version=5
+
+[application]
+
+config/name="轮回之书"
+config/description="Wanderer of Realms — 跨世代转生沙盒 RPG"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[autoload]
+
+; 顺序有意义，不能调换：
+;   ContentLoader 必须最先——它提供配置，后面两个在 _ready 里就要读。
+;   Clock 在 SaveIO 之前——存档时由 SaveIO 向 Clock 取时间。
+ContentLoader="*res://src/autoload/content_loader.gd"
+Clock="*res://src/autoload/clock.gd"
+SaveIO="*res://src/autoload/save_io.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+; 界面全部按 1280×720 的绝对坐标排布，所以缩放交给整块画布等比放大。
+; 不设 stretch/mode 时默认是 disabled——窗口拉大只是露出更多空白，控件尺寸不变。
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

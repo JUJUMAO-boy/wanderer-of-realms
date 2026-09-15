@@ -1,0 +1,491 @@
+{
+  "_comment": "委托板任务内容表。《世界模拟量化规则》10.1 给每类型的城市状态奖励（按小/中/大三档），10.2 给触发阈值，10.3 给金钱/声誉/善恶；《委托任务剧本》QT-01~06 给分支、关键对白与多世影响。",
+  "_comment_tiers": "三档的城市状态增量、金钱、声誉、善恶直接取 10.1 与 10.3 原文（报酬区间取下沿偏保守，避免委托成为唯一最优解）。",
+  "_comment_branches": "分支只给**修正系数**，叠加在生成时冻结的基准收益上（技术设计文档 D-31）。剧本里写的 +5 / -3 是叙述口径，量化口径以 10.1 为准，两者的换算关系记在 D-31。stateMultiplier 可为负：转卖公粮这类选择对城市是净损失。",
+  "_comment_flags": "flags 是短名（如 resold），写进 worldFlags 时由 QuestSystem 补成 quest.<城市>.<委托类型>.<短名>——带上城市是因为同一类委托在八座城各办各的，标记若不带城，在艾德兰办砸的修缮会让索恩港的修缮委托也变多。标记既供界面显示，也供生成侧按城读回（M4.3）。",
+  "tiers": [
+    {
+      "tierId": "small",
+      "displayName": "小委托",
+      "moneyCopper": 1000,
+      "reputationGain": 3,
+      "karmaGain": 1,
+      "deadlineMonths": 6
+    },
+    {
+      "tierId": "medium",
+      "displayName": "中委托",
+      "moneyCopper": 20000,
+      "reputationGain": 6,
+      "karmaGain": 3,
+      "deadlineMonths": 4
+    },
+    {
+      "tierId": "large",
+      "displayName": "大委托",
+      "moneyCopper": 100000,
+      "reputationGain": 10,
+      "karmaGain": 5,
+      "deadlineMonths": 3
+    }
+  ],
+  "quests": [
+    {
+      "questTypeId": "grain_supply",
+      "displayName": "运粮补给",
+      "scriptRef": "QT-01",
+      "giverLabel": "商业行会",
+      "dimension": "wealth",
+      "triggerBelow": 60,
+      "stateGain": { "small": 3, "medium": 6, "large": 10 },
+      "summary": "城中粮仓见底，需要一批粮食。路上有税卡、盗匪与时间损耗。",
+      "dialogue": [
+        "粮商（一把抓住玩家衣袖）：粮仓见底了！邻城的粮再运不来，这城里明天就有人饿肚子。",
+        "粮商（压低声音）：价钱好商量，但今晚必须出发。",
+        "玩家：路上有什么麻烦？",
+        "粮商：税卡盘剥、盗匪劫道——这年头运粮，比运金子还凶险。"
+      ],
+      "branches": [
+        {
+          "branchId": "honest",
+          "label": "老老实实运到",
+          "detail": "按约把粮送到，不赚差价。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 1.0,
+          "karmaGain": 1
+        },
+        {
+          "branchId": "resell",
+          "label": "中途转卖高价",
+          "detail": "粮在途中卖了更高的价，原城拿不到粮，反而赔了本。",
+          "stateMultiplier": -0.6,
+          "moneyMultiplier": 2.2,
+          "reputationGain": -5,
+          "karmaGain": -3,
+          "flags": ["resold"]
+        },
+        {
+          "branchId": "share",
+          "label": "把粮分给饥民",
+          "detail": "粮散给了沿途的饥民，委托人拿不到足数，但有人记得你的好。",
+          "stateMultiplier": 0.6,
+          "moneyMultiplier": 0.6,
+          "reputationGain": -2,
+          "karmaGain": 5
+        },
+        {
+          "branchId": "fake_raid",
+          "label": "与盗匪合谋假劫",
+          "detail": "演一场劫道，向委托人骗双份报酬。败露只是时间问题。",
+          "stateMultiplier": 0.0,
+          "moneyMultiplier": 2.5,
+          "reputationGain": -10,
+          "karmaGain": -3,
+          "flags": ["faked"],
+          "delayed": {
+            "months": 3,
+            "dimension": "wealth",
+            "delta": -3,
+            "text": "假劫的事在粮商之间传开了，往这座城运粮的人少了一批"
+          }
+        }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "bandit_clearance",
+      "displayName": "剿匪清剿",
+      "scriptRef": "QT-02",
+      "giverLabel": "守卫队",
+      "dimension": "security",
+      "triggerBelow": 55,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "一伙盗匪盘踞在城外要道，商旅不敢通行。需要剿灭或招安。",
+      "dialogue": [
+        "守卫队长（把悬赏令拍在桌上）：城外要道的盗匪，劫了三个商队，杀了两个镖师。",
+        "守卫队长（顿了顿）：但我劝你——先看看他们都是些什么人，再动手。",
+        "匪首（一个断了指的中年男人，苦笑着）：我们也不想当匪。可田被贵族圈了，税交不起，不落草，全家都得饿死。",
+        "玩家：那你们就劫杀过路的商旅？",
+        "匪首：……只劫过路的粮车，没杀过不该杀的人。信不信由你。"
+      ],
+      "branches": [
+        {
+          "branchId": "annihilate",
+          "label": "直接剿灭",
+          "detail": "连营地一起端掉。要道立时清净，但倒下的也有握锄头的手。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 1.0,
+          "karmaGain": -3
+        },
+        {
+          "branchId": "amnesty",
+          "label": "招安",
+          "detail": "说服他们放下刀，编入守卫队的民壮。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 0.8,
+          "reputationGain": 2,
+          "karmaGain": 3,
+          "flags": ["amnesty"]
+        },
+        {
+          "branchId": "leader_only",
+          "label": "只杀匪首",
+          "detail": "团伙散了，但余党会记得是谁动的手。",
+          "stateMultiplier": 0.6,
+          "moneyMultiplier": 0.9,
+          "karmaGain": -1,
+          "flags": ["remnant"],
+          "delayed": {
+            "months": 4,
+            "dimension": "security",
+            "delta": -4,
+            "text": "散掉的余党又聚了起来，这回盘踞在更近的地方"
+          }
+        },
+        {
+          "branchId": "protection",
+          "label": "放走并索要保护费",
+          "detail": "要道照旧不太平，只是从此有一份钱会准时送到你手上。",
+          "stateMultiplier": 0.0,
+          "moneyMultiplier": 2.2,
+          "reputationGain": -5,
+          "karmaGain": -4,
+          "flags": ["spared"],
+          "delayed": {
+            "months": 6,
+            "dimension": "security",
+            "delta": -3,
+            "text": "要道上的劫案多了起来，商队开始绕远路"
+          }
+        }
+      ],
+      "combat": {
+        "label": "带人打一场",
+        "detail": "不跟他们谈，直接带守卫队围上去。打完怎么处置，由你在战场上决定。",
+        "opponentLabel": "盗匪",
+        "outcomes": {
+          "finish": {
+            "label": "补刀清干净",
+            "detail": "一个不留。要道从此清净，血腥味也传得很远。",
+            "stateMultiplier": 1.2,
+            "moneyMultiplier": 1.2,
+            "karmaGain": -4,
+            "flags": ["massacre"]
+          },
+          "release": {
+            "label": "放他们走",
+            "detail": "收了刀，让他们自去谋生。",
+            "stateMultiplier": 0.6,
+            "moneyMultiplier": 1.0,
+            "karmaGain": 4,
+            "flags": ["spared"]
+          },
+          "capture": {
+            "label": "生擒押回城",
+            "detail": "活着交到守卫队手里，由城里的律法处置。",
+            "stateMultiplier": 0.8,
+            "moneyMultiplier": 1.0,
+            "karmaGain": 2,
+            "flags": ["captured"]
+          },
+          "search": {
+            "label": "搜身拿钱",
+            "detail": "尸体上的钱也是钱。人放走了，钱留下了。",
+            "stateMultiplier": 0.4,
+            "moneyMultiplier": 1.6,
+            "karmaGain": -2,
+            "flags": ["fleeced"]
+          },
+          "defeat": {
+            "label": "打输了",
+            "detail": "你退回了城里，要道上的匪患分毫未动。",
+            "stateMultiplier": 0.0,
+            "moneyMultiplier": 0.0,
+            "reputationGain": -6,
+            "karmaGain": 0,
+            "flags": ["failed"]
+          }
+        }
+      }
+    },
+    {
+      "questTypeId": "construction",
+      "displayName": "修缮建设",
+      "scriptRef": "QT-03",
+      "giverLabel": "工匠行会",
+      "dimension": "development",
+      "triggerBelow": 55,
+      "stateGain": { "small": 3, "medium": 6, "large": 10 },
+      "summary": "城墙、道路或公共设施年久失修，需要资金与劳力修复。",
+      "dialogue": [
+        "市政官（对着一张裂开的水渠图纸）：这段水渠再漏下去，半个城都要泡在水里。",
+        "市政官：建材、劳力、钱——我一样都缺。听说你能办成别人办不成的事？",
+        "玩家：建材从哪来？",
+        "市政官：邻城有，但路上有税卡；本地有，但贵三成；黑市也有，便宜——但你我都知道，便宜货靠不住。"
+      ],
+      "branches": [
+        {
+          "branchId": "quality",
+          "label": "用优质建材",
+          "detail": "贵，但这一段能用很多年。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 0.6,
+          "karmaGain": 1
+        },
+        {
+          "branchId": "shabby",
+          "label": "用黑市次品",
+          "detail": "省下来的钱进了你的口袋，工程能撑多久看运气。",
+          "stateMultiplier": 0.6,
+          "moneyMultiplier": 1.4,
+          "karmaGain": -1,
+          "flags": ["shabby"],
+          "delayed": {
+            "months": 3,
+            "dimension": "development",
+            "delta": -4,
+            "text": "水渠塌了一段，淹了半条街"
+          }
+        },
+        {
+          "branchId": "fraud",
+          "label": "偷工减料中饱私囊",
+          "detail": "账面做平，实际只修了三成。",
+          "stateMultiplier": 0.2,
+          "moneyMultiplier": 2.0,
+          "reputationGain": -5,
+          "karmaGain": -3,
+          "flags": ["fraud"],
+          "delayed": {
+            "months": 6,
+            "dimension": "development",
+            "delta": -5,
+            "text": "那段墙塌了，压死了两个工匠"
+          }
+        }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "scholarship",
+      "displayName": "办学传教",
+      "scriptRef": "QT-04",
+      "giverLabel": "市政厅",
+      "dimension": "culture",
+      "triggerBelow": 50,
+      "stateGain": { "small": 3, "medium": 6, "large": 10 },
+      "summary": "城市想建一所学校或神殿，需要一位有学识、有信仰的人来主持。",
+      "dialogue": [
+        "市政官（递来一份盖着蜡印的文书）：这城里的孩子，一半不识字。",
+        "市政官：我想办所学校，或者请几位讲经的来。可我请不动银月塔的学者，也请不动神殿的祭司。",
+        "玩家：为什么要建？",
+        "市政官：一座没有文字、没有信仰的城，再富，也只是一堆砖头。"
+      ],
+      "branches": [
+        {
+          "branchId": "real_scholar",
+          "label": "请正规学者或祭司",
+          "detail": "要花一大笔束修，但来的是真才学。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 0.5,
+          "karmaGain": 1
+        },
+        {
+          "branchId": "teach_self",
+          "label": "自己亲自授课",
+          "detail": "省下束修，但你得在这座城耗上一段日子。",
+          "stateMultiplier": 0.7,
+          "moneyMultiplier": 0.6,
+          "reputationGain": 3,
+          "karmaGain": 2,
+          "flags": ["self_taught"]
+        },
+        {
+          "branchId": "charlatan",
+          "label": "请来冒牌货",
+          "detail": "穿得像那么回事，开口就露怯。哄过验收再说。",
+          "stateMultiplier": 0.4,
+          "moneyMultiplier": 1.6,
+          "karmaGain": -2,
+          "flags": ["charlatan"],
+          "delayed": {
+            "months": 3,
+            "dimension": "culture",
+            "delta": -3,
+            "text": "那位「学者」在讲台上念错了经文，学堂成了笑柄"
+          }
+        }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "escort_migrants",
+      "displayName": "护送移民",
+      "scriptRef": "QT-05",
+      "giverLabel": "移民商队",
+      "dimension": "population",
+      "triggerBelow": 45,
+      "stateGain": { "small": 2, "medium": 5, "large": 8 },
+      "summary": "一群外来移民想迁入城市，需要护送他们穿越危险地带。",
+      "dialogue": [
+        "移民代表（背着半袋口粮，身后站着一列拖家带口的人）：城外那片林子，我们不敢单独过。",
+        "移民代表：送我们进城，我们认你做恩人。",
+        "玩家：你们从哪来？",
+        "移民代表：一个已经不在了的村子。剩下的，都在这里了。"
+      ],
+      "branches": [
+        {
+          "branchId": "safe",
+          "label": "安全送达",
+          "detail": "一路没出岔子，人和货都进了城。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 1.0,
+          "karmaGain": 2
+        },
+        {
+          "branchId": "give_up",
+          "label": "中途放弃",
+          "detail": "路太长，你走了。剩下的人自己想办法。",
+          "stateMultiplier": 0.2,
+          "moneyMultiplier": 0.3,
+          "reputationGain": -3,
+          "karmaGain": -3,
+          "flags": ["abandoned"]
+        },
+        {
+          "branchId": "slavers",
+          "label": "把移民卖给奴隶贩子",
+          "detail": "沙漠城出的价，比这座城给的报酬高得多。",
+          "stateMultiplier": 0.0,
+          "moneyMultiplier": 2.5,
+          "reputationGain": -10,
+          "karmaGain": -8,
+          "flags": ["sold"],
+          "delayed": {
+            "months": 6,
+            "dimension": "population",
+            "delta": -2,
+            "text": "被卖掉的移民里有人的亲属找上了门，这座城的名字被咒了很多遍"
+          }
+        }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "rebellion",
+      "displayName": "平定叛乱",
+      "scriptRef": "QT-06",
+      "giverLabel": "市政议会",
+      "dimension": "faction",
+      "triggerBelow": 40,
+      "stateGain": { "small": 3, "medium": 7, "large": 12 },
+      "summary": "多个势力发生火并，城市陷入内乱，需要有人出面平定。",
+      "dialogue": [
+        "议长（疲惫地揉着眉心）：商行、佣兵、旧贵族，三伙人火并了三天。再不停，这座城就成废墟了。",
+        "议长：谁都劝不动他们。也许，一个外人反而行。",
+        "兜帽人（在暗巷里拦住玩家，压低声音）：别急着当和事佬。这场乱子背后，有深渊教团的人。",
+        "兜帽人：他们想让这座城市烧起来，好趁乱找一样东西。"
+      ],
+      "branches": [
+        {
+          "branchId": "suppress",
+          "label": "武力镇压",
+          "detail": "把三伙人一起打服。秩序回来了，怨也结下了。",
+          "stateMultiplier": 1.0,
+          "moneyMultiplier": 1.0,
+          "karmaGain": -3,
+          "flags": ["suppressed"],
+          "delayed": {
+            "months": 6,
+            "dimension": "faction",
+            "delta": -3,
+            "text": "被镇压的势力没有死心，转入地下继续角力"
+          }
+        },
+        {
+          "branchId": "mediator",
+          "label": "调解和谈",
+          "detail": "把人按到一张桌子上谈。谈成之后，各方都欠你一分情。",
+          "stateMultiplier": 0.7,
+          "moneyMultiplier": 0.8,
+          "reputationGain": 3,
+          "karmaGain": 3,
+          "flags": ["mediated"]
+        },
+        {
+          "branchId": "patron",
+          "label": "扶持一方上位",
+          "detail": "让最听你话的那一方掌权。城是你的了——也是它的了。",
+          "stateMultiplier": 1.1,
+          "moneyMultiplier": 1.3,
+          "karmaGain": -2,
+          "flags": ["puppet"],
+          "delayed": {
+            "months": 6,
+            "dimension": "culture",
+            "delta": -2,
+            "text": "新上位的势力开始清理旧人，城里人心浮动"
+          }
+        },
+        {
+          "branchId": "profiteer",
+          "label": "坐收渔利",
+          "detail": "三家都找你买刀、买消息、买人。乱得越久，你赚得越多。",
+          "stateMultiplier": 0.4,
+          "moneyMultiplier": 2.5,
+          "reputationGain": -5,
+          "karmaGain": -5,
+          "flags": ["profiteered"]
+        }
+      ],
+      "combat": {
+        "label": "带人打一场",
+        "detail": "谁先动手就打谁。打完之后，这场乱子由你的刀说了算。",
+        "opponentLabel": "乱兵",
+        "outcomes": {
+          "finish": {
+            "label": "杀到没人敢再动",
+            "detail": "血把三家的火都压下去了，也把仇记到了你身上。",
+            "stateMultiplier": 1.2,
+            "moneyMultiplier": 1.2,
+            "karmaGain": -4,
+            "flags": ["massacre"]
+          },
+          "release": {
+            "label": "打散就算",
+            "detail": "把他们的阵型打散，各回各家。",
+            "stateMultiplier": 0.6,
+            "moneyMultiplier": 1.0,
+            "karmaGain": 3,
+            "flags": ["disbanded"]
+          },
+          "capture": {
+            "label": "擒下头目",
+            "detail": "只把领头的几个押走，剩下的人自己会散。",
+            "stateMultiplier": 0.9,
+            "moneyMultiplier": 1.1,
+            "karmaGain": 2,
+            "flags": ["leaders_captured"]
+          },
+          "search": {
+            "label": "搜刮战场",
+            "detail": "横在地上的刀、甲、钱袋，都是你的。",
+            "stateMultiplier": 0.4,
+            "moneyMultiplier": 1.6,
+            "karmaGain": -2,
+            "flags": ["fleeced"]
+          },
+          "defeat": {
+            "label": "打输了",
+            "detail": "你从乱军里退了出来，城里的火并还在继续。",
+            "stateMultiplier": 0.0,
+            "moneyMultiplier": 0.0,
+            "reputationGain": -6,
+            "karmaGain": 0,
+            "flags": ["failed"]
+          }
+        }
+      }
+    }
+  ]
+}

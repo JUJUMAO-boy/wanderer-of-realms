@@ -1,0 +1,22 @@
+{
+  "_comment": "《轮回之书》MVP 词缀表。词缀（《技术设计文档》3.3 节 ITEM_INSTANCE 的 Modifier[]）是实例特有的附加属性，挂在实例上而非模板上——模板只有一份，实例千差万别。表本身文档里完全没有：《数值框架》第 8 节只给了「附带词条数」随稀有度递增（0/1/2/3/4/5），一条词缀都没写，见技术设计文档 D-54。",
+  "_comment_targets": "每条词缀只作用在一个目标上，取值范围见 balance.itemInstance.affixPricePerPoint 的键：attack / armor / magicResist 加在装备自身的数值上，其余七个是七维，加在佩戴者身上。只做属性加成，不做「命中时灼烧」这类要改战斗管线的触发型效果——那是 8.5 节划给 Beta 的装备附魔强化。",
+  "_comment_body": "字段：affixId（主键）、displayName（界面上写什么）、target（加到哪一项）、minValue/maxValue（数值区间，闭区间）、categories（能出现在哪类装备上，取值 weapon / armor）。抽词缀时先从该类别可用的池里按等概率不重复地取，再在区间里摇一个值——同一个词缀在两件货上数值可以不同，这正是「实例各不相同」的一半来源。",
+  "_comment_values": "数值给得很小是有意的：稀有度倍率已经把基础数值拉到 ×4.0（《数值框架》8 节），词缀的职责是让同一档的两件货不一样，不是再叠一层数值通胀。武器池的单条均值约 106 铜，防具池约 139 铜，也就是精良档加一条词缀约涨一成多到两成。",
+  "affixes": [
+    { "affixId": "affix_keen", "displayName": "锋锐", "target": "attack", "minValue": 2, "maxValue": 4, "categories": ["weapon"] },
+    { "affixId": "affix_savage", "displayName": "凶烈", "target": "attack", "minValue": 3, "maxValue": 6, "categories": ["weapon"] },
+    { "affixId": "affix_precise", "displayName": "精准", "target": "dexterity", "minValue": 1, "maxValue": 3, "categories": ["weapon"] },
+    { "affixId": "affix_brutal", "displayName": "蛮力", "target": "strength", "minValue": 1, "maxValue": 3, "categories": ["weapon"] },
+
+    { "affixId": "affix_sturdy", "displayName": "坚固", "target": "armor", "minValue": 1, "maxValue": 3, "categories": ["armor"] },
+    { "affixId": "affix_warded", "displayName": "御法", "target": "magicResist", "minValue": 2, "maxValue": 5, "categories": ["armor"] },
+    { "affixId": "affix_tough", "displayName": "坚韧", "target": "constitution", "minValue": 1, "maxValue": 3, "categories": ["armor"] },
+    { "affixId": "affix_light", "displayName": "轻灵", "target": "dexterity", "minValue": 1, "maxValue": 2, "categories": ["armor"] },
+
+    { "affixId": "affix_perceptive", "displayName": "洞明", "target": "perception", "minValue": 1, "maxValue": 2, "categories": ["weapon", "armor"] },
+    { "affixId": "affix_soulbound", "displayName": "通灵", "target": "soul", "minValue": 1, "maxValue": 3, "categories": ["weapon", "armor"] },
+    { "affixId": "affix_regal", "displayName": "威仪", "target": "charisma", "minValue": 1, "maxValue": 2, "categories": ["weapon", "armor"] },
+    { "affixId": "affix_sage", "displayName": "睿智", "target": "intelligence", "minValue": 1, "maxValue": 3, "categories": ["weapon", "armor"] }
+  ]
+}
