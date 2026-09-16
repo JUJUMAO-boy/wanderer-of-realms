@@ -196,6 +196,10 @@ static func _main_menu(combat: Combat, actor: Dictionary, skill_names: Dictionar
 			var skill: Dictionary = combat.skill_def(str(skill_id))
 			if skill.is_empty():
 				continue
+			# 被动技能不是动作：它们没有 AP 消耗、不进战斗菜单（负重训练这类骨架技能
+			# 挂在 avatar.skills 里提供熟练度，但战斗里不该多出一个"施放"项）
+			if str(skill.get("category", "")) == "passive":
+				continue
 			var ap_cost: int = int(skill.get("apCost", 2))
 			var usable: bool = ap_cost <= int(actor["ap"]) \
 				and int(actor["cooldowns"].get(str(skill_id), 0)) <= 0

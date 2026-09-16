@@ -67,6 +67,7 @@ func run_all() -> int:
 	_test_hit_and_damage_formulas()
 	_test_body_part_injury()
 	_test_combat_initiative_and_ap()
+	_test_combat_encumbrance()
 	_test_combat_injury_effects()
 	_test_combat_downed_choices()
 	_test_downed_body_does_not_block_ai()
@@ -1629,6 +1630,32 @@ func _test_derived_stats_formulas() -> void:
 		and stats.time_units(dex100) < stats.time_units(plain),
 		"高敏捷单位 AP 更多、TU 更小，因此同样时间内出手次数更多")
 
+	# 负重上限（D-66）：基础 20 + STR10×3 = 50，四条来源各自叠加
+	_eq(stats.encumbrance_limit(plain, 0, 0, 0), 50, "负重上限 = 基础 20 + 力量 10×3，无加成")
+	_eq(stats.encumbrance_limit(plain, 50, 0, 0), 100, "负重训练熟练度 50 → 上限 +50")
+	_eq(stats.encumbrance_limit(plain, 0, 8, 0), 58, "装备 carryBonus +8")
+	_eq(stats.encumbrance_limit(plain, 0, 0, 15), 65, "天赋 carryBonus +15")
+
+	# 超重是渐进惩罚：不超无惩罚，超得越多越厉害，且不硬封锁
+	var none: Dictionary = stats.encumbrance_penalty(50, 50)
+	_eq(int(none["over"]), 0, "未超重：超出量为 0")
+	_eq(int(none["apPenalty"]) + int(none["movePenalty"]) + int(none["hitPenaltyBp"]) \
+		+ int(none["tuPenalty"]), 0, "未超重四个惩罚全为 0")
+	var half: Dictionary = stats.encumbrance_penalty(75, 50)
+	_eq(int(half["over"]), 25, "超重 25（50%）")
+	_eq(int(half["apPenalty"]), 1, "50% 超载 → AP −1")
+	_eq(int(half["movePenalty"]), 2, "50% 超载 → 移动 +2")
+	_eq(int(half["hitPenaltyBp"]), 750, "50% 超载 → 命中 −750 基点")
+	_eq(int(half["tuPenalty"]), 13, "50% 超载 → TU +13")
+	var full: Dictionary = stats.encumbrance_penalty(100, 50)
+	_eq(int(full["apPenalty"]), 2, "100% 超载 → AP 封顶 −2")
+	_eq(int(full["movePenalty"]), 3, "100% 超载 → 移动封顶 +3")
+	_eq(int(full["hitPenaltyBp"]), 1500, "100% 超载 → 命中封顶 −1500 基点")
+	_eq(int(full["tuPenalty"]), 25, "100% 超载 → TU 封顶 +25")
+	# 从没降到 0 的行动力证明它不是硬封锁：即使满超载，行动点仍 ≥ 1
+	var huge: Dictionary = stats.encumbrance_penalty(200, 50)
+	_eq(int(huge["apPenalty"]), 2, "远超上限也封顶不涨，留着最低行动力")
+
 
 ## 6.2 / 6.3 节：命中率、瞄准修正、加算减法伤害。
 func _test_hit_and_damage_formulas() -> void:
@@ -1727,6 +1754,37 @@ func _test_combat_initiative_and_ap() -> void:
 	_check(swung > foe_swung, "M5.1：同等时间内高敏捷出手更多（%d > %d）" % [swung, foe_swung])
 	_eq(combat.current_unit_id(), "hero", "一轮走完后回到先手单位")
 	_eq(int(combat.get_state()["round"]), 2, "已进入第 2 轮")
+
+
+## D-66：超重单位带着惩罚进场——TU 拖后、AP 变少、移动变贵、命中变低；
+## 且惩罚只落在带 encumbrance 的玩家单位上，敌人一概不受影响。
+func _test_combat_encumbrance() -> void:
+	var specs: Dictionary = _duel_encounter(40, 10)
+	specs["units"][0]["encumbrance"] = {
+		"apPenalty": 2, "movePenalty": 2, "hitPenaltyBp": 750, "tuPenalty": 13,
+	}
+	var combat: Combat = _new_combat(4004)
+	_check(bool(combat.start(specs)["ok"]), "带上超重的战斗开始成功")
+
+	var hero: Dictionary = combat.unit_by_id("hero")
+	_eq(int(hero["tu"]), 81, "DEX 40 → TU 68 + 超重 +13 = 81，行动序被拖后")
+	_eq(int(hero["ap"]), 4, "DEX 40 → 每轮 6 AP − 超重 2 = 4")
+	# DEX 10 的敌人 TU 92 > 81，所以超重的英雄仍是先手——但至少比不带超重时慢
+	_eq(combat.current_unit_id(), "hero", "TU 81 < 92，英雄仍然先手")
+
+	# 移动：腿无伤每格 1 AP + 超重 +2 = 3 AP
+	var move: Dictionary = combat.submit_action({
+		"actionType": Combat.ACTION_MOVE, "actorId": "hero", "moveTo": [0, 1],
+	})
+	_check(bool(move["ok"]), "超重时移动被接受（渐进惩罚，不硬封锁）")
+	_eq(int(hero["ap"]), 1, "超重移动一格花 3 AP（1 基础 + 2 超重）")
+
+	# 敌人没有 encumbrance，既不加 TU 也不减 AP——惩罚只落在带负担的玩家身上
+	var foe: Dictionary = combat.unit_by_id("foe")
+	_eq(int(foe["tu"]), 92, "敌人 TU 不受超重影响（缺省 0）")
+	combat.submit_action({"actionType": Combat.ACTION_END_TURN, "actorId": "hero"})
+	_eq(combat.current_unit_id(), "foe", "结束回合轮到敌人")
+	_eq(int(foe["ap"]), 4, "敌人的行动点不吃超重惩罚，仍是 DEX 10 的 4 AP")
 
 
 ## M5.3：腿部受伤让移动变贵（6.4 节「腿→降移速」）。
@@ -4273,6 +4331,10 @@ func _test_equipment_loadout() -> void:
 	# 背包里再放一把更强的剑也不影响
 	_give(avatar, "weapon_longsword_dragonforged", "lo-strong")
 	_eq(int(gear.loadout(avatar)["attack"]), 8, "背包里的龙魂长剑不算数")
+
+	# 负重（D-66）：当前负重是身上+背包全部实例的重量之和；carryBonus 只算穿的、没坏的
+	_eq(int(gear.carried_weight(avatar)), 17, "当前负重 = 6 件实例重量 3+1+5+2+3+3 之和")
+	_eq(int(gear.carry_bonus(avatar)), 8, "装备 carryBonus = 穿着的皮甲 +8")
 
 
 ## 穿在身上的货卖不掉（D-53）。界面不列它，逻辑层也再挡一道——

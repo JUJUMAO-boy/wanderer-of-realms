@@ -800,6 +800,9 @@ func _validate_balance() -> void:
 		"spBase", "spPerConstitution", "spPerStrength",
 		"powerLevelAttributeSumBase", "powerLevelAttributeDivisor",
 		"powerLevelSkillCount", "powerLevelSkillDivisor",
+		"encumbranceBase", "encumbrancePerStrength", "encumbrancePerSkillLevel",
+		"encumbranceApPenaltyMax", "encumbranceMovePenaltyMax",
+		"encumbranceHitPenaltyMaxBp", "encumbranceTuPenaltyMax",
 	],
 	"combat": [
 		"apBase", "dexPerAp", "tuBase", "tuPerDex",

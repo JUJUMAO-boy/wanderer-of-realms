@@ -283,7 +283,16 @@
     "powerLevelAttributeSumBase": 70,
     "powerLevelAttributeDivisor": 10,
     "powerLevelSkillCount": 5,
-    "powerLevelSkillDivisor": 10
+    "powerLevelSkillDivisor": 10,
+    "_comment_encumbrance": "负重上限与超重（D-66）。《数值框架》只在派生值清单里留了「负重上限」的名字，既没给公式也没给负担口径（D-51）。当前负重 = 全部物品实例（身上的 + 背包里的）模板重量之和；上限 = 基础 + 力量×每点 + 负重技能熟练度×每点 + 装备 carryBonus 之和 + 天赋 carryBonus。派生值不落盘，战斗与面板都由属性、装备与技能实时重算。",
+    "encumbranceBase": 20,
+    "encumbrancePerStrength": 3,
+    "encumbrancePerSkillLevel": 1,
+    "_comment_encumbrancePenalty": "超重为渐进惩罚（不硬封锁）：按「超出重量 / 上限」的比例放大到各档上限。超一点几乎无感、超得越多越明显，但 AP 与移动永远留着最低值。力量 10、无技能、无装备的普通人上限 50，一身制式装备加消耗品约 20–30 重量，正常不会超；带满战利品才会显形。",
+    "encumbranceApPenaltyMax": 2,
+    "encumbranceMovePenaltyMax": 3,
+    "encumbranceHitPenaltyMaxBp": 1500,
+    "encumbranceTuPenaltyMax": 25
   },
   "combat": {
     "_comment": "《数值框架》6.1–6.5 节的战斗系数。全部概率以「基点」为单位（1% = 100 基点），因为上游把 PER×0.4、DEX×0.2 这类系数写成了不定量纲的乘子，按百分点解读才是合理的量级（PER 20 → +8 个百分点），记入《技术设计文档》9.5 节。文档给公式但没给数值的项（部位惩罚幅度、眩晕概率、伤害下限）在这里补出初值。",

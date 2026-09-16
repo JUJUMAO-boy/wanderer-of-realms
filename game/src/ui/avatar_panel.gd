@@ -504,8 +504,11 @@ static func _draw_derived_section(
 		var row_y: float = y + 16.0
 		UiTheme.draw_text(canvas, font, Vector2(x, row_y),
 			str(row["label"]), UiTheme.COLOR_TEXT, UiTheme.SIZE_NORMAL)
+		# 负重超重等预警行用琥珀色提示，而不是跟普通派生值一样淡金色
+		var value_color: Color = UiTheme.COLOR_WARN if bool(row.get("warning", false)) \
+			else UiTheme.COLOR_ACCENT
 		UiTheme.draw_text_right(canvas, font, Vector2(x + width - 6.0, row_y),
-			str(row["valueLabel"]), UiTheme.COLOR_ACCENT, UiTheme.SIZE_NORMAL)
+			str(row["valueLabel"]), value_color, UiTheme.SIZE_NORMAL)
 		y += ROW_HEIGHT
 	if rows.size() > visible:
 		_overflow(canvas, font, x, y, rows.size() - visible)

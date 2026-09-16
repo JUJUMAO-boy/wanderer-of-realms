@@ -254,9 +254,16 @@ func skill_def(skill_id: String) -> Dictionary:
 	return _skills.get(skill_id, {})
 
 
-## 某单位移动一格要花多少 AP（含腿伤惩罚）。界面与实际扣费共用这一处计算。
+## 从一单位的超重惩罚里取整数项。敌人没有 encumbrance（缺省为 0），
+## 超重惩罚只作用于带着 `encumbrance` 的玩家单位。
+func _enc_int(encumbrance: Dictionary, key: String) -> int:
+	return maxi(0, int(encumbrance.get(key, 0)))
+
+
+## 某单位移动一格要花多少 AP（含腿伤与超重惩罚）。界面与实际扣费共用这一处计算。
 func unit_move_cost(unit: Dictionary) -> int:
-	return _derived.move_cost(unit["bodyParts"])
+	return _derived.move_cost(unit["bodyParts"]) \
+		+ _enc_int(unit.get("encumbrance", {}), "movePenalty")
 
 
 func unit_by_id(unit_id: String) -> Dictionary:
@@ -280,6 +287,9 @@ func _build_unit(spec: Dictionary) -> Dictionary:
 	var body_parts: Dictionary = spec.get("bodyParts", {})
 	if body_parts.is_empty():
 		body_parts = PlayerAvatar.new().body_parts
+	var encumbrance: Dictionary = spec.get("encumbrance", {})
+	if not (encumbrance is Dictionary):
+		encumbrance = {}
 	return {
 		"unitId": unit_id,
 		"name": str(spec.get("name", unit_id)),
@@ -295,9 +305,11 @@ func _build_unit(spec: Dictionary) -> Dictionary:
 		"mp": int(spec.get("mp", max_mp)),
 		"maxMp": max_mp,
 		"ap": 0,
-		"tu": _derived.time_units(attributes),
+		# 超重者更笨重：TU 变大、行动序拖后（D-66）。敌人没有 encumbrance，缺省为 0
+		"tu": _derived.time_units(attributes) + _enc_int(encumbrance, "tuPenalty"),
 		"position": Vector2i(int(position[0]), int(position[1])),
 		"bodyParts": body_parts.duplicate(true),
+		"encumbrance": encumbrance,
 		"downed": false,
 		"dead": false,
 		"stunnedTurns": 0,
@@ -366,7 +378,9 @@ func _find_next() -> void:
 				unit["stunnedTurns"] = int(unit["stunnedTurns"]) - 1
 				_push_log("  %s 处于眩晕，跳过本轮" % str(unit["name"]))
 			else:
-				unit["ap"] = _derived.action_points(unit["attributes"])
+				# 超重扣本轮行动点，但至少留 1 点能动作（渐进惩罚、不硬封锁，D-66）
+				var ap_penalty: int = _enc_int(unit.get("encumbrance", {}), "apPenalty")
+				unit["ap"] = maxi(1, _derived.action_points(unit["attributes"]) - ap_penalty)
 				return
 		turn_index += 1
 		scanned += 1
@@ -413,8 +427,9 @@ func _do_move(actor: Dictionary, action: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "INVALID_ARGUMENT", "reason": "原地不动不需要消耗行动点"}
 	if obstacles.has("%d,%d" % [target.x, target.y]):
 		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "目标格被阻挡"}
-	# 腿部受伤让每格更贵（6.4 节「腿→降移速」）
-	var cost: int = distance * _derived.move_cost(actor["bodyParts"])
+	# 腿部受伤让每格更贵（6.4 节「腿→降移速」），超重再叠一层（D-66）。
+	# 用 unit_move_cost 而不是裸 _derived.move_cost，否则超重者的移动惩罚不生效。
+	var cost: int = distance * unit_move_cost(actor)
 	if cost > int(actor["ap"]):
 		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "行动点不足：需要 %d，剩余 %d" % [
 			cost, int(actor["ap"])
@@ -479,6 +494,8 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	)
 	if not is_basic:
 		hit_bp += int(skill.get("hitBonus", 0)) * 100
+	# 超重拖累身手：闪避不开、瞄不准，直接扣命中（渐进惩罚，D-66）
+	hit_bp -= _enc_int(actor.get("encumbrance", {}), "hitPenaltyBp")
 	# 越级惩罚在派生值的钳制之后扣：它要能把命中率压到常规下限（5%）以下，
 	# 否则"打不过的东西"依旧能靠 5% 一点点磨死（13.2 节明确要挡住这种解法）
 	hit_bp -= level_gap_hit_penalty_bp(int(actor["threatLevel"]), int(target["threatLevel"]))

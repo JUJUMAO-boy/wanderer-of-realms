@@ -96,6 +96,47 @@ func time_units(attributes: Dictionary) -> int:
 	return maxi(1, roundi(raw))
 
 
+# --- 负重 ---
+
+## 负重上限（D-66）。四条来源相加：
+##   基础 + 力量×每点 + 负重技能熟练度×每点 + 装备 carryBonus（Equipment 汇总）+ 天赋 carryBonus
+## 当前负重由 Equipment.carried_weight 算出；上限在这里算，因为它是派生值，
+## 由属性、技能与装备实时重算，不落盘（《技术设计文档》3.3 节）。
+func encumbrance_limit(
+	attributes: Dictionary,
+	skill_level: int,
+	equip_carry_bonus: int = 0,
+	talent_carry_bonus: int = 0
+) -> int:
+	return _geti(_d, "encumbranceBase", 20) \
+		+ _attr(attributes, PlayerAvatar.ATTR_STRENGTH) * _geti(_d, "encumbrancePerStrength", 3) \
+		+ maxi(0, skill_level) * _geti(_d, "encumbrancePerSkillLevel", 1) \
+		+ maxi(0, equip_carry_bonus) + maxi(0, talent_carry_bonus)
+
+
+## 超重的渐进惩罚。不到上限无任何惩罚；超出重量按「超出量 / 上限」的比例放大到
+## 各档上限（AP 最多 −N、移动最多 +N、命中最多 −N 基点、TU 最多 +N），所以超得
+## 越多越明显，但不硬封锁——AP 与移动永远留着最低值。
+## 返回 { over, ratio, apPenalty, movePenalty, hitPenaltyBp, tuPenalty }。
+func encumbrance_penalty(current_weight: int, limit: int) -> Dictionary:
+	var over: int = maxi(0, current_weight - limit)
+	if over == 0:
+		return {
+			"over": 0, "ratio": 0.0,
+			"apPenalty": 0, "movePenalty": 0, "hitPenaltyBp": 0, "tuPenalty": 0,
+		}
+	# 比例封顶在 1.0：满超载即达各档上限，再超也不涨（渐进但不无限加重）。
+	var ratio: float = clampf(float(over) / float(maxi(1, limit)), 0.0, 1.0)
+	return {
+		"over": over,
+		"ratio": ratio,
+		"apPenalty": roundi(ratio * float(_geti(_d, "encumbranceApPenaltyMax", 2))),
+		"movePenalty": roundi(ratio * float(_geti(_d, "encumbranceMovePenaltyMax", 3))),
+		"hitPenaltyBp": roundi(ratio * float(_geti(_d, "encumbranceHitPenaltyMaxBp", 1500))),
+		"tuPenalty": roundi(ratio * float(_geti(_d, "encumbranceTuPenaltyMax", 25))),
+	}
+
+
 # --- 命中与暴击 ---
 
 ## 技能基础命中 = 50% + 熟练度×0.5%（5.2 节，上限 95% 由钳制负责，不在这里夹）。

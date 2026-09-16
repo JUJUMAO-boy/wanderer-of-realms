@@ -58,7 +58,8 @@ static func build(
 	lookups: Dictionary,
 	location: String = "",
 	equipment: Equipment = null,
-	cursor: int = 0
+	cursor: int = 0,
+	encumbrance: Dictionary = {}
 ) -> Dictionary:
 	if avatar == null:
 		return {}
@@ -104,6 +105,8 @@ static func build(
 		row("实力等级 PL", power),
 		row("闪避（基点）", derived.dodge_bp(effective)),
 	]
+	if not encumbrance.is_empty():
+		derived_rows.append(_encumbrance_row(encumbrance))
 
 	var talent_rows: Array = []
 	for talent_id in avatar.talents:
@@ -497,6 +500,41 @@ static func _legacy_rows(avatar: PlayerAvatar) -> Array:
 
 static func row(label: String, value: int) -> Dictionary:
 	return {"label": label, "value": value, "valueLabel": str(value)}
+
+
+## 负重这一行（D-66）：显示「当前 / 上限」，超重时置红并带上逐条的惩罚文案。
+static func _encumbrance_row(encumbrance: Dictionary) -> Dictionary:
+	var current: int = int(encumbrance.get("current", 0))
+	var limit: int = int(encumbrance.get("limit", 0))
+	var over: int = int(encumbrance.get("over", 0))
+	var value_label: String = "%d / %d" % [current, limit]
+	var warning: bool = over > 0
+	if warning:
+		value_label += " 超重"
+	var notes: Array = []
+	for part in ["apPenalty", "movePenalty", "hitPenaltyBp", "tuPenalty"]:
+		var value: int = int(encumbrance.get(part, 0))
+		if value <= 0:
+			continue
+		match part:
+			"apPenalty":
+				notes.append("行动点 −%d" % value)
+			"movePenalty":
+				notes.append("移动 +%d" % value)
+			"hitPenaltyBp":
+				notes.append("命中 −%.0f%%" % (float(value) / 100.0))
+			"tuPenalty":
+				notes.append("TU +%d" % value)
+	return {
+		"label": "负重",
+		"value": limit,
+		"valueLabel": value_label,
+		"warning": warning,
+		"over": over,
+		"current": current,
+		"limit": limit,
+		"penaltyText": " ".join(PackedStringArray(notes)),
+	}
 
 
 ## 取一张查询表。缺表不是错误——测试只关心某个字段时不必把五张表都备齐，

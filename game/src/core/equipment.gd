@@ -219,6 +219,39 @@ func summary(avatar: PlayerAvatar) -> Dictionary:
 	return loadout_value
 
 
+## 当前负重（D-66）：身上与背包里全部物品实例的模板重量之和。无论穿没穿都算
+## 在背上——"背着一背包战利品"与"穿了一身重甲"都是负担。实例在化身上，
+## 由这个函数对 item_instances 求和，不猜、不用调用方数。
+func carried_weight(avatar: PlayerAvatar) -> int:
+	if avatar == null:
+		return 0
+	var total: int = 0
+	for instance_id in avatar.item_instances:
+		var instance: Dictionary = instance_of(avatar, str(instance_id))
+		var entry_template: Dictionary = template(str(instance.get("templateId", "")))
+		total += int(entry_template.get("weight", 0))
+	return total
+
+
+## 装备带来的负重上限加成（D-66）：身上**没损坏**的装备里 carryBonus 之和。
+## 走 loadout 同一条口径——坏了的装备不算（D-63），背包里的也不算（没穿在身上
+## 就不替你减压，与 "攻击只算穿上的武器" 同一条理由 D-52）。
+func carry_bonus(avatar: PlayerAvatar) -> int:
+	if avatar == null:
+		return 0
+	var total: int = 0
+	for slot in _slots:
+		var instance_id: String = equipped_instance(avatar, str(slot))
+		if instance_id.is_empty():
+			continue
+		var instance: Dictionary = instance_of(avatar, instance_id)
+		if _rules.broken(instance):
+			continue
+		var entry_template: Dictionary = template(str(instance.get("templateId", "")))
+		total += int(entry_template.get("carryBonus", 0))
+	return total
+
+
 # --- 穿 / 脱 ---
 
 ## 穿上一件（实例 id）。返回 {ok, slot, instanceId, replaced}。

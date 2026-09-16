@@ -1956,7 +1956,8 @@ func _refresh_avatar() -> void:
 		_avatar_view = {}
 		return
 	_avatar_view = AvatarViewModel.build(
-		_world.avatar, _derived, _lookups, _location_label(), _gear, _avatar_cursor
+		_world.avatar, _derived, _lookups, _location_label(), _gear, _avatar_cursor,
+		_encumbrance(_world.avatar)
 	)
 	_avatar_cursor = int(_avatar_view.get("cursor", 0))
 
@@ -2122,7 +2123,32 @@ func _player_unit_spec(avatar: PlayerAvatar) -> Dictionary:
 		"luck": avatar.luck,
 		"position": PLAYER_SPAWN.duplicate(),
 		"threatLevel": _threat_level(attributes, avatar.skills),
+		# 超重惩罚在战斗里生效（AP/移动/命中/TU），由负重推导（D-66）
+		"encumbrance": _encumbrance(avatar),
 	}
+
+
+## 玩家的负重现状（D-66）：当前负重 + 上限 + 超重惩罚。面板显示与战斗单位
+## 都读这一份——两处各算一遍的话，"力量 +3 是不是真的拉高了上限"会分叉。
+## 上限是派生值，由属性、负重技能熟练度、装备 carryBonus、天赋 carryBonus 实时重算。
+func _encumbrance(avatar: PlayerAvatar) -> Dictionary:
+	if avatar == null:
+		return {}
+	var current: int = _gear.carried_weight(avatar)
+	var skill_level: int = int(avatar.skills.get("passive_load_bearing", 0))
+	var equip_bonus: int = _gear.carry_bonus(avatar)
+	var talent_bonus: int = 0
+	for talent_id in avatar.talents:
+		var talent: Dictionary = ContentLoader.get_talent(str(talent_id))
+		if str(talent.get("effectKind", "")) == "carry_capacity":
+			talent_bonus += int(talent.get("effectValue", 0))
+	var limit: int = _derived.encumbrance_limit(
+		avatar.attributes, skill_level, equip_bonus, talent_bonus
+	)
+	var result: Dictionary = _derived.encumbrance_penalty(current, limit)
+	result["current"] = current
+	result["limit"] = limit
+	return result
 
 
 ## 威胁等级用于掉落分档。取对手实力等级的量级，钳到 1–40 之间。

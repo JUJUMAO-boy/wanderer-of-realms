@@ -22,6 +22,17 @@
       "effectText": "感知 +3"
     },
     {
+      "talentId": "pack_rat",
+      "displayName": "健行背负",
+      "category": "talent",
+      "weight": 2,
+      "effectKind": "carry_capacity",
+      "effectValue": 15,
+      "effectAttribute": "",
+      "effectText": "负重上限 +15",
+      "effectNote": "负重一条来源（D-66）。carry_capacity 是派生值来源，不落盘：由化身带没带着这个天赋实时重算，所以 CharacterCreation 的 _apply_talent_effects 不用处理它（那里只落地 effectKind=attribute 的直接属性修正）。"
+    },
+    {
       "talentId": "frail_body",
       "displayName": "体弱",
       "category": "flaw",
