@@ -177,6 +177,12 @@ func run_all() -> int:
 	_test_level_gap_penalty()
 	_test_encounter_view_model()
 	_test_encounter_panel_hit_test()
+	print("=== 隐藏属性事件（M17）===")
+	_test_hidden_attr_clamp_band()
+	_test_hidden_trigger_and_cooldown()
+	_test_hidden_branch_apply()
+	_test_hidden_view_model()
+	_test_hidden_mark()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -5764,6 +5770,176 @@ func _stock_ids(rows: Array) -> String:
 	for row in rows:
 		ids.append(str(row.get("templateId", "")))
 	return "/".join(PackedStringArray(ids))
+
+
+# --- 隐藏属性事件（M17，D-89 ~ D-93）---
+
+## 隐藏属性的钳制与档位判定。善恶/幸运是全局、声誉按城独立，全部落在 [-100, 100]。
+func _test_hidden_attr_clamp_band() -> void:
+	var avatar := PlayerAvatar.new()
+	avatar.attributes = _plain_attributes()
+	avatar.set_karma(150)
+	_eq(avatar.karma, HiddenAttributeSystem.ATTR_MAX, "善恶越界被钳回 +100")
+	avatar.set_luck(-130)
+	_eq(avatar.luck, HiddenAttributeSystem.ATTR_MIN, "幸运越界被钳回 -100")
+	# 声誉已有自己的一套 clamp，set_reputation 走它
+	avatar.set_reputation("aedran", 200)
+	_eq(HiddenAttributeSystem.read_attr(avatar, "reputation", "aedran"), 100, "声誉越界被钳回 +100")
+	# 档位判定：极端善恶/高价幸运各落一记「业」，中道无痕
+	avatar = PlayerAvatar.new()
+	avatar.attributes = _plain_attributes()
+	_eq(HiddenAttributeSystem.reincarnation_mark_for(avatar), "", "中道不落业")
+	avatar.set_karma(60)
+	_eq(HiddenAttributeSystem.reincarnation_mark_for(avatar), HiddenAttributeSystem.MARK_GOOD, "极善落善业")
+	avatar.set_karma(-70)
+	_eq(HiddenAttributeSystem.reincarnation_mark_for(avatar), HiddenAttributeSystem.MARK_EVIL, "极恶落恶业")
+	avatar.set_karma(0)
+	avatar.set_luck(65)
+	_eq(HiddenAttributeSystem.reincarnation_mark_for(avatar), HiddenAttributeSystem.MARK_LUCK, "高价幸运落气运之业")
+	# apply_attr 就地结清并钳档
+	_eq(HiddenAttributeSystem.apply_attr(avatar, "karma", "", 200), 100, "善恶增量越界也被钳回 +100")
+
+
+## 触发判定：达标阈值 + 时机一致 + 冷却未到才触发；不达标 / 冷却到点都不触发；
+## 快进不连环（一钩子只推一件）。
+func _test_hidden_trigger_and_cooldown() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = _m17_avatar()
+	world.avatar = avatar
+	# 善恶 ≥ +60、进城查 → 圣职者的试炼
+	avatar.set_karma(80)
+	var enter_found: Dictionary = HiddenAttributeSystem.find_for_timing("enter", avatar, "aedran", world)
+	_eq(str(enter_found.get("templateId", "")), "hk_priest_trial", "极善进城触发圣职者的试炼")
+	# 幸运 ≤ -60、推进过夜查 → 厄运缠身
+	avatar.set_karma(0)
+	avatar.set_luck(-80)
+	var adv_found: Dictionary = HiddenAttributeSystem.find_for_timing("advance", avatar, "aedran", world)
+	_eq(str(adv_found.get("templateId", "")), "hl_unlucky_streak", "霉运推进触发厄运缠身")
+	# 声誉 ≥ +80、进那座城查 → 授予荣誉市民
+	avatar.set_luck(0)
+	avatar.set_reputation("aedran", 92)
+	var rep_found: Dictionary = HiddenAttributeSystem.find_for_timing("enter", avatar, "aedran", world)
+	_eq(str(rep_found.get("templateId", "")), "hr_honor_citizen", "高声望进城触发授予荣誉市民")
+	# 不够格不触发：降到阈值之下
+	avatar.set_reputation("aedran", 10)
+	_eq(HiddenAttributeSystem.find_for_timing("enter", avatar, "aedran", world).is_empty(), true,
+		"声誉不够档不触发")
+	# 冷却：触发过就不再重复（fate.<templateId> 标记）
+	avatar.set_karma(90)
+	var cfg: Dictionary = HiddenAttributeSystem.find_for_timing("enter", avatar, "greenwade", world)
+	_check(not cfg.is_empty(), "另一座城仍能触发同档善恶事件")
+	if not cfg.is_empty():
+		HiddenAttributeSystem.mark_triggered(cfg, world)
+		_eq(HiddenAttributeSystem.find_for_timing("enter", avatar, "greenwade", world).is_empty(), true,
+			"触发过冷却后同档不再弹窗")
+	# 时机不符不触发：同一属性换个钩子查不到
+	avatar.set_karma(0)
+	avatar.set_luck(0)
+	avatar.set_reputation("aedran", 95)
+	_eq(HiddenAttributeSystem.find_for_timing("advance", avatar, "aedran", world).is_empty(), true,
+		"高声望在推进钩子上不触发（那是进城的事）")
+
+
+## 分支应用：选分支后隐藏属性增删、城市维度、世界标记三者一致落账；弃选项不改属性。
+func _test_hidden_branch_apply() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = _m17_avatar()
+	world.avatar = avatar
+	var cfg: Dictionary = _m17_tpl("hk_priest_trial")
+	avatar.set_karma(90)
+	# 立誓守光：善恶 +10（钳回 100）、声誉 +2、文化 +2（城市维度请求）、种子一朵
+	var branch: Dictionary = _m17_branch(cfg, "uphold")
+	var result: Dictionary = HiddenAttributeSystem.apply_branch(
+		cfg, branch, avatar, world, "aedran", 12)
+	_eq(bool(result.get("ok", false)), true, "立誓守光落账成功")
+	_eq(avatar.karma, 100, "善恶 90 + 10 被钳回 100")
+	_eq(HiddenAttributeSystem.read_attr(avatar, "reputation", "aedran"), 2, "声誉 +2 落账")
+	_eq(int(result.get("changes", []).size()), 1, "产出一条城市维度变更（文化 +2）")
+	_check(world.world_flags.has("fate.hk_priest_trial.saint_kept"), "种子 fate.<tid>.saint_kept 落写")
+	# 拒绝不惩罚：善恶原样、无城市变更、事件以"未了"走
+	avatar = _m17_avatar()
+	world.avatar = avatar
+	avatar.set_karma(90)
+	var decline: Dictionary = _m17_branch(cfg, "decline")
+	var declined: Dictionary = HiddenAttributeSystem.apply_branch(
+		cfg, decline, avatar, world, "aedran", 12)
+	_eq(avatar.karma, 90, "婉拒不扣善恶")
+	_eq(int(declined.get("changes", []).size()), 0, "婉拒不产生城市维度变更")
+	_eq(bool(declined.get("resolved", true)), false, "婉拒以未了结束")
+	# 幅度越界时后果被钳到边界而不溢出
+	var lucky: Dictionary = HiddenAttributeSystem.apply_branch(
+		cfg, _m17_branch(cfg, "uphold"), avatar, world, "aedran", 12)
+	_eq(avatar.karma, 100, "善恶 90 + 10 无论如何不回弹过界")
+
+
+## 视图模型：产 EventPanel 能消费的同构 view（mode=Branch、rows 单件、branches 齐全）。
+func _test_hidden_view_model() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = _m17_avatar()
+	world.avatar = avatar
+	var names: Dictionary = _city_names(world)
+	var cfg: Dictionary = _m17_tpl("hl_unlucky_streak")
+	avatar.set_luck(0)
+	var view: Dictionary = HiddenEventViewModel.build(cfg, avatar, "aedran", names)
+	_eq(int(view.get("mode", 0)), HiddenEventViewModel.MODE_BRANCH, "隐藏事件直接进抉择形态")
+	_eq(int(view.get("rowCount", 0)), 1, "列表里只有这一件")
+	_eq((view.get("branches", []) as Array).size(), 3, "厄运缠身三个做法都摆出来")
+	var first: Dictionary = (view.get("branches", []) as Array)[0]
+	_check(str(first.get("effectLabel", "")).length() > 0, "选项行写了后果预览")
+	_check(str(view.get("selected", {}).get("summary", "")).length() > 0, "剧情文字带上了")
+	# 声誉事件的行侧写出"这座城记着你的名字"，供玩家从文案反推自己站到哪一档
+	var honor: Dictionary = _m17_tpl("hr_honor_citizen")
+	avatar.set_reputation("aedran", 95)
+	var honor_view: Dictionary = HiddenEventViewModel.build(honor, avatar, "aedran", names)
+	var ok: bool = str(honor_view.get("selected", {}).get("reason", "")).find("记着你的名字") >= 0
+	_check(ok, "高声望行侧写档位文案")
+
+
+## 转生「业」：极端善恶/高价幸运的落账在结果里带出 mark，供新一世开局读到。
+func _test_hidden_mark() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = _m17_avatar()
+	world.avatar = avatar
+	var cfg: Dictionary = _m17_tpl("hk_priest_trial")
+	avatar.set_karma(90)
+	var branch: Dictionary = _m17_branch(cfg, "uphold")
+	var result: Dictionary = HiddenAttributeSystem.apply_branch(
+		cfg, branch, avatar, world, "aedran", 12)
+	_eq(str(result.get("mark", "")), HiddenAttributeSystem.MARK_GOOD,
+		"善恶落账过 60 门槛后带出善业标记")
+	# 中道触发不落业：只计入属性、不写 mark
+	avatar = _m17_avatar()
+	world.avatar = avatar
+	avatar.set_luck(-95)
+	avatar.set_karma(-70)
+	var cursed: Dictionary = HiddenAttributeSystem.apply_branch(
+		cfg, _m17_branch(cfg, "uphold"), avatar, world, "aedran", 12)
+	_eq(str(cursed.get("mark", "")), HiddenAttributeSystem.MARK_EVIL, "极恶即使走的是善选项也落恶业")
+
+
+# --- 隐藏属性测试小工具 ---
+
+func _m17_avatar() -> PlayerAvatar:
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-hidden"
+	avatar.display_name = "隐藏测试"
+	avatar.attributes = _plain_attributes()
+	return avatar
+
+
+func _m17_tpl(template_id: String) -> Dictionary:
+	return ContentLoader.get_hidden_event_template(template_id)
+
+
+func _m17_branch(config: Dictionary, branch_id: String) -> Dictionary:
+	for branch in config.get("branches", []):
+		if str(branch.get("branchId", "")) == branch_id:
+			return branch
+	return {}
 
 
 ## 把一座城的六维一次设成同一个值。委托板的触发条件按维度判断，

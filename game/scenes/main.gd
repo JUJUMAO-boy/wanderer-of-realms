@@ -197,6 +197,16 @@ var _event_combat: Dictionary = {}
 var _chronicle_cursor: int = 0
 var _chronicle_view: Dictionary = {}
 
+# 隐藏属性事件（M17）。会话级、不落盘（与遭遇同一条处境）：触发瞬间转入
+# VIEW_EVENT 复用的抉择形态，选完即收场，不留事件实例在世界里。界面只持有
+# "在走哪条 config、在哪扇门（城）、光标在哪"。
+var _hidden_event: Dictionary = {}
+var _hidden_city_id: String = ""
+var _hidden_view: Dictionary = {}
+var _hidden_cursor: int = 0
+## 上一次推进检查的月份。推进过夜那一下判一次（幸运类），同月反复推进不再判。
+var _hidden_last_advance_month: int = -1
+
 # 商铺与黑市（M8）。界面只持有"在看哪座城、买还是卖、哪条渠道、光标在哪"——
 # 价格与货架每次都按当前城市状态重算，不落盘（物价随城长，存下来就会过期）。
 var _trade_city_id: String = ""
@@ -501,7 +511,10 @@ func _refresh() -> void:
 		VIEW_QUEST:
 			_refresh_quest()
 		VIEW_EVENT:
-			_refresh_event()
+			if not _hidden_event.is_empty():
+				_refresh_hidden()
+			else:
+				_refresh_event()
 		VIEW_TRADE:
 			_refresh_trade()
 		VIEW_ENCOUNTER:
@@ -2665,6 +2678,8 @@ func _encounter_advance(steps: int) -> void:
 			return
 		_last_city_id = city_id
 		_encounter_check(EncounterSystem.CONTEXT_CITY, city_id, false)
+		if _encounter.is_empty():
+			_hidden_check("enter", city_id)
 		return
 	_last_city_id = ""
 	if _silent_walk:
@@ -2884,6 +2899,149 @@ func _finish_encounter(outcome: String, detail: String) -> void:
 	_status.text = str(result.get("text", ""))
 
 
+# --- 隐藏属性事件（M17）---
+#
+# 会话级、不落盘、复用 VIEW_EVENT 的抉择形态（D-90）。三个钩子：进城（声誉/善恶
+# 类）、推进过夜（幸运类）。触发即转入 VIEW_EVENT，选完即收场，不留事件实例。
+
+## 当前钩子（timing）上有没有一条该出的隐藏事件。有就转入抉择会话；没有就安静
+## 回退——它不是每帧都要刷的一次判定，一钩子只推一件事。
+func _hidden_check(timing: String, city_id: String) -> void:
+	if _world == null or _world.avatar == null:
+		return
+	if not _hidden_event.is_empty():
+		return
+	var config: Dictionary = HiddenAttributeSystem.find_for_timing(
+		timing, _world.avatar, city_id, _world
+	)
+	if config.is_empty():
+		return
+	# 先落冷却，再进会话：触发的这件事这一世不再重复（fate.<templateId>）
+	HiddenAttributeSystem.mark_triggered(config, _world)
+	_hidden_event = config
+	_hidden_city_id = city_id
+	_hidden_cursor = 0
+	_switch_view(VIEW_EVENT)
+	_status.text = "命运在叩门：「%s」——怎么接，在你。ESC 可暂缓。" % str(
+		config.get("displayName", ""))
+
+
+func _refresh_hidden() -> void:
+	if _hidden_event.is_empty():
+		_hidden_view = {}
+		return
+	_hidden_view = HiddenEventViewModel.build(
+		_hidden_event, _world.avatar, _hidden_city_id, _table("cityNames")
+	)
+
+
+func _hidden_input(key_event: InputEventKey) -> void:
+	if _hidden_view.is_empty():
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_hidden_cursor = maxi(0, _hidden_cursor - 1)
+			_refresh()
+		KEY_DOWN, KEY_S:
+			_hidden_cursor = mini(_hidden_view.get("branches", []).size() - 1, _hidden_cursor + 1)
+			_refresh()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_hidden_confirm()
+		KEY_ESCAPE, KEY_T:
+			_finish_hidden("", "暂缓：命运还留着这一叩")
+
+
+func _hidden_click(point: Vector2) -> void:
+	var hit: Dictionary = EventPanel.hit_test(_hidden_view, PANEL_RECT, point)
+	match str(hit.get("kind", "")):
+		"button":
+			if str(hit.get("id", "")) == "cancel":
+				_finish_hidden("", "暂缓：命运还留着这一叩")
+				return
+			_finish_hidden("", "暂缓：命运还留着这一叩")
+		"branch":
+			_hidden_cursor = int(hit["index"])
+			_hidden_confirm()
+
+
+## 回车。选光标所落的做法，把后果结清进世界。
+func _hidden_confirm() -> void:
+	var branches: Array = _hidden_view.get("branches", [])
+	if branches.is_empty():
+		return
+	var branch: Dictionary = branches[clampi(_hidden_cursor, 0, branches.size() - 1)]
+	var raw_branch: Dictionary = _find_raw_branch(_hidden_event, str(branch.get("branchId", "")))
+	if raw_branch.is_empty():
+		_status.text = "这个做法还没准备好。"
+		_refresh()
+		return
+	var result: Dictionary = HiddenAttributeSystem.apply_branch(
+		_hidden_event, raw_branch, _world.avatar, _world,
+		_hidden_city_id, Clock.total_months()
+	)
+	# 城市维度是提交给 WorldSim 落账的请求，与事件模块同一分工
+	for change in result.get("changes", []):
+		_sim.apply_state_change(change)
+	# 转生「业」标记：写进 soul 的一笔，跨世作数
+	var mark: String = str(result.get("mark", ""))
+	if not mark.is_empty():
+		_apply_hidden_mark(mark)
+	_finish_hidden(str(result.get("label", "")), str(result.get("detail", "")))
+
+
+## 找 config 里 branchId 对应的原始分支。视图里的行是预览（label/effect），
+## 落账需要原始字段（karma/luck/money/changes/flags）。
+func _find_raw_branch(config: Dictionary, branch_id: String) -> Dictionary:
+	for branch in config.get("branches", []):
+		if str(branch.get("branchId", "")) == branch_id:
+			return branch
+	return {}
+
+
+## 收场：把这件事的一笔记进事件流，清会话，回地图。
+func _finish_hidden(label: String, detail: String) -> void:
+	var month: int = Clock.total_months()
+	var notices: Array = []
+	if not label.is_empty():
+		notices.append({"month": month, "text": "「%s」%s" % [
+			str(_hidden_event.get("displayName", "")), label
+		]})
+	elif not detail.is_empty():
+		notices.append({"month": month, "text": str(detail)})
+	_hidden_event = {}
+	_hidden_view = {}
+	_hidden_city_id = ""
+	_note_events(notices)
+	_switch_view(VIEW_MAP)
+	if not detail.is_empty():
+		_status.text = str(detail)
+
+
+## 把转生的「业」标记落到灵魂上（跨世作数）。当前只做最小形态：写进 soul 的
+## karmaCarry/luckCarry 之外再记一笔标记，供下一世开局读到。D-92/D-93。
+func _apply_hidden_mark(mark: String) -> void:
+	if _soul == null:
+		return
+	_soul.legacy_clues.append(mark)
+	_soul.life_archives.append({
+		"kind": "mark",
+		"mark": mark,
+		"month": Clock.total_months(),
+		"note": _mark_note(mark),
+	})
+
+
+func _mark_note(mark: String) -> String:
+	match mark:
+		HiddenAttributeSystem.MARK_GOOD:
+			return "善业加身，来世有贵人相扶"
+		HiddenAttributeSystem.MARK_EVIL:
+			return "恶业缠身，来世易遭仇家寻衅"
+		HiddenAttributeSystem.MARK_LUCK:
+			return "气运所钟，来世开局得一分吉星"
+	return "命运的痕迹"
+
+
 func _percent_bp(bp: int) -> int:
 	return int(round(float(bp) / 100.0))
 
@@ -2936,7 +3094,10 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 		VIEW_QUEST:
 			return QuestPanel.hit_test(_quest_view, PANEL_RECT, point)
 		VIEW_EVENT:
-			return EventPanel.hit_test(_event_view, PANEL_RECT, point)
+			return EventPanel.hit_test(
+				_hidden_view if not _hidden_event.is_empty() else _event_view,
+				PANEL_RECT, point
+			)
 		VIEW_TRADE:
 			return TradePanel.hit_test(_trade_view, PANEL_RECT, point)
 		VIEW_ENCOUNTER:
@@ -2965,7 +3126,10 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 		VIEW_QUEST:
 			_quest_click(event.position)
 		VIEW_EVENT:
-			_event_click(event.position)
+			if not _hidden_event.is_empty():
+				_hidden_click(event.position)
+			else:
+				_event_click(event.position)
 		VIEW_TRADE:
 			_trade_click(event.position)
 		VIEW_ENCOUNTER:
@@ -3229,7 +3393,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		VIEW_QUEST:
 			_quest_input(key_event)
 		VIEW_EVENT:
-			_event_input(key_event)
+			if not _hidden_event.is_empty():
+				_hidden_input(key_event)
+			else:
+				_event_input(key_event)
 		VIEW_TRADE:
 			_trade_input(key_event)
 		VIEW_ENCOUNTER:
@@ -3534,6 +3701,13 @@ func _move(dx: int, dy: int) -> void:
 
 func _advance_ticks(ticks: int) -> void:
 	Clock.advance(ticks)
+	# 推进过夜那一下判一次隐藏事件（幸运类）。同月已判过就不再判，
+	# 免得按一次键被同一档属性连环弹出来。
+	if _world != null and _world.avatar != null and _hidden_event.is_empty():
+		var month: int = Clock.total_months()
+		if month != _hidden_last_advance_month:
+			_hidden_last_advance_month = month
+			_hidden_check("advance", _here_city_id())
 	_refresh()
 
 
@@ -3621,7 +3795,9 @@ func _draw() -> void:
 		VIEW_QUEST:
 			QuestPanel.draw(self, _quest_view, PANEL_RECT, _hover)
 		VIEW_EVENT:
-			EventPanel.draw(self, _event_view, PANEL_RECT, _hover)
+			EventPanel.draw(self,
+				_hidden_view if not _hidden_event.is_empty() else _event_view,
+				PANEL_RECT, _hover)
 		VIEW_TRADE:
 			TradePanel.draw(self, _trade_view, PANEL_RECT, _hover)
 		VIEW_ENCOUNTER:

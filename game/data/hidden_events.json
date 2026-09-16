@@ -1,0 +1,129 @@
+{
+  "_comment": "隐藏属性事件内容表（M17，D-89~D-93）。三大类各取一例端到端：善恶（圣职者试炼）、幸运（厄运连锁）、声誉（授荣誉市民）。每种都是一次性抉择——触发 → 分支 → 后果改隐藏属性 → 留下种子 → 事件流。与《隐藏属性事件脚本》对齐，但只做不依赖外在未实现设施的代表事件。",
+  "_comment_trigger": "这里的 trigger 不看城市维度（那套属于 events.json），改看玩家的隐藏属性。时机字段说明该事件在哪个钩子上查（enter 进城 / advance 推进）。冷却写 balance.hiddenAttrs.eventCooldown。已触发过（fate.<templateId> 标记）则不再触发。",
+  "events": [
+    {
+      "templateId": "hk_priest_trial",
+      "displayName": "圣职者的试炼",
+      "scriptRef": "HA-01",
+      "kind": "karma",
+      "trigger": {
+        "attr": "karma",
+        "atLeast": 60,
+        "timing": "enter",
+        "_comment": "进任意城查。善恶够高，祭司上前搭话——不是每座城都有神殿的精细寻路，MVP 里凡是进城都算'经过有神殿的地方'，见 D-90。"
+      },
+      "summary": "祭司审视着你的灵魂：'你的灵魂带着光。神明虽已远去，但光仍在。'",
+      "dialogue": [
+        "祭司（审视）：你的灵魂带着光。神明虽已远去，但这道光没散。",
+        "玩家：要怎么验证它没有熄灭？",
+        "祭司：坚守它，直到境遇想把你的手按进泥里。"
+      ],
+      "branches": [
+        {
+          "branchId": "uphold",
+          "label": "立誓守光",
+          "detail": "你答应在机缘来临时，宁损己身也守住这份光。善恶 +10，城主看在眼中。",
+          "karma": 10,
+          "reputation": 2,
+          "changes": { "culture": 2 },
+          "flags": ["saint_kept"],
+          "_comment": "D-90：兑现为当场结清的属性与城市增量，不引入常驻 BUFF。"
+        },
+        {
+          "branchId": "decline",
+          "label": "婉拒",
+          "detail": "你谢过祭司，不愿被一条誓言拴着。这城里的试炼不再向你张开。",
+          "karma": 0,
+          "resolved": false,
+          "_comment": "拒绝不做心灵惩罚（《隐藏属性事件脚本》设计总则：允许拒绝）。"
+        }
+      ]
+    },
+    {
+      "templateId": "hl_unlucky_streak",
+      "displayName": "厄运缠身",
+      "scriptRef": "HA-02",
+      "kind": "luck",
+      "trigger": {
+        "attr": "luck",
+        "atMost": -60,
+        "timing": "advance",
+        "_comment": "推进时间时查。运气太差的人走在路上都会踩到烂摊子。"
+      },
+      "summary": "接连几件事都砸了——钱袋被扒、装备磕出豁口、路也走岔了。一股刻意般的霉运缠在你身上。",
+      "dialogue": [
+        "商贩（幸灾乐祸）：再摔一跤，孩子。运气这东西，也是会看人被疼得够不够。",
+        "你（咬牙）：这阵子邪门得不像话。"
+      ],
+      "branches": [
+        {
+          "branchId": "endure",
+          "label": "硬扛到底",
+          "detail": "加倍小心地熬过这段霉运。厄运终有尽头，触底反弹。幸运 +10，钱 -20。",
+          "luck": 10,
+          "money": -20,
+          "flags": ["bad_luck_endured"]
+        },
+        {
+          "branchId": "pray",
+          "label": "去神殿祈福",
+          "detail": "花一笔香火钱，请祭司替你挡掉霉运。幸运 +20，钱 -50。",
+          "luck": 20,
+          "money": -50,
+          "flags": ["bad_luck_prayed"]
+        },
+        {
+          "branchId": "curse",
+          "label": "把霉运转嫁给别人",
+          "detail": "你把霉运推给一个陌生人——一时痛快，后患无穷。幸运 -15，善恶 -5。",
+          "luck": -15,
+          "karma": -5,
+          "flags": ["bad_luck_cursed", "fate.curse_seed"]
+        }
+      ]
+    },
+    {
+      "templateId": "hr_honor_citizen",
+      "displayName": "授予荣誉市民",
+      "scriptRef": "HA-03",
+      "kind": "reputation",
+      "trigger": {
+        "attr": "reputation",
+        "atLeast": 80,
+        "timing": "enter",
+        "_comment": "进这座城查（声誉按城独立）。城主当面给荣誉市民的封号。"
+      },
+      "summary": "城主在广场上当着全城的面向你致意：这座城市记着你的名字。",
+      "dialogue": [
+        "城主（朗声）：这座城见过太多匆匆过客，但没忘了谁的手伸向了它。",
+        "玩家：我做的不过是些分内之事。",
+        "城主：那就让大家都记住你的名字。"
+      ],
+      "branches": [
+        {
+          "branchId": "accept",
+          "label": "接受封号",
+          "detail": "你接受荣誉市民的封号。声誉巩固，城里待你更客气。",
+          "reputation": 0,
+          "flags": ["honor_citizen"]
+        },
+        {
+          "branchId": "defer",
+          "label": "谦辞，把荣誉让给举荐者",
+          "detail": "你把这份荣誉让给真正出力的人。声誉 +5，大家更敬重你不贪功。",
+          "reputation": 5,
+          "flags": ["honor_deferred"]
+        },
+        {
+          "branchId": "leverage",
+          "label": "借机请托一件事",
+          "detail": "你用这份名声换了一件实在的回报，但城里也看清了你有求必应的一面。声誉 -10，钱 +100。",
+          "reputation": -10,
+          "money": 100,
+          "flags": ["honor_leveraged"]
+        }
+      ]
+    }
+  ]
+}

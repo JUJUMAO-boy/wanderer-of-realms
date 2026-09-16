@@ -25,6 +25,7 @@ const EVENT_FILE: String = "events.json"
 const AFFIX_FILE: String = "affixes.json"
 const MONSTER_FILE: String = "monsters.json"
 const RECIPE_FILE: String = "recipes.json"
+const HIDDEN_EVENT_FILE: String = "hidden_events.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -97,6 +98,7 @@ var _affixes: Dictionary = {}
 var _monsters: Dictionary = {}
 var _recipes: Dictionary = {}
 var _gathers: Dictionary = {}
+var _hidden_events: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -137,6 +139,7 @@ func load_all() -> Dictionary:
 	_events = {}
 	_affixes = {}
 	_monsters = {}
+	_hidden_events = {}
 	_loaded = false
 
 	# 先读 balance：城市校验要用到世界网格尺寸与六维范围
@@ -234,6 +237,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("城市事件配置为空或读取失败")
 
+	var hidden_root: Dictionary = _read_json(HIDDEN_EVENT_FILE, "隐藏属性事件配置")
+	if not hidden_root.is_empty():
+		_validate_hidden_events(hidden_root)
+		_hidden_events = hidden_root
+	else:
+		_errors.append("隐藏属性事件配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -254,6 +264,7 @@ func load_all() -> Dictionary:
 			"monsters": _monsters.get("monsters", []).size(),
 			"recipes": _recipes.get("recipes", []).size(),
 			"gathers": _gathers.get("gathers", []).size(),
+			"hiddenEvents": _hidden_events.get("events", []).size(),
 		},
 		"errors": _errors.duplicate(),
 		"warnings": _warnings.duplicate(),
@@ -733,6 +744,136 @@ func get_event_template(template_id: String) -> Dictionary:
 		if str(entry.get("templateId", "")) == template_id:
 			return entry
 	return {}
+
+
+## 隐藏属性事件配置（M17，D-89~D-93）。三属性各一例，走内容表描述，代码不写死。
+func get_hidden_event_config() -> Dictionary:
+	return _hidden_events
+
+
+## 全部隐藏属性事件模板。
+func get_hidden_events() -> Array:
+	return _hidden_events.get("events", [])
+
+
+func get_hidden_event_template(template_id: String) -> Dictionary:
+	for entry in get_hidden_events():
+		if str(entry.get("templateId", "")) == template_id:
+			return entry
+	return {}
+
+
+## 隐藏属性事件配置（M17，D-89~D-93）。
+##
+## 触发与城市事件不同：trigger 不看城市维度，改看玩家的隐藏属性（善恶/幸运/声誉）。
+## 校验的落点因此是「门槛属性能不能读到」「档位写没写反」「分支的后果幅值出不越界」：
+## 门槛词 atLeast 写成 atMost 事件永远不来；分支 karma -150 会把善恶一路压到区间外，
+## 档位判定从此失效。城市维度的增量仍走 _validate_event_changes（值非 0）。
+func _validate_hidden_events(root: Dictionary) -> void:
+	var list: Variant = root.get("events", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("隐藏属性事件配置缺少非空的 events 数组")
+		return
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "events[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("隐藏属性事件 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var template_id: String = str(config.get("templateId", ""))
+		if template_id.is_empty():
+			_errors.append("隐藏属性事件缺少字段：%s.templateId" % path)
+		elif seen.has(template_id):
+			_errors.append("隐藏属性事件 templateId 重复：%s" % template_id)
+		else:
+			seen[template_id] = true
+			path = "events[%s]" % template_id
+		if str(config.get("displayName", "")).is_empty():
+			_errors.append("隐藏属性事件缺少字段：%s.displayName" % path)
+		if str(config.get("summary", "")).is_empty():
+			_errors.append("隐藏属性事件缺少字段：%s.summary" % path)
+		var kind: String = str(config.get("kind", ""))
+		if not HiddenAttributeSystem.ALL_KINDS.has(kind):
+			_errors.append("隐藏属性事件 kind 非法：%s.kind = %s（应为 %s 之一）" % [
+				path, kind, ", ".join(PackedStringArray(HiddenAttributeSystem.ALL_KINDS))
+			])
+		var dialogue: Variant = config.get("dialogue", null)
+		if not (dialogue is Array) or (dialogue as Array).is_empty():
+			_errors.append("隐藏属性事件缺少非空的 dialogue：%s" % path)
+		_validate_hidden_trigger(config, path)
+		_validate_hidden_branches(config, path)
+
+
+## 触发段：属性门槛与时机各自查——「善恶 ≥ 60、进城时」一句话里三个词都可能写错。
+func _validate_hidden_trigger(config: Dictionary, path: String) -> void:
+	var trigger: Variant = config.get("trigger", null)
+	if not (trigger is Dictionary):
+		_errors.append("隐藏属性事件缺少 trigger：%s" % path)
+		return
+	var spec: Dictionary = trigger
+	var attr: String = str(spec.get("attr", ""))
+	if not HiddenAttributeSystem.ALL_KINDS.has(attr):
+		_errors.append("隐藏属性事件的触发属性非法：%s.trigger.attr = %s（应为 %s 之一）" % [
+			path, attr, ", ".join(PackedStringArray(HiddenAttributeSystem.ALL_KINDS))
+		])
+	var timing: String = str(spec.get("timing", ""))
+	if not HiddenAttributeSystem.ALL_TIMINGS.has(timing):
+		_errors.append("隐藏属性事件的触发时机非法：%s.trigger.timing = %s（应为 %s 之一）" % [
+			path, timing, ", ".join(PackedStringArray(HiddenAttributeSystem.ALL_TIMINGS))
+		])
+	# 至少一个门槛词：atLeast 或 atMost 写反、或两处都漏，事件的触发就会静默失效
+	for key in ["atLeast", "atMost"]:
+		if spec.has(key):
+			var value: int = int(spec.get(key, 0))
+			if value < HiddenAttributeSystem.ATTR_MIN or value > HiddenAttributeSystem.ATTR_MAX:
+				_errors.append("隐藏属性事件的触发门槛越界（%d-%d）：%s.trigger.%s = %d" % [
+					HiddenAttributeSystem.ATTR_MIN, HiddenAttributeSystem.ATTR_MAX, path, key, value
+				])
+	if not spec.has("atLeast") and not spec.has("atMost"):
+		_errors.append("隐藏属性事件的 trigger 缺少门槛词（atLeast 或 atMost）：%s" % path)
+
+
+## 分支。每条各给一套后果，幅值都钳在三人属性的范围内。
+func _validate_hidden_branches(config: Dictionary, path: String) -> void:
+	var branches: Variant = config.get("branches", null)
+	if not (branches is Array) or (branches as Array).is_empty():
+		_errors.append("隐藏属性事件缺少非空的 branches：%s" % path)
+		return
+	var seen: Dictionary = {}
+	for i in range((branches as Array).size()):
+		var bpath: String = "%s.branches[%d]" % [path, i]
+		var entry: Variant = (branches as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("隐藏属性事件分支 %s 必须是对象" % bpath)
+			continue
+		var branch: Dictionary = entry
+		var branch_id: String = str(branch.get("branchId", ""))
+		if branch_id.is_empty():
+			_errors.append("隐藏属性事件分支缺少字段：%s.branchId" % bpath)
+		elif seen.has(branch_id):
+			_errors.append("隐藏属性事件分支重复：%s.%s" % [path, branch_id])
+		else:
+			seen[branch_id] = true
+			bpath = "%s.branches[%s]" % [path, branch_id]
+		if str(branch.get("label", "")).is_empty():
+			_errors.append("隐藏属性事件分支缺少选项文字：%s.label" % bpath)
+		# 后果的幅值不越界：单次改动比区间还宽，说明配置写反了符号或漏了负号
+		for key in ["karma", "luck", "reputation"]:
+			if not branch.has(key):
+				continue
+			var delta: int = int(branch.get(key, 0))
+			if delta < HiddenAttributeSystem.ATTR_MIN or delta > HiddenAttributeSystem.ATTR_MAX:
+				_errors.append("隐藏属性事件分支后果越界（%d-%d）：%s.%s = %d" % [
+					HiddenAttributeSystem.ATTR_MIN, HiddenAttributeSystem.ATTR_MAX, bpath, key, delta
+				])
+		if branch.has("changes"):
+			_validate_event_changes(branch["changes"], "%s.changes" % bpath)
+		if branch.has("flags") and not (branch["flags"] is Array):
+			_errors.append("隐藏属性事件分支的 flags 必须是数组：%s.flags" % bpath)
+		if branch.has("resolved") and not (branch["resolved"] is bool):
+			_errors.append("隐藏属性事件分支的 resolved 必须是布尔：%s.resolved" % bpath)
 
 
 ## 可玩种族（name_pools.json 里 playable 为 true 的）。M3.1 自由生成的可选范围。

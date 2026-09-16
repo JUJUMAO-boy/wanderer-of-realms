@@ -49,6 +49,12 @@ const GENDER_DEFAULT: String = GENDER_FEMALE
 const REPUTATION_MIN: int = -100
 const REPUTATION_MAX: int = 100
 
+## 善恶/幸运的取值范围（同《数值框架》3.3 节：-100~+100）。写入要钳制：档位判定
+## （善恶 ±60、幸运 +60）全按区间取，跌破范围就读不到有效档；越界也压不住 Marker
+## 的极端惩罚（详见 hidden_attribute_system.gd）。
+const HIDDEN_ATTR_MIN: int = -100
+const HIDDEN_ATTR_MAX: int = 100
+
 var avatar_id: String = ""
 var soul_id: String = ""
 var display_name: String = ""
@@ -121,6 +127,16 @@ func set_reputation(city_id: String, value: int) -> void:
 	city_reputation[city_id] = clampi(value, REPUTATION_MIN, REPUTATION_MAX)
 
 
+## 善恶/幸运的钳制写入（M17）。档位判定按 [-100, 100] 取，跌出范围就读不到档位，
+## 与 set_reputation 同一套道理。所有改这两项的落账路径都应过这里。
+func set_karma(value: int) -> void:
+	karma = clampi(value, HIDDEN_ATTR_MIN, HIDDEN_ATTR_MAX)
+
+
+func set_luck(value: int) -> void:
+	luck = clampi(value, HIDDEN_ATTR_MIN, HIDDEN_ATTR_MAX)
+
+
 func to_dict() -> Dictionary:
 	return {
 		"avatarId": avatar_id,
@@ -165,8 +181,8 @@ static func from_dict(data: Dictionary) -> PlayerAvatar:
 	a.host_avatar_id = str(data.get("hostAvatarId", ""))
 	for attr in ALL_ATTRIBUTES:
 		a.attributes[attr] = int(data.get("attributes", {}).get(attr, 10))
-	a.karma = int(data.get("karma", 0))
-	a.luck = int(data.get("luck", 0))
+	a.karma = clampi(int(data.get("karma", 0)), HIDDEN_ATTR_MIN, HIDDEN_ATTR_MAX)
+	a.luck = clampi(int(data.get("luck", 0)), HIDDEN_ATTR_MIN, HIDDEN_ATTR_MAX)
 	a.city_reputation = _int_dict(data.get("cityReputation", {}))
 	a.skills = _int_dict(data.get("skills", {}))
 	for t in data.get("talents", []):
