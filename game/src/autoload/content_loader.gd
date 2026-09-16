@@ -11,6 +11,7 @@ extends Node
 
 const DATA_DIR: String = "res://data/"
 const CITY_FILE: String = "cities.json"
+const BUILDING_FILE: String = "buildings.json"
 const BALANCE_FILE: String = "balance.json"
 const PROFESSION_FILE: String = "professions.json"
 const NAME_POOL_FILE: String = "name_pools.json"
@@ -73,6 +74,7 @@ const MONSTER_PARLEYABLE_CATEGORY: String = "humanoid"
 const SKILL_LEVEL_MAX: int = 100
 
 var _city_configs: Array = []
+var _buildings: Array = []
 var _balance: Dictionary = {}
 var _professions: Dictionary = {}
 var _name_pools: Dictionary = {}
@@ -94,8 +96,8 @@ func _ready() -> void:
 	var report: Dictionary = load_all()
 	if report.get("ok", false):
 		var loaded: Dictionary = report.get("loaded", {})
-		print("[ContentLoader] 配置装载完成：城市 %d 座，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个" % [
-			_city_configs.size(), _balance.size(), int(loaded.get("professions", 0)),
+		print("[ContentLoader] 配置装载完成：城市 %d 座，建筑 %d 个，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个" % [
+			_city_configs.size(), _buildings.size(), _balance.size(), int(loaded.get("professions", 0)),
 			int(loaded.get("races", 0)), _trade_routes.size(),
 			int(loaded.get("skills", 0)), int(loaded.get("items", 0)),
 			int(loaded.get("affixes", 0)), int(loaded.get("monsters", 0)),
@@ -138,6 +140,13 @@ func load_all() -> Dictionary:
 		_validate_cities(cities_root)
 	else:
 		_errors.append("城市配置为空或读取失败")
+
+	# 城市建筑：先于其余校验，cities 引用要交叉检查（城市必须存在、建筑 cityId 必须匹配）
+	var building_root: Dictionary = _read_json(BUILDING_FILE, "城市建筑配置")
+	if not building_root.is_empty():
+		_validate_buildings(building_root)
+	else:
+		_errors.append("城市建筑配置为空或读取失败")
 
 	# 职业与姓名池：先于预置路线校验，后者要用到城市列表
 	var profession_root: Dictionary = _read_json(PROFESSION_FILE, "职业配置")
@@ -212,6 +221,7 @@ func load_all() -> Dictionary:
 		"ok": _loaded,
 		"loaded": {
 			"cities": _city_configs.size(),
+			"buildings": _buildings.size(),
 			"balanceSections": _balance.size(),
 			"professions": _professions.get("professions", []).size(),
 			"races": _name_pools.get("races", []).size(),
@@ -260,6 +270,28 @@ func get_city_config(city_id: String) -> Dictionary:
 		if str(cfg.get("cityId", "")) == city_id:
 			return cfg
 	return {}
+
+
+func get_building_configs() -> Array:
+	return _buildings
+
+
+func get_building_config(building_id: String) -> Dictionary:
+	for cfg in _buildings:
+		if str(cfg.get("buildingId", "")) == building_id:
+			return cfg
+	return {}
+
+
+## 某城的建筑 id 列表，按配置次序。来自 cities.json 的 buildings 引用。
+func get_city_building_ids(city_id: String) -> Array:
+	for cfg in _city_configs:
+		if str(cfg.get("cityId", "")) == city_id:
+			var out: Array = []
+			for bid in cfg.get("buildings", []):
+				out.append(str(bid))
+			return out
+	return []
 
 
 func get_profession_config() -> Dictionary:
@@ -1387,6 +1419,90 @@ func _validate_cities(root: Dictionary) -> void:
 	var forge_city: String = str(_balance.get("economy", {}).get("dragonforgedCityId", ""))
 	if not forge_city.is_empty() and not seen_ids.has(forge_city):
 		_errors.append("数值配置 economy.dragonforgedCityId 指向不存在的城市：%s" % forge_city)
+
+
+## 城市建筑校验（D-69~D-72）。建筑是"城市 → 建筑"关系的配置载体，可能出现两种
+## 不一致：建筑引用了不存在的城市，或城市的 buildings 列表引用了不存在/错配的
+## 建筑。两处都查，保证 content_loader 加载出的建筑一定和城市对得上。
+func _validate_buildings(root: Dictionary) -> void:
+	var list: Variant = root.get("buildings", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("城市建筑配置缺少非空的 buildings 数组")
+		return
+
+	# 建城市 id 集合，供存在性交叉检查
+	var city_ids: Dictionary = {}
+	for city in _city_configs:
+		city_ids[str(city.get("cityId", ""))] = true
+
+	var seen_ids: Dictionary = {}
+	var by_id: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "buildings[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("城市建筑配置 %s 必须是对象" % path)
+			continue
+		var b: Dictionary = entry
+
+		var bid: String = str(b.get("buildingId", ""))
+		if bid.is_empty():
+			_errors.append("城市建筑配置缺少字段：%s.buildingId" % path)
+		elif seen_ids.has(bid):
+			_errors.append("城市建筑配置 buildingId 重复：%s" % bid)
+		else:
+			seen_ids[bid] = true
+			by_id[bid] = b
+
+		if str(b.get("displayName", "")).is_empty():
+			_errors.append("城市建筑配置缺少字段：%s.displayName" % path)
+
+		var city_id: String = str(b.get("cityId", ""))
+		if not city_ids.has(city_id):
+			_errors.append("城市建筑配置 %s.cityId 指向不存在的城市：%s" % [path, city_id])
+
+		var category: String = str(b.get("category", ""))
+		if category != "landmark" and category != "function":
+			_errors.append("城市建筑配置 %s.category 必须为 landmark 或 function（现为 %s）" % [path, category])
+
+		var tier_name: String = str(b.get("minTier", ""))
+		var tier_ok: bool = false
+		for name in CityBuildings.TIER_NAMES:
+			if tier_name == str(name):
+				tier_ok = true
+				break
+		if not tier_ok:
+			_errors.append("城市建筑配置 %s.minTier 非法：%s" % [path, tier_name])
+
+		var dim: String = str(b.get("scaleDimension", ""))
+		if not City.ALL_DIMENSIONS.has(dim):
+			_errors.append("城市建筑配置 %s.scaleDimension 非法：%s" % [path, dim])
+
+		var bonus: Dictionary = b.get("dimensionBonus", {})
+		if bonus.is_empty():
+			_errors.append("城市建筑配置 %s.dimensionBonus 不能为空" % path)
+		for d in bonus:
+			if not City.ALL_DIMENSIONS.has(str(d)):
+				_errors.append("城市建筑配置 %s.dimensionBonus 键非法：%s" % [path, str(d)])
+
+		_buildings.append(b)
+
+	# 反向检查：每座城的 buildings 引用都必须存在、且建筑 cityId 与城市一致。
+	# 城市的引用与建筑的归属错配时，结算会折错贡献，比引用不存在更隐蔽。
+	for city in _city_configs:
+		var refs: Array = city.get("buildings", [])
+		if refs.is_empty():
+			_errors.append("城市配置 %s 缺少 buildings 引用列表" % str(city.get("cityId", "")))
+			continue
+		var expected_city: String = str(city.get("cityId", ""))
+		for bid in refs:
+			var b: Dictionary = by_id.get(str(bid), {})
+			if b.is_empty():
+				_errors.append("城市配置 %s 引用了不存在的建筑：%s" % [expected_city, str(bid)])
+			elif str(b.get("cityId", "")) != expected_city:
+				_errors.append("城市配置 %s 引用的建筑 %s 归属城市不匹配（建筑 cityId=%s）" % [
+					expected_city, str(bid), str(b.get("cityId", ""))
+				])
 
 
 func _validate_professions(root: Dictionary) -> void:

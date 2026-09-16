@@ -78,6 +78,7 @@ static func build_detail(
 		"downgradeText": downgrade_text(tier),
 		"rows": rows,
 		"stats": _build_stats(world, city),
+		"buildings": _build_buildings(world, city),
 		"history": history,
 		"trends": trends,
 		"trendDimension": DEFAULT_TREND_DIMENSION,
@@ -251,3 +252,64 @@ static func _mostly_rising(slot: Dictionary) -> bool:
 		elif milli < 0:
 			down += 1
 	return up >= down
+
+
+## 详情栏的建筑列表（D-69~D-72）。每条给界面可画的字段，数值原样不带任何格式化
+## 之外的加工。state 由可用等级判定（>0 运营、否则关闭）；投资交互是否可用由
+## 存在门槛 + 未到上限 + 钱包够不够共同决定。
+static func _build_buildings(world: WorldState, city: City) -> Array:
+	var balance: Dictionary = ContentLoader.get_balance_section("buildings")
+	var max_level: int = int(balance.get("maxLevel", 10))
+	var avatar: PlayerAvatar = world.avatar
+	var money: int = avatar.money if avatar != null else 0
+	var out: Array = []
+	for bid in ContentLoader.get_city_building_ids(city.city_id):
+		var cfg: Dictionary = ContentLoader.get_building_config(bid)
+		if cfg.is_empty():
+			continue
+		var avail: int = CityBuildings.available_level(cfg, city, balance)
+		var invested: int = CityBuildings.invested_level(world, city.city_id, bid)
+		var effective: int = CityBuildings.effective_level(cfg, city, invested, balance)
+		var category_label: String = (
+			"地标" if str(cfg.get("category", "")) == "landmark" else "功能"
+		)
+		var cost: int = 0
+		var enabled: bool = false
+		if avail > 0 and effective < max_level:
+			cost = CityBuildings.invest_cost(balance, effective)
+			enabled = money >= cost
+		out.append({
+			"buildingId": bid,
+			"displayName": str(cfg.get("displayName", bid)),
+			"categoryLabel": category_label,
+			"function": str(cfg.get("function", "")),
+			"level": effective,
+			"availableLevel": avail,
+			"investedLevel": invested,
+			"state": "operational" if avail > 0 else "closed",
+			"investCost": cost,
+			"investEnabled": enabled,
+			"money": money,
+			"dimensionBonusText": _dimension_bonus_text(cfg),
+			"presentationHint": str(cfg.get("presentationHint", "")),
+		})
+	return out
+
+
+## 建筑的维度效果文案。dimensionBonus 为 {维度: 每级系数}，拼成"每级"口径。
+static func _dimension_bonus_text(cfg: Dictionary) -> String:
+	var bonus: Dictionary = cfg.get("dimensionBonus", {})
+	if bonus.is_empty():
+		return ""
+	var parts: Array = []
+	for dimension in bonus:
+		parts.append("+%s %d/级" % [
+			str(City.DIMENSION_LABELS.get(str(dimension), str(dimension))),
+			int(bonus[dimension]),
+		])
+	var text: String = ""
+	for i in range(parts.size()):
+		if i > 0:
+			text += "、"
+		text += str(parts[i])
+	return text

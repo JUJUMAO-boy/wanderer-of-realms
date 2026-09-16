@@ -16,8 +16,12 @@ const LIST_ROW_HEIGHT: float = 56.0
 ## 城市名会压到标题带的长月历上——两者分别从 x=246 与 x=138 起笔，只差 6px 就交叠。
 const HEADER_HEIGHT: float = 48.0
 const DIM_ROW_HEIGHT: float = 42.0
-const TREND_HEIGHT: float = 118.0
+const TREND_HEIGHT: float = 88.0
 const FOOTER_HEIGHT: float = 30.0
+## 建筑条（D-69~D-72）：详情栏底部的一行横铺瓦片，一座建筑一格，点选后回车投资。
+const BUILDING_TILE_HEIGHT: float = 24.0
+const BUILDING_LABEL_WIDTH: float = 44.0
+const BUILDING_TILE_GAP: float = 4.0
 
 ## 趋势维度切换器。左右各一个小方块夹住维度名，点一下换一个维度。
 const TREND_STEPPER_SIZE: float = 20.0
@@ -124,6 +128,18 @@ static func _detail_left(rect: Rect2) -> float:
 	return rect.position.x + LIST_WIDTH + MARGIN
 
 
+## 建筑条里第 index 块瓦片的矩形。建筑数量决定宽度：几座建筑就等宽排开，
+## 左首留一小段「建筑」标签。
+static func _building_tile_rect(rect: Rect2, count: int, index: int) -> Rect2:
+	var at: Dictionary = _detail_offsets(rect, 0)
+	var y: float = at["buildings"]
+	var usable: float = rect.size.x - BUILDING_LABEL_WIDTH
+	var tile_w: float = (usable - BUILDING_TILE_GAP * float(count - 1)) / float(count)
+	var x: float = rect.position.x + BUILDING_LABEL_WIDTH \
+		+ float(index) * (tile_w + BUILDING_TILE_GAP)
+	return Rect2(Vector2(x, y), Vector2(tile_w, BUILDING_TILE_HEIGHT))
+
+
 static func _draw_stepper(
 	canvas: CanvasItem, font: Font, rect: Rect2, label: String, hovered: bool
 ) -> void:
@@ -159,6 +175,12 @@ static func hit_test(panel: Dictionary, rect: Rect2, point: Vector2) -> Dictiona
 		return {"kind": "dimension", "delta": -1}
 	if _trend_stepper_rect(detail_x, at["trend"], true).has_point(point):
 		return {"kind": "dimension", "delta": 1}
+	var buildings: Array = panel.get("detail", {}).get("buildings", [])
+	if not buildings.is_empty():
+		var building_count: int = buildings.size()
+		for index in range(building_count):
+			if _building_tile_rect(rect, building_count, index).has_point(point):
+				return {"kind": "building", "index": index}
 	return {}
 
 
@@ -249,10 +271,14 @@ static func _detail_offsets(rect: Rect2, row_count: int) -> Dictionary:
 	var rows_y: float = line_y + 8.0
 	var rows_end: float = rows_y + float(row_count) * DIM_ROW_HEIGHT
 	var trend_y: float = rows_end + 8.0
+	var stats_y: float = trend_y + TREND_HEIGHT
+	# 建筑瓦片条：压在统计行下方、面板底之前。统计行文字画在 stats+18，
+	# 这里从 stats+24 起笔，留出 6px 才不压字。
+	var buildings_y: float = stats_y + 24.0
 	return {
 		"title": top, "tier": tier_y, "gap": gap_y, "downgrade": downgrade_y,
 		"rowsLine": line_y, "rows": rows_y, "rowsEndLine": rows_end,
-		"trend": trend_y, "stats": trend_y + TREND_HEIGHT,
+		"trend": trend_y, "stats": stats_y, "buildings": buildings_y,
 	}
 
 
@@ -297,6 +323,46 @@ static func _draw_detail(
 
 	_draw_trend(canvas, font, detail, rect, at["trend"], width, TREND_HEIGHT, hover)
 	_draw_stats(canvas, font, detail, x, at["stats"], width)
+	_draw_buildings(canvas, font, detail, rect, at, hover)
+
+
+## 建筑条：一行等宽的瓦片，一座建筑一格。绿色描边 = 这座能投资（钱够且未到上限），
+## 深色填充 = 运营中，灰字 = 建筑关闭（tier 门槛未过）。点选一块回车即投资。
+static func _draw_buildings(
+	canvas: CanvasItem, font: Font, detail: Dictionary, rect: Rect2,
+	at: Dictionary, hover: Dictionary
+) -> void:
+	var buildings: Array = detail.get("buildings", [])
+	if buildings.is_empty():
+		return
+	var y: float = at["buildings"]
+	_text(canvas, font, Vector2(rect.position.x, y + 7.0), "建筑", COLOR_DIM, SIZE_SMALL)
+	var count: int = buildings.size()
+	var hovered_index: int = int(hover.get("index", -1)) \
+		if str(hover.get("kind", "")) == "building" else -1
+	for i in range(count):
+		var b: Dictionary = buildings[i]
+		var r: Rect2 = _building_tile_rect(rect, count, i)
+		var selected: bool = bool(b.get("selected", false))
+		if selected or i == hovered_index:
+			canvas.draw_rect(r, COLOR_SELECTED)
+		else:
+			canvas.draw_rect(r, COLOR_LIST_BG)
+		var investable: bool = bool(b.get("investEnabled", false))
+		var state: String = str(b.get("state", "operational"))
+		canvas.draw_rect(
+			r,
+			COLOR_ACCENT if investable else COLOR_BORDER,
+			false, 1.0
+		)
+		var name_color: Color = COLOR_TEXT if state == "operational" else COLOR_DIM
+		_text(canvas, font, r.position + Vector2(4.0, 8.0),
+			str(b.get("displayName", "")), name_color, SIZE_SMALL)
+		var level_text: String = "L%d" % int(b.get("level", 0))
+		if int(b.get("investedLevel", 0)) > 0:
+			level_text = "L%d / 投%d" % [int(b.get("level", 0)), int(b.get("investedLevel", 0))]
+		_text_right(canvas, font, r.position + Vector2(r.size.x - 4.0, 8.0),
+			level_text, COLOR_ACCENT if int(b.get("investedLevel", 0)) > 0 else COLOR_DIM, SIZE_SMALL)
 
 
 static func _draw_dimension_row(

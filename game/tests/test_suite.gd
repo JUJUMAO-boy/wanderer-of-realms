@@ -131,6 +131,12 @@ func run_all() -> int:
 	_test_item_instance_round_trip()
 	_test_forge_view_model()
 	_test_forge_panel_hit_test()
+	print("=== 里程碑 12 建筑经营经济 ===")
+	_test_building_content()
+	_test_building_available_and_effective()
+	_test_building_invest()
+	_test_building_settlement()
+	_test_building_round_trip()
 	print("=== 世界遭遇 ===")
 	_test_encounter_tier()
 	_test_encounter_chance()
@@ -5102,6 +5108,157 @@ func _new_encounters(with_npcs: bool = true) -> Dictionary:
 		"world": world, "grid": grid, "sim": built["sim"],
 		"system": EncounterSystem.create(world, grid, _new_derived()),
 	}
+
+
+# --- 里程碑 12：建筑经营经济（D-69 ~ D-72）---
+
+## 内容装载：40 座建筑、每城 5 座引用与 buildings.json 一一对应。
+func _test_building_content() -> void:
+	var cfgs: Array = ContentLoader.get_building_configs()
+	var ids: Dictionary = {}
+	var by_city: Dictionary = {}
+	for cfg in cfgs:
+		var bid: String = str(cfg.get("buildingId", ""))
+		_check(not bid.is_empty(), "建筑有 id")
+		_check(not ids.has(bid), "建筑 id 唯一：" + bid)
+		ids[bid] = true
+		var cid: String = str(cfg.get("cityId", ""))
+		if not by_city.has(cid):
+			by_city[cid] = []
+		by_city[cid].append(bid)
+	_eq(ids.size(), 40, "装载 40 座建筑（8 城 × 5）且 id 互不重复")
+	for city_cfg in ContentLoader.get_city_configs():
+		var cid: String = str(city_cfg.get("cityId", ""))
+		var refs: Array = ContentLoader.get_city_building_ids(cid)
+		_check(by_city.has(cid), "城市 " + cid + " 有建筑配置")
+		_eq(refs.size(), 5, "城 " + cid + " 引用 5 座建筑")
+		for bid in refs:
+			var cfg: Dictionary = ContentLoader.get_building_config(str(bid))
+			_check(not cfg.is_empty(), "城 " + cid + " 引用的建筑找得到：" + str(bid))
+			_eq(str(cfg.get("cityId", "")), cid, "建筑 " + str(bid) + " 归属城一致")
+	_check(not ContentLoader.get_balance_section("buildings").is_empty(),
+		"balance.buildings 段存在")
+
+
+## 等级派生：tier 门槛关闭 + 同档按维度细化 + 投资累加 + 上限钳制。
+func _test_building_available_and_effective() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var bal: Dictionary = ContentLoader.get_balance_section("buildings")
+	var cfg: Dictionary = ContentLoader.get_building_config("aedran_throne")
+	var city: City = world.get_city("aedran")
+	_check(not cfg.is_empty(), "找到地标 aedran_throne")
+	# 全新世界的 aedran 阶段低于 metropolis，地标关闭（minTier=metropolis）
+	_eq(CityBuildings.available_level(cfg, city, bal), 0, "阶段过低时地标关闭")
+	_eq(CityBuildings.effective_level(cfg, city, 0, bal), 0, "关闭时生效等级为 0")
+	# 阶段达标后，按关联维度细化为 1..(1+maxRefine) 的自然等级
+	_set_all_dimensions(world, "aedran", 95)
+	var avail: int = CityBuildings.available_level(cfg, city, bal)
+	_check(avail >= 1, "发展充分的城地标存在（L%d）" % avail)
+	# 投资部分由玩家私有状态给定，未投资还是 0
+	_eq(CityBuildings.invested_level(world, "aedran", "aedran_throne"), 0, "未投资为 0")
+	# 投资受到全局上限钳制：生效等级封在 maxLevel
+	var max_level: int = int(bal.get("maxLevel", 10))
+	_eq(CityBuildings.effective_level(cfg, city, max_level, bal), max_level,
+		"投资等级被全局上限钳制")
+	# 费用随当前生效等级递增（档位定价）
+	_eq(CityBuildings.invest_cost(bal, 1) - CityBuildings.invest_cost(bal, 0),
+		int(bal.get("investCostPerLevel", 2500)), "投资费用递增 perLevel")
+
+
+## 投资：即时扣 avatar.money + 落盘 building_investments；失败不改状态。
+func _test_building_invest() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var bal: Dictionary = ContentLoader.get_balance_section("buildings")
+	var cfg: Dictionary = ContentLoader.get_building_config("aedran_throne")
+	var city_id: String = "aedran"
+	_set_all_dimensions(world, city_id, 95)
+	# 无化身
+	var r: Dictionary = CityBuildings.invest(world, city_id, "aedran_throne", cfg, bal)
+	_eq(str(r["error"]), CityBuildings.ERROR_NO_AVATAR, "无化身时投资报 NO_AVATAR")
+	# 有化身但钱不够
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-bu"
+	avatar.money = 0
+	world.avatar = avatar
+	r = CityBuildings.invest(world, city_id, "aedran_throne", cfg, bal)
+	_eq(str(r["error"]), CityBuildings.ERROR_INSUFFICIENT_FUNDS, "钱不够报 INSUFFICIENT_FUNDS")
+	_eq(CityBuildings.invested_level(world, city_id, "aedran_throne"), 0, "失败不改投资状态")
+	# 给够钱：按当前生效等级定价，即时扣钱并落盘
+	avatar.money = 100_000
+	var before: int = avatar.money
+	r = CityBuildings.invest(world, city_id, "aedran_throne", cfg, bal)
+	_check(bool(r["ok"]), "投资成功：" + str(r.get("error", "")))
+	_eq(int(r["cost"]), before - avatar.money, "投资即时扣按生效等级计的钱")
+	_eq(avatar.money, before - int(r["cost"]), "投资即时扣钱")
+	_eq(CityBuildings.invested_level(world, city_id, "aedran_throne"), 1, "投资落盘为 1")
+	# 封顶后再投报 MAX_LEVEL
+	var max_level: int = int(bal.get("maxLevel", 10))
+	if not world.building_investments.has(city_id):
+		world.building_investments[city_id] = {}
+	world.building_investments[city_id]["aedran_throne"] = max_level
+	avatar.money = 9_999_999
+	r = CityBuildings.invest(world, city_id, "aedran_throne", cfg, bal)
+	_eq(str(r["error"]), CityBuildings.ERROR_MAX_LEVEL, "到上限报 MAX_LEVEL")
+	_eq(CityBuildings.invested_level(world, city_id, "aedran_throne"), max_level,
+		"封顶后不再累加")
+	# 关闭的建筑投不进（阶段退回）
+	_set_all_dimensions(world, city_id, 0)
+	r = CityBuildings.invest(world, city_id, "aedran_throne", cfg, bal)
+	_eq(str(r["error"]), CityBuildings.ERROR_CLOSED, "建筑关闭时报 CLOSED")
+
+
+## 月度结算：建筑贡献折进城市维度归因；玩家按投资部分收月收益。
+func _test_building_settlement() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var bal: Dictionary = ContentLoader.get_balance_section("buildings")
+	var cfg: Dictionary = ContentLoader.get_building_config("aedran_knights")
+	var city: City = world.get_city("aedran")
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-bu"
+	avatar.money = 1_000_000
+	world.avatar = avatar
+	# 阶段拉到 metropolis（dev/pop 足够），但把关联维度 security 压在细化档下界之下，
+	# 让 available 稳定为 1、单月漂移也不会跨档，预期贡献因此确定。
+	_set_all_dimensions(world, "aedran", 95)
+	world.get_city("aedran").set_dimension(City.DIM_SECURITY, 40)
+	var r: Dictionary = CityBuildings.invest(world, "aedran", "aedran_knights", cfg, bal)
+	_check(bool(r["ok"]), "投资成功以测结算：" + str(r.get("error", "")))
+	var expected_milli: int = CityBuildings.monthly_contribution(
+		cfg, CityBuildings.effective_level(cfg, city, 1, bal)
+	).get(City.DIM_SECURITY, 0)
+	_check(expected_milli > 0, "预期贡献为正（%d）" % int(expected_milli))
+	var before: int = avatar.money
+	var report: Dictionary = sim.settle_month(1)
+	_eq(_delta_milli(report, "aedran", City.DIM_SECURITY, "building-aedran_knights"),
+		expected_milli, "建筑月度贡献折进维度归因")
+	var expected_income: int = int(bal.get("playerReturnPerLevel", 300)) * 1
+	_eq(int(report["buildingIncome"]), expected_income, "setle_month 报告玩家建筑收益")
+	_eq(avatar.money - before, expected_income, "玩家每月按投资部分收钱")
+
+
+## 持久化：玩家建筑投资经 WorldState 序列化往返一致。
+func _test_building_round_trip() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var bal: Dictionary = ContentLoader.get_balance_section("buildings")
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-bu"
+	avatar.money = 1_000_000
+	world.avatar = avatar
+	_set_all_dimensions(world, "aedran", 95)
+	var cfg: Dictionary = ContentLoader.get_building_config("aedran_throne")
+	var r: Dictionary = CityBuildings.invest(world, "aedran", "aedran_throne", cfg, bal)
+	_check(bool(r["ok"]), "投资以写入落盘数据")
+	var saved: Dictionary = world.to_dict()
+	_check(saved.has("buildingInvestments"), "world 序列化含 buildingInvestments")
+	var rebuilt: WorldState = WorldState.new()
+	rebuilt.apply_dict(saved)
+	_eq(CityBuildings.invested_level(rebuilt, "aedran", "aedran_throne"), 1,
+		"投资等级经序列化往返一致")
 
 
 func _test_encounter_tier() -> void:

@@ -14,7 +14,8 @@
       "faction": 55,
       "dominantFactionId": "aedran_crown",
       "hasBlackMarket": false,
-      "pricePremium": 1.15
+      "pricePremium": 1.15,
+      "buildings": ["aedran_throne", "aedran_knights", "aedran_temple", "aedran_court", "aedran_archive"]
     },
     {
       "cityId": "port_thorne",
@@ -29,7 +30,8 @@
       "faction": 60,
       "dominantFactionId": "merchant_guild",
       "hasBlackMarket": true,
-      "pricePremium": 1.10
+      "pricePremium": 1.10,
+      "buildings": ["thorne_lighthouse", "thorne_guild", "thorne_dock", "thorne_blackmarket", "thorne_auction"]
     },
     {
       "cityId": "hammerhold",
@@ -44,7 +46,8 @@
       "faction": 80,
       "dominantFactionId": "dwarf_council",
       "hasBlackMarket": false,
-      "pricePremium": 0.90
+      "pricePremium": 0.90,
+      "buildings": ["hammerhold_furnace", "hammerhold_forge", "hammerhold_mine", "hammerhold_oath", "hammerhold_workshop"]
     },
     {
       "cityId": "silvermoon_spire",
@@ -59,7 +62,8 @@
       "faction": 85,
       "dominantFactionId": "mage_council",
       "hasBlackMarket": false,
-      "pricePremium": 1.20
+      "pricePremium": 1.20,
+      "buildings": ["silvermoon_tower", "silvermoon_library", "silvermoon_crystal", "silvermoon_observatory", "silvermoon_alchemy"]
     },
     {
       "cityId": "greenwade",
@@ -74,7 +78,8 @@
       "faction": 75,
       "dominantFactionId": "elf_court",
       "hasBlackMarket": false,
-      "pricePremium": 0.95
+      "pricePremium": 0.95,
+      "buildings": ["greenwade_grove", "greenwade_herb", "greenwade_tree_library", "greenwade_moonspring", "greenwade_grey_elf"]
     },
     {
       "cityId": "crossroad",
@@ -89,7 +94,8 @@
       "faction": 15,
       "dominantFactionId": "",
       "hasBlackMarket": true,
-      "pricePremium": 1.05
+      "pricePremium": 1.05,
+      "buildings": ["crossroad_greyhouse", "crossroad_guild", "crossroad_market", "crossroad_arena", "crossroad_hideout"]
     },
     {
       "cityId": "frostspeak_keep",
@@ -104,7 +110,8 @@
       "faction": 70,
       "dominantFactionId": "north_tribes",
       "hasBlackMarket": false,
-      "pricePremium": 1.05
+      "pricePremium": 1.05,
+      "buildings": ["frostspeak_wall", "frostspeak_longhall", "frostspeak_hearth", "frostspeak_glacier", "frostspeak_grounds"]
     },
     {
       "cityId": "red_sands",
@@ -119,7 +126,8 @@
       "faction": 50,
       "dominantFactionId": "desert_clans",
       "hasBlackMarket": true,
-      "pricePremium": 0.85
+      "pricePremium": 0.85,
+      "buildings": ["redsands_ruins", "redsands_slave_market", "redsands_oasis", "redsands_merc", "redsands_chamber"]
     }
   ]
 }

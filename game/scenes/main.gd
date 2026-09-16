@@ -145,6 +145,8 @@ var _gear: Equipment = null
 var _view: int = VIEW_MAP
 var _selected_city: int = 0
 var _trend_dimension: int = 0
+## 详情栏建筑条里选中的那座（D-69~D-72）。按下回车对它投资。
+var _selected_building: int = 0
 var _notable: Array = []
 var _last_deltas: Dictionary = {}
 var _panel: Dictionary = {}
@@ -559,6 +561,11 @@ func _refresh_city_panel() -> void:
 	var dimensions: Array = CityViewModel.DIMENSION_ORDER
 	_trend_dimension = clampi(_trend_dimension, 0, dimensions.size() - 1)
 	detail["trendDimension"] = str(dimensions[_trend_dimension])
+	# 建筑条：把当前选中的那座标出来，并夹住索引（切城后可能超出范围）。
+	var buildings: Array = detail.get("buildings", [])
+	_selected_building = clampi(_selected_building, 0, maxi(0, buildings.size() - 1))
+	for i in range(buildings.size()):
+		buildings[i]["selected"] = (i == _selected_building)
 	_panel = {
 		"monthLabel": Clock.now().format(),
 		"list": CityViewModel.build_list(_world, _last_deltas),
@@ -2883,6 +2890,9 @@ func _city_click(point: Vector2) -> void:
 			_trend_dimension = posmod(_trend_dimension + int(hit["delta"]),
 				CityViewModel.DIMENSION_ORDER.size())
 			_refresh()
+		"building":
+			_selected_building = int(hit["index"])
+			_refresh()
 
 
 # --- 鼠标：角色面板 ---
@@ -3200,6 +3210,37 @@ func _handle_city_input(key_event: InputEventKey) -> void:
 			_save()
 		KEY_F9:
 			_load()
+		KEY_ENTER, KEY_KP_ENTER:
+			_invest_building()
+
+
+## 对建筑条里选中的那座投资一档（D-69~D-72）。玩家私有状态即时落盘，
+## 并不改动城市六维；费用与生效信息走 Feedback。
+func _invest_building() -> void:
+	if _world == null:
+		return
+	var detail: Dictionary = _panel.get("detail", {})
+	var buildings: Array = detail.get("buildings", [])
+	if _selected_building < 0 or _selected_building >= buildings.size():
+		return
+	var slot: Dictionary = buildings[_selected_building]
+	if not bool(slot.get("investEnabled", false)):
+		_status.text = "这座现在投不进去（钱不够、没到招商门槛或已到上限）。"
+		return
+	var city_id: String = str(detail.get("cityId", ""))
+	var building_id: String = str(slot.get("buildingId", ""))
+	var cfg: Dictionary = ContentLoader.get_building_config(building_id)
+	var balance: Dictionary = ContentLoader.get_balance_section("buildings")
+	var result: Dictionary = CityBuildings.invest(_world, city_id, building_id, cfg, balance)
+	if not bool(result.get("ok", false)):
+		_status.text = "投资失败：%s" % str(result.get("error", ""))
+	else:
+		_status.text = "已投资「%s」到 L%d，花费 %d 金。收益并入每月进账。" % [
+			str(slot.get("displayName", building_id)),
+			int(result.get("level", 0)),
+			int(result.get("cost", 0)),
+		]
+	_refresh()
 
 
 func _switch_view(view: int) -> void:

@@ -353,5 +353,14 @@
   "cityDimension": {
     "min": 0,
     "max": 100
+  },
+  "buildings": {
+    "_comment": "城市建筑（D-69~D-72）。建筑抽成独立实体（buildings.json 定义、cities.json 独占、等级由 city tier 与关联维度派生，不落盘）；玩家投资是唯一落盘部分。可用等级 = 1 + floor((关联维度 - 当前维度档下界) / scaleStep)，上限 maxRefine；生效等级 = 可用 + 投资，最高 maxLevel。投资按 investCostBase + perLevel×(当前生效级) 扣 avatar.money，玩家每月按 playerReturnPerLevel×投资级收钱。initializedData 数值为初值，待实测。",
+    "scaleStep": 10,
+    "maxRefine": 4,
+    "maxLevel": 10,
+    "investCostBase": 5000,
+    "investCostPerLevel": 2500,
+    "playerReturnPerLevel": 300
   }
 }

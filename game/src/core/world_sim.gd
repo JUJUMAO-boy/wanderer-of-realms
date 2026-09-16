@@ -58,6 +58,12 @@ var _dim_max: int = 100
 var _trade: Dictionary = {}
 var _npc_cfg: Dictionary = {}
 var _months_per_year: int = 12
+## 建筑数值段（balance.buildings）。供等级派生/贡献/投资取数。
+var _building_bal: Dictionary = {}
+## 建筑配置索引：buildingId -> cfg（来自 buildings.json，经 load_buildings 注入）。
+var _buildings_cfg: Dictionary = {}
+## 按城的建筑配置：cityId -> [cfg]，每城按 buildingId 排序，保证结算确定性。
+var _buildings_by_city: Dictionary = {}
 ## 玩家自己建的走私航线每月进账（铜）。量化规则 6 章的「垄断贸易路线：该路线
 ## 收益归玩家」只给了效果没给数值，取值与理由见技术设计文档 9.6 的 D-30。
 var _player_smuggling_income: int = 300
@@ -81,16 +87,39 @@ func _init(p_world: WorldState, balance: Dictionary, profession_cfg: Dictionary,
 	_months_per_year = maxi(1, int(balance.get("time", {}).get("monthsPerYear", 12)))
 	_player_smuggling_income = int(_trade.get("playerSmugglingIncomeCopper", 300))
 	_legendary_player_income = int(_trade.get("legendaryPlayerIncomeCopper", 800))
+	_building_bal = balance.get("buildings", {})
 
 
 ## 从 ContentLoader 取配置构造。逻辑类不继承 Node，但配置来源可以是 autoload。
 static func create(p_world: WorldState) -> WorldSim:
-	return WorldSim.new(
+	var sim := WorldSim.new(
 		p_world,
 		ContentLoader.get_balance(),
 		ContentLoader.get_profession_config(),
 		ContentLoader.get_name_pool_config()
 	)
+	sim.load_buildings(ContentLoader.get_building_configs())
+	return sim
+
+
+## 注入建筑配置（buildings.json 的 buildings 数组）。每城按 buildingId 排序建索引，
+## 保证结算时遍历顺序确定——建筑贡献折进 deltas 的路子与贸易路线同源。
+func load_buildings(cfgs: Array) -> void:
+	_buildings_cfg.clear()
+	_buildings_by_city.clear()
+	for cfg in cfgs:
+		var bid: String = str(cfg.get("buildingId", ""))
+		var city_id: String = str(cfg.get("cityId", ""))
+		if bid.is_empty() or city_id.is_empty():
+			continue
+		_buildings_cfg[bid] = cfg
+		if not _buildings_by_city.has(city_id):
+			_buildings_by_city[city_id] = []
+		(_buildings_by_city[city_id] as Array).append(cfg)
+	for city_id in _buildings_by_city:
+		(_buildings_by_city[city_id] as Array).sort_custom(
+			func(a: Dictionary, b: Dictionary) -> bool:
+				return str(a.get("buildingId", "")) < str(b.get("buildingId", "")))
 
 
 ## 新世界的初始化：铺满各城的模拟 NPC，建立预置贸易路线。
@@ -198,6 +227,9 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 		world, month, world.rng, events.blockade_cities()
 	)
 	_apply_route_yields(settlements, deltas, detail)
+	# 建筑月度贡献（D-69~D-72）：折各城本月维度 milli，路子与贸易路线同源。
+	_apply_building_contributions(deltas, detail)
+	var building_income: int = _apply_player_building_income()
 	var confiscations: Array = settlements.get("confiscations", [])
 	for entry in confiscations:
 		notable.append(event(str(entry["cityId"]), month, EVENT_CONFISCATION,
@@ -260,6 +292,8 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 		"brokenRoutes": broken,
 		## 玩家自己建的走私航线本月进账（铜）。世界航线不给他钱，两者都不进这里。
 		"playerSmugglingIncome": int(settlements.get("playerIncome", 0)),
+		## 玩家建筑投资的月收益（铜）。按投资级结算，与走私营收并行。
+		"buildingIncome": int(building_income),
 	}
 
 
@@ -769,6 +803,63 @@ func _apply_route_yields(settlements: Dictionary, deltas: Dictionary, collect: b
 	var income: int = _apply_player_route_income(settlements)
 	_apply_confiscation_penalties(settlements)
 	settlements["playerIncome"] = income
+
+
+## 建筑月度维度贡献（D-69~D-72）：按生效等级把各城每个建筑的 dimensionBonus
+## 折成该城某维的 milli，像贸易路线一样折进 deltas。遍历走 get_city_ids + 每城
+## 按 buildingId 排序，保证结算顺序确定（同一份存档每次运行产出完全相同）。
+func _apply_building_contributions(deltas: Dictionary, collect: bool) -> void:
+	if _buildings_by_city.is_empty() or _building_bal.is_empty():
+		return
+	for city_id in world.get_city_ids():
+		var city: City = world.get_city(str(city_id))
+		if city == null:
+			continue
+		var list: Array = _buildings_by_city.get(str(city_id), [])
+		for b in list:
+			var bid: String = str(b.get("buildingId", ""))
+			var effective: int = CityBuildings.effective_level(
+				b, city,
+				CityBuildings.invested_level(world, str(city_id), bid),
+				_building_bal
+			)
+			if effective <= 0:
+				continue
+			var contrib: Dictionary = CityBuildings.monthly_contribution(b, effective)
+			for dim in contrib:
+				var milli: int = int(contrib[dim])
+				if milli <= 0:
+					continue
+				var result: Dictionary = CityEvolution.apply_milli(
+					city, str(dim), milli, _dim_min, _dim_max
+				)
+				if collect:
+					_add_delta(deltas, str(city_id), str(dim), int(result["whole"]),
+						milli, [{
+							"key": "building-" + bid,
+							"label": str(b.get("displayName", bid)) + "（经营）",
+							"milli": milli,
+						}])
+
+
+## 玩家建筑投资的月收益（铜）。只算玩家亲手投的部分——城市自然等级不白给玩家
+## 钱，否则没投过钱的城也会按月发钱，玩家收益与经营行为就脱钩了。投资即时结清
+## 已扣 avatar.money，这里只是每月返钱，并入 avatar.money。
+func _apply_player_building_income() -> int:
+	var avatar: PlayerAvatar = world.avatar
+	if avatar == null or _building_bal.is_empty():
+		return 0
+	var total: int = 0
+	for city_id in world.get_city_ids():
+		var invested_map: Dictionary = world.building_investments.get(str(city_id), {})
+		for bid in invested_map:
+			var invested: int = int(invested_map[bid])
+			if invested <= 0:
+				continue
+			total += CityBuildings.player_income(invested, _building_bal)
+	if total > 0:
+		avatar.money += total
+	return total
 
 
 ## 查抄的代价（9.4 节）：该城声誉 -5、善恶值 -2。

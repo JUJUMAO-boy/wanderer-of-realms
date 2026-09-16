@@ -59,6 +59,11 @@ var pending_changes: Array = []
 ## 覆盖"读档重试同一批交付"的最长跨度。
 var applied_changes: Dictionary = {}
 
+## 玩家对各城各建筑的投资等级（D-69~D-72）。cityId -> {buildingId: level}。
+## 玩家私有状态，必须落盘——像传奇航线一样不可由城市状态反推。城市自然等级是
+## 派生值不落盘，这里只存玩家亲手投的那部分。
+var building_investments: Dictionary = {}
+
 
 static func create(world_seed_value: int) -> WorldState:
 	var w := WorldState.new()
@@ -441,6 +446,12 @@ func to_dict() -> Dictionary:
 			series_out[dimension] = (entry.get(dimension, []) as Array).duplicate()
 		history_out[str(key)] = series_out
 
+	var buildings_out: Dictionary = {}
+	var build_keys: Array = building_investments.keys()
+	build_keys.sort()
+	for key in build_keys:
+		buildings_out[str(key)] = building_investments[key].duplicate()
+
 	return {
 		"worldSeed": world_seed,
 		"rngState": rng.get_state() if rng != null else 0,
@@ -456,6 +467,7 @@ func to_dict() -> Dictionary:
 		"pendingConsequences": consequence_list,
 		"cityEvents": event_list,
 		"appliedChanges": applied_changes.duplicate(true),
+		"buildingInvestments": buildings_out,
 		"playerAvatar": avatar.to_dict() if avatar != null else {},
 	}
 
@@ -551,6 +563,15 @@ func apply_dict(data: Dictionary) -> void:
 			"sig": str(entry.get("sig", "")),
 			"month": int(entry.get("month", 0)),
 		}
+
+	building_investments.clear()
+	var builds_in: Dictionary = data.get("buildingInvestments", {})
+	for city_key in builds_in:
+		var per_city: Dictionary = {}
+		var city_builds: Dictionary = builds_in[city_key]
+		for bkey in city_builds:
+			per_city[str(bkey)] = int(city_builds[bkey])
+		building_investments[str(city_key)] = per_city
 
 	var avatar_data: Dictionary = data.get("playerAvatar", {})
 	avatar = PlayerAvatar.from_dict(avatar_data) if not avatar_data.is_empty() else null
