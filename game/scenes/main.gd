@@ -202,6 +202,12 @@ var _trade_repair_tier: String = ItemInstance.REPAIR_CRAFTSMAN
 ## 敲炉的随机源游标。与战斗同一个做法：强化用自己的种子序列，不该改变世界的演化。
 var _forge_seq: int = 0
 
+# 野外采集（M14）。界面只持有采集层实例与"下一个采哪个点"的游标；产出入包、
+# 熟练 +1 都写在 Gathering 里，就地改化身。
+var _gathering: Gathering = null
+## 在采集点列表里轮转的游标。野外按 F 依次采矿脉/林地/药草丛，好把三类基础料都补齐。
+var _gather_seq: int = 0
+
 # 战斗（M5）
 var _combat: Combat = null
 var _combat_seq: int = 0
@@ -250,6 +256,7 @@ func _ready() -> void:
 		return
 	_build_lookup_tables()
 	_gear = Equipment.create(_table("itemTemplates"))
+	_gathering = Gathering.create()
 	_creator = CharacterCreation.new(
 		ContentLoader.get_balance_section("characterCreation"),
 		ContentLoader.get_playable_races(),
@@ -539,7 +546,7 @@ func _refresh_map_panel() -> void:
 			delta_color, CityViewModel.format_signed(population_milli),
 		])
 	lines.append("")
-	lines.append("[color=#808080]M/Y 逐月结算，G 快进 10 年。城市阶段由发展度与人口中较低者决定。[/color]")
+	lines.append("[color=#808080]M/Y 逐月结算，G 快进 10 年。野外按 F 采集，城市阶段由发展度与人口中较低者决定。[/color]")
 	_info.text = "\n".join(lines)
 
 
@@ -3176,6 +3183,8 @@ func _handle_map_input(key_event: InputEventKey) -> void:
 			_enter_event()
 		KEY_R:
 			_enter_trade()
+		KEY_F:
+			_gather_action()
 		KEY_F5:
 			_save()
 		KEY_F9:
@@ -3258,6 +3267,47 @@ func _invest_building() -> void:
 			str(slot.get("displayName", building_id)),
 			int(result.get("level", 0)),
 			int(result.get("cost", 0)),
+		]
+	_refresh()
+
+
+## 野外采集（M14）。站在城郊/野外的空地按 F：在采集点之间轮转，采一件当前点的
+## 主掉物入包，并把对应生产技能熟练 +1。站在城里不行——闹市里没有矿脉可凿。
+func _gather_action() -> void:
+	if _world == null or _world.avatar == null:
+		_status.text = "还没有化身，先完成开局创建。"
+		return
+	if _gathering == null:
+		_status.text = "采集层还没就绪。"
+		return
+	var standing: String = _grid.get_city_id_at(_world.avatar.pos_x, _world.avatar.pos_y)
+	if not standing.is_empty():
+		_status.text = "闹市没有可采的点——到城外来，按 F 采集。"
+		return
+
+	var spots: Array = ContentLoader.get_gathers()
+	if spots.is_empty():
+		_status.text = "这个世界还没布置采集点。"
+		return
+	_gather_seq = posmod(_gather_seq, spots.size())
+	var spot: Dictionary = spots[_gather_seq]
+	_gather_seq += 1
+	var spot_id: String = str(spot.get("spotId", ""))
+	var seed_text: String = "gather:%d,%d:%d" % [
+		_world.avatar.pos_x, _world.avatar.pos_y, _gather_seq,
+	]
+	var result: Dictionary = _gathering.gather(_world.avatar, spot_id, seed_text)
+	if not bool(result.get("ok", false)):
+		_status.text = "采集失败：%s" % str(result.get("error", ""))
+	else:
+		var produced: Array = result.get("produced", [])
+		var line: String = ""
+		var first: Dictionary = produced[0] if not produced.is_empty() else {}
+		if not first.is_empty():
+			line = "%s ×%d" % [str(first.get("displayName", "")), int(first.get("count", 0))]
+		var skill_label: String = str(spot.get("displayName", spot_id))
+		_status.text = "在%s采到了 %s。%s熟练 +1。" % [
+			skill_label, line, str(result.get("skill", "")),
 		]
 	_refresh()
 

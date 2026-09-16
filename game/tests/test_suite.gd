@@ -145,6 +145,15 @@ func run_all() -> int:
 	_test_element_counter_formula()
 	_test_element_wiring()
 	_test_mastery_passive_formula()
+	print("=== 里程碑 14 生产技能系统 ===")
+	_test_recipe_content()
+	_test_craft_gate()
+	_test_craft_success()
+	_test_craft_rarity()
+	_test_craft_equipment_rarity()
+	_test_enchant_in_place()
+	_test_gather_action()
+	_test_shop_sells_base_materials_only()
 	print("=== 世界遭遇 ===")
 	_test_encounter_tier()
 	_test_encounter_chance()
@@ -6024,6 +6033,244 @@ func _test_mastery_passive_formula() -> void:
 	# 命中加成
 	_eq(d.passive_hit_bonus_bp({"passive_bow_mastery": 1}, {"tree": "bow"}), 500, "弓术专精命中 +5%")
 	_eq(d.passive_hit_bonus_bp({}, {"tree": "bow"}), 0, "未学弓无命中加成")
+
+
+# --- 里程碑 14：生产技能系统（D-78 ~ D-82）---
+
+## 背包里某模板的件数（每格一件，计数即模板命中数）。
+func _inventory_count(avatar, template_id: String) -> int:
+	var count: int = 0
+	for held in avatar.inventory:
+		var instance: Dictionary = avatar.item_instances.get(held, {})
+		if str(instance.get("templateId", "")) == template_id:
+			count += 1
+	return count
+
+
+## 直接塞 count 件指定模板进背包（测试供料，不占商店、不摇词缀）。
+func _grant_items(avatar, template_id: String, count: int) -> void:
+	var rule: ItemInstance = ItemInstance.create_from_config()
+	for _i in range(count):
+		var instance: Dictionary = rule.bare_instance(template_id)
+		instance["craftRarity"] = str(ContentLoader.get_item(template_id).get("rarity", "common"))
+		var seq: int = avatar.inventory.size() + 1
+		var instance_id: String = "%s-grant-%03d" % [str(avatar.avatar_id), seq]
+		while avatar.item_instances.has(instance_id):
+			seq += 1
+			instance_id = "%s-grant-%03d" % [str(avatar.avatar_id), seq]
+		avatar.item_instances[instance_id] = instance
+		avatar.inventory.append(instance_id)
+
+
+## 数据装载：material 类别合法、配方与采集点装载交叉校验通过、配方字段在界内。
+func _test_recipe_content() -> void:
+	_check(ContentLoader.ITEM_CATEGORIES.has("material"), "material 类别在合法类别里")
+	var recipes: Array = ContentLoader.get_recipes()
+	_check(recipes.size() >= 12, "配方库装载（%d 张 ≥ 12）" % recipes.size())
+	var seen_ids: Dictionary = {}
+	for r in recipes:
+		var rid: String = str(r.get("recipeId", ""))
+		_check(not rid.is_empty() and not seen_ids.has(rid), "配方 recipeId 唯一：" + rid)
+		seen_ids[rid] = true
+		_check(ContentLoader.PRODUCTION_SKILLS.has(str(r.get("skill", ""))),
+			"配方 %s 技能在生产白名单" % rid)
+		var lvl: int = int(r.get("requiredLevel", -1))
+		_check(lvl >= 0 and lvl <= 100, "配方 %s 熟练门槛在 0..100" % rid)
+		_check(ContentLoader.RECIPE_KINDS.has(str(r.get("kind", ""))), "配方 %s 种类合法" % rid)
+		# 用料与产出都能在物品表里解析（校验时已交叉查过，这里再确认取得到）
+		for ing in r.get("ingredients", []):
+			_check(not ContentLoader.get_item(str(ing.get("itemId", ""))).is_empty(),
+				"配方 %s 用料 %s 落在物品表" % [rid, str(ing.get("itemId", ""))])
+		if str(r.get("kind", "")) == "craft":
+			for out in r.get("outputs", []):
+				_check(not ContentLoader.get_item(str(out.get("itemId", ""))).is_empty(),
+					"配方 %s 产物 %s 落在物品表" % [rid, str(out.get("itemId", ""))])
+	var gathers: Array = ContentLoader.get_gathers()
+	_eq(gathers.size(), 3, "装载 3 个采集点（矿脉/林地/药草丛）")
+	for spot in gathers:
+		_check(ContentLoader.PRODUCTION_SKILLS.has(str(spot.get("skill", ""))),
+			"采集点 %s 技能在生产白名单" % str(spot.get("spotId", "")))
+		_check(not (spot.get("outputs", []) is Array) or not (spot.get("outputs", []) as Array).is_empty(),
+			"采集点 %s 有产出表" % str(spot.get("spotId", "")))
+
+
+## 门槛：无化身 / 熟练不足 / 材料不足都被前置条件拒绝，且不改状态。
+func _test_craft_gate() -> void:
+	var craft: Crafting = Crafting.create()
+	# 无化身
+	var no_avatar: Dictionary = craft.craft(null, "craft_iron_ingot")
+	_eq(str(no_avatar.get("errorCode", "")), Crafting.ERROR_PRECONDITION_FAILED, "无化身被拒绝")
+	# 有化身但熟练不足（craft_longsword 门槛 20）
+	var low_skill := PlayerAvatar.new()
+	low_skill.avatar_id = "avatar-low"
+	low_skill.skills["forge"] = 0
+	_grant_items(low_skill, "material_iron_ingot", 2)
+	_grant_items(low_skill, "material_wood", 1)
+	var gated: Dictionary = craft.craft(low_skill, "craft_longsword")
+	_eq(str(gated.get("errorCode", "")), Crafting.ERROR_PRECONDITION_FAILED, "熟练不足被拒")
+	_check(_has_text([gated.get("error", "")], "熟练度不足"), "提示含「熟练度不足」")
+	_eq(_inventory_count(low_skill, "material_iron_ingot"), 2, "被拒不扣料")
+	_eq(int(low_skill.skills.get("forge", 0)), 0, "被拒不涨熟练")
+	# 材料不足（craft_iron_ingot 需 2 铁矿，只给 1）
+	var starved := PlayerAvatar.new()
+	starved.avatar_id = "avatar-starve"
+	starved.skills["forge"] = 0
+	_grant_items(starved, "material_iron_ore", 1)
+	var short: Dictionary = craft.craft(starved, "craft_iron_ingot")
+	_eq(str(short.get("errorCode", "")), Crafting.ERROR_PRECONDITION_FAILED, "材料不足被拒")
+	_check(_has_text([short.get("error", "")], "材料不足"), "提示含「材料不足」")
+	# can_craft 前门也给同一结论
+	var can: Dictionary = craft.can_craft(starved, "craft_iron_ingot")
+	_eq(can["can"], false, "can_craft 判不可做")
+	_check(bool(can["missing"] is Array) and (can["missing"] as Array).size() == 1, "缺料清单一项")
+
+
+## 制作成功：扣料、产出入包、熟练 +1（钳 100）。
+func _test_craft_success() -> void:
+	var craft: Crafting = Crafting.create()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-craft"
+	avatar.skills["forge"] = 0
+	_grant_items(avatar, "material_iron_ore", 3)
+	var res: Dictionary = craft.craft(avatar, "craft_iron_ingot")
+	_check(bool(res["ok"]), "冶铁锭成功：" + str(res.get("error", "")))
+	_eq(_inventory_count(avatar, "material_iron_ore"), 1, "铁矿石 3 → 1（扣 2）")
+	_eq(_inventory_count(avatar, "material_iron_ingot"), 1, "铁锭 0 → 1（产出 1）")
+	_eq(int(avatar.skills.get("forge", 0)), 1, "锻铸造熟练 0 → 1")
+	_eq(int(res["gainedSkills"]["forge"]), 1, "返回成长摘要")
+	_eq((res["produced"] as Array)[0]["templateId"], "material_iron_ingot", "产出模板对")
+	# 熟练封顶：99 → 100，不出 101
+	avatar.skills["forge"] = 99
+	_grant_items(avatar, "material_iron_ore", 2)
+	res = craft.craft(avatar, "craft_iron_ingot")
+	_eq(int(avatar.skills.get("forge", 0)), 100, "熟练 99 → 100 封顶")
+
+
+## 成品稀有度纯函数：0/40/55/70/85 → common/fine/rare/epic/legendary。
+func _test_craft_rarity() -> void:
+	var craft: Crafting = Crafting.create()
+	_eq(craft.craft_rarity(0), "common", "0 熟练 → common")
+	_eq(craft.craft_rarity(20), "common", "20 熟练仍 common")
+	_eq(craft.craft_rarity(40), "fine", "40 熟练 → fine")
+	_eq(craft.craft_rarity(55), "rare", "55 熟练 → rare")
+	_eq(craft.craft_rarity(70), "epic", "70 熟练 → epic")
+	_eq(craft.craft_rarity(85), "legendary", "85 熟练 → legendary")
+	_eq(craft.craft_rarity(100), "legendary", "100 熟练 → legendary（封顶）")
+
+
+## 装备类产物档位随熟练爬梯：长剑可爬到史诗/传奇档；匕首无高阶变体则退回 common。
+func _test_craft_equipment_rarity() -> void:
+	var craft: Crafting = Crafting.create()
+	# 锻造 85 → legendary：长剑应落到 weapon_longsword_legendary
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-rare"
+	avatar.skills["forge"] = 85
+	_grant_items(avatar, "material_iron_ingot", 2)
+	_grant_items(avatar, "material_wood", 1)
+	var res: Dictionary = craft.craft(avatar, "craft_longsword")
+	_check(bool(res["ok"]), "高熟练锻造成功")
+	var produced: Array = res["produced"]
+	_eq((produced[0]["templateId"]), "weapon_longsword_legendary", "85 熟练长剑 → 传奇档")
+	_eq((produced[0]["rarity"]), "legendary", "产物标注传奇档")
+	var pid: String = str(produced[0]["instanceId"])
+	_eq(str(avatar.item_instances[pid].get("craftRarity", "")), "legendary", "实例记 craftRarity")
+	# 门槛 20 → common：长剑仍是 common 模板
+	var low := PlayerAvatar.new()
+	low.avatar_id = "avatar-rare2"
+	low.skills["forge"] = 20
+	_grant_items(low, "material_iron_ingot", 2)
+	_grant_items(low, "material_wood", 1)
+	var low_res: Dictionary = craft.craft(low, "craft_longsword")
+	_eq((low_res["produced"] as Array)[0]["templateId"], "weapon_longsword_common", "门槛档长剑 → common")
+	# 匕首 no fine+ 变体：高熟练也退回 common 模板（档位只作元数据）
+	var dagger := PlayerAvatar.new()
+	dagger.avatar_id = "avatar-dagger"
+	dagger.skills["forge"] = 85
+	_grant_items(dagger, "material_iron_ingot", 1)
+	var dag_res: Dictionary = craft.craft(dagger, "craft_dagger")
+	var dag: Dictionary = (dag_res["produced"] as Array)[0]
+	_eq(dag["templateId"], "weapon_dagger_common", "无高阶匕首变体，退回 common 模板")
+	_eq(dag["rarity"], "legendary", "仍按熟练标记 legendary 档")
+
+
+## 附魔：就地给指定实例加词条、耗材、熟练 +1；目标类别不符被拒。
+func _test_enchant_in_place() -> void:
+	var craft: Crafting = Crafting.create()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-enchant"
+	avatar.skills["enchant"] = 40
+	_grant_items(avatar, "material_enchant_dust", 4)
+	var rule: ItemInstance = ItemInstance.create_from_config()
+	var blade: Dictionary = rule.new_instance("weapon_longsword_common", "tgt-blade")
+	var blade_id: String = "enc-blade"
+	avatar.item_instances[blade_id] = blade
+	avatar.inventory.append(blade_id)
+	var res: Dictionary = craft.craft(avatar, "enchant_sharpness", blade_id)
+	_check(bool(res["ok"]), "附魔·锋利成功：" + str(res.get("error", "")))
+	_eq(_inventory_count(avatar, "material_enchant_dust"), 2, "附魔耗 2 粉尘（4 → 2）")
+	_eq(int(avatar.skills.get("enchant", 0)), 41, "附魔熟练 40 → 41")
+	var mods: Array = avatar.item_instances[blade_id].get("modifiers", [])
+	_eq(mods.size(), 1, "长剑得一条词缀")
+	_eq(mods[0]["target"], "attack", "锋利加成 attack")
+	_eq(int(mods[0]["value"]), 2, "长剑基值 16 ×10% → +2")
+	# 类别不符：锋利只认武器，拿去附魔防具被拒
+	var mail: Dictionary = rule.new_instance("armor_leather_common", "tgt-mail")
+	var mail_id: String = "enc-mail"
+	avatar.item_instances[mail_id] = mail
+	avatar.inventory.append(mail_id)
+	_grant_items(avatar, "material_enchant_dust", 2)
+	var bad: Dictionary = craft.craft(avatar, "enchant_sharpness", mail_id)
+	_eq(str(bad.get("errorCode", "")), Crafting.ERROR_PRECONDITION_FAILED, "类别不符被拒")
+	_check(_has_text([bad.get("error", "")], "不匹配"), "提示含「不匹配」")
+	_eq(_inventory_count(avatar, "material_enchant_dust"), 4, "被拒不耗材")
+	# 坚固（护甲 +10，平值）
+	_grant_items(avatar, "material_enchant_dust", 2)
+	var hard: Dictionary = craft.craft(avatar, "enchant_hardness", mail_id)
+	_check(bool(hard["ok"]), "附魔·坚固成功")
+	var mail_mods: Array = avatar.item_instances[mail_id].get("modifiers", [])
+	_eq(mail_mods[0]["target"], "armor", "坚固加成 armor")
+	_eq(int(mail_mods[0]["value"]), 10, "护甲平值 +10")
+
+
+## 野外采集：产出落包、熟练 +1；权重表命中主掉物。
+func _test_gather_action() -> void:
+	var gather: Gathering = Gathering.create()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-gather"
+	var res: Dictionary = gather.gather(avatar, "mine", "seed-mining-1")
+	_check(bool(res["ok"]), "采矿成功：" + str(res.get("error", "")))
+	var produced: Array = res["produced"]
+	_eq((produced[0]["templateId"]), "material_iron_ore", "矿脉采到铁矿石")
+	var count: int = int(int(produced[0]["count"]))
+	_check(count >= 1 and count <= 3, "产量落在 1..3：%d" % count)
+	_eq(_inventory_count(avatar, "material_iron_ore"), count, "铁矿入包")
+	_eq(int(avatar.skills.get("mine", 0)), 1, "采矿熟练 0 → 1")
+	# 权重表：药草丛在 herb/salt 二选一
+	var herb: Dictionary = gather.gather(avatar, "herbalism", "seed-herb-1")
+	var got: String = str((herb["produced"] as Array)[0]["templateId"])
+	_check(got == "material_herb" or got == "material_salt", "药草丛命中 herb/salt：" + got)
+	# 未知点 / 无化身
+	var miss: Dictionary = gather.gather(avatar, "nowhere", "s")
+	_eq(str(miss.get("errorCode", "")), Gathering.ERROR_NOT_FOUND, "未知采集点报 NOT_FOUND")
+	var no_av: Dictionary = gather.gather(null, "mine", "s")
+	_eq(str(no_av.get("errorCode", "")), Gathering.ERROR_PRECONDITION_FAILED, "无化身被拒")
+
+
+## 商店只售基础材料：中间/高级材料（铁锭/皮革/碳/附魔粉尘）不进任何货架。
+func _test_shop_sells_base_materials_only() -> void:
+	var built: Dictionary = _new_sim(false)
+	var store: Economy = built["sim"].economy
+	var stock: Array = store.list_stock(built["world"], "hammerhold")
+	_check(_stock_has(stock, "material_iron_ore"), "基础材料（铁矿石）上架")
+	for banned in ["material_iron_ingot", "material_leather", "material_charcoal", "material_enchant_dust"]:
+		_check(not _stock_has(stock, banned), "中间/高级材料「%s」不上架" % banned)
+
+
+func _stock_has(stock: Array, template_id: String) -> bool:
+	for row in stock:
+		if str(row.get("templateId", "")) == template_id:
+			return true
+	return false
 
 
 func _new_creator() -> CharacterCreation:

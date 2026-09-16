@@ -24,6 +24,7 @@ const QUEST_FILE: String = "quests.json"
 const EVENT_FILE: String = "events.json"
 const AFFIX_FILE: String = "affixes.json"
 const MONSTER_FILE: String = "monsters.json"
+const RECIPE_FILE: String = "recipes.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -41,8 +42,8 @@ const SKILL_TIERS: Array = ["novice", "skilled", "expert", "master", "grandmaste
 ## 伤害类型（《数值框架》6.5 节元素克制表）
 const DAMAGE_TYPES: Array = ["physical", "fire", "water", "wind", "earth", "holy", "dark", "soul", "none"]
 
-## 物品分类与稀有度（《数值框架》8 节）
-const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool"]
+## 物品分类与稀有度（《数值框架》8 节）。material 为 M14 生产技能新增的原料类别。
+const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material"]
 const ITEM_RARITIES: Array = [
 	"common", "fine", "rare", "epic", "legendary", "dragonforged",
 ]
@@ -73,6 +74,13 @@ const MONSTER_PARLEYABLE_CATEGORY: String = "humanoid"
 ## 技能熟练度上限（《数值框架》1 节核心标尺：技能熟练度 0–100）
 const SKILL_LEVEL_MAX: int = 100
 
+## 生产技能白名单（M14）。recipe.skill 与 gather.skill 必须落在这里面。
+## 与战斗技能共用 avatar.skills，但玩法上归"造"的一侧。
+const PRODUCTION_SKILLS: Array = ["forge", "alchemy", "cooking", "enchant", "herb", "mine", "lumber"]
+
+## 生产配方的种类：craft（消耗料产出物品）与 enchant（就地给指定实例加词条）。
+const RECIPE_KINDS: Array = ["craft", "enchant"]
+
 var _city_configs: Array = []
 var _buildings: Array = []
 var _balance: Dictionary = {}
@@ -87,6 +95,8 @@ var _quests: Dictionary = {}
 var _events: Dictionary = {}
 var _affixes: Dictionary = {}
 var _monsters: Dictionary = {}
+var _recipes: Dictionary = {}
+var _gathers: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -96,12 +106,13 @@ func _ready() -> void:
 	var report: Dictionary = load_all()
 	if report.get("ok", false):
 		var loaded: Dictionary = report.get("loaded", {})
-		print("[ContentLoader] 配置装载完成：城市 %d 座，建筑 %d 个，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个" % [
+		print("[ContentLoader] 配置装载完成：城市 %d 座，建筑 %d 个，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个，配方 %d 张，采集点 %d 处" % [
 			_city_configs.size(), _buildings.size(), _balance.size(), int(loaded.get("professions", 0)),
 			int(loaded.get("races", 0)), _trade_routes.size(),
 			int(loaded.get("skills", 0)), int(loaded.get("items", 0)),
 			int(loaded.get("affixes", 0)), int(loaded.get("monsters", 0)),
 			int(loaded.get("talents", 0)), int(loaded.get("backgrounds", 0)),
+			int(loaded.get("recipes", 0)), int(loaded.get("gathers", 0)),
 		])
 	else:
 		for err in _errors:
@@ -180,6 +191,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("物品配置为空或读取失败")
 
+	# 生产配方与采集表（M14）：必须晚于物品装载，校验时要交叉查模板 id。
+	var recipe_root: Dictionary = _read_json(RECIPE_FILE, "生产配方配置")
+	if not recipe_root.is_empty():
+		_validate_recipes(recipe_root)
+	else:
+		_errors.append("生产配方配置为空或读取失败")
+
 	var affix_root: Dictionary = _read_json(AFFIX_FILE, "词缀配置")
 	if not affix_root.is_empty():
 		_validate_affixes(affix_root)
@@ -234,6 +252,8 @@ func load_all() -> Dictionary:
 			"events": _events.get("events", []).size(),
 			"affixes": _affixes.get("affixes", []).size(),
 			"monsters": _monsters.get("monsters", []).size(),
+			"recipes": _recipes.get("recipes", []).size(),
+			"gathers": _gathers.get("gathers", []).size(),
 		},
 		"errors": _errors.duplicate(),
 		"warnings": _warnings.duplicate(),
@@ -332,6 +352,38 @@ func get_items() -> Array:
 func get_item(template_id: String) -> Dictionary:
 	for entry in get_items():
 		if str(entry.get("templateId", "")) == template_id:
+			return entry
+	return {}
+
+
+## 生产配方表与采集点（M14）。get_recipes 返回 craft/enchant 配方数组，
+## get_gathers 返回城郊/野外观测点的产出表数组。
+func get_recipe_config() -> Dictionary:
+	return _recipes
+
+
+func get_recipes() -> Array:
+	return _recipes.get("recipes", [])
+
+
+func get_recipe(recipe_id: String) -> Dictionary:
+	for entry in get_recipes():
+		if str(entry.get("recipeId", "")) == recipe_id:
+			return entry
+	return {}
+
+
+func get_gather_config() -> Dictionary:
+	return _gathers
+
+
+func get_gathers() -> Array:
+	return _gathers.get("gathers", [])
+
+
+func get_gather(spot_id: String) -> Dictionary:
+	for entry in get_gathers():
+		if str(entry.get("spotId", "")) == spot_id:
 			return entry
 	return {}
 
@@ -1910,6 +1962,148 @@ func _validate_item_slot(item: Dictionary, path: String, category: String) -> vo
 	elif hands == 2 and not _array_of(equipment.get("twoHandedSlots", null)).has(declared):
 		# 双手武器的槽位若不在 twoHandedSlots 里，"占两只手"这条规则永远不会触发
 		_errors.append("双手武器的槽位必须落在 equipment.twoHandedSlots 里：%s" % path)
+
+
+## 生产配方与采集表（M14）。配方的用料与产物、采集的产出都交叉查 items 模板，
+## 保证"配方指得到的东西在物品表里真的存在"——否则游戏里会出现造出空气的情形。
+func _validate_recipes(root: Dictionary) -> void:
+	var list: Variant = root.get("recipes", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("生产配方配置缺少非空的 recipes 数组")
+		return
+
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "recipes[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("生产配方 %s 必须是对象" % path)
+			continue
+		var recipe: Dictionary = entry
+
+		var recipe_id: String = str(recipe.get("recipeId", ""))
+		if recipe_id.is_empty():
+			_errors.append("生产配方缺少字段：%s.recipeId" % path)
+		elif seen.has(recipe_id):
+			_errors.append("生产配方 recipeId 重复：%s" % recipe_id)
+		else:
+			seen[recipe_id] = true
+
+		if str(recipe.get("displayName", "")).is_empty():
+			_errors.append("生产配方缺少字段：%s.displayName" % path)
+
+		var skill: String = str(recipe.get("skill", ""))
+		if not PRODUCTION_SKILLS.has(skill):
+			_errors.append("生产配方的技能非法：%s.skill = %s（应为 %s 之一）" % [
+				path, skill, ", ".join(PackedStringArray(PRODUCTION_SKILLS))
+			])
+
+		var required_level: int = int(recipe.get("requiredLevel", -1))
+		if required_level < 0 or required_level > SKILL_LEVEL_MAX:
+			_errors.append("生产配方的熟练门槛越界：%s.requiredLevel = %d（应为 0–%d）" % [
+				path, required_level, SKILL_LEVEL_MAX
+			])
+
+		var kind: String = str(recipe.get("kind", ""))
+		if not RECIPE_KINDS.has(kind):
+			_errors.append("生产配方的种类非法：%s.kind = %s（应为 %s 之一）" % [
+				path, kind, ", ".join(PackedStringArray(RECIPE_KINDS))
+			])
+
+		_validate_recipe_ings(recipe.get("ingredients", null), path, "ingredients")
+		if kind == "craft":
+			_validate_recipe_ings(recipe.get("outputs", null), path, "outputs")
+		elif kind == "enchant":
+			var outs: Variant = recipe.get("outputs", null)
+			if outs is Array and not (outs as Array).is_empty():
+				_errors.append("附魔配方不应有 outputs（word 就地改指定实例）：%s" % path)
+			_validate_recipe_modifiers(recipe.get("modifiers", null), path)
+
+	var gathers: Variant = root.get("gathers", null)
+	if gathers is Array and not (gathers as Array).is_empty():
+		var seen_spots: Dictionary = {}
+		for i in range((gathers as Array).size()):
+			_validate_gather((gathers as Array)[i], "gathers[%d]" % i, seen_spots)
+
+	_recipes = root
+	_gathers = {"gathers": gathers if (gathers is Array) else []}
+
+
+## 配方用料/产物的逐条校验：非空、数字 count>0、itemId 能在物品表里找到。
+func _validate_recipe_ings(list: Variant, path: String, field: String) -> void:
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("生产配方缺少非空的 %s：%s" % [field, path])
+		return
+	for i in range((list as Array).size()):
+		var sub: Variant = (list as Array)[i]
+		var sub_path: String = "%s.%s[%d]" % [path, field, i]
+		if not (sub is Dictionary):
+			_errors.append("配方 %s 必须是对象" % sub_path)
+			continue
+		var entry: Dictionary = sub
+		var item_id: String = str(entry.get("itemId", ""))
+		if item_id.is_empty():
+			_errors.append("配方 %s 缺少 itemId" % sub_path)
+		elif get_item(item_id).is_empty():
+			_errors.append("配方 %s.itemId 指向不存在的物品：%s" % [sub_path, item_id])
+		if int(entry.get("count", 0)) <= 0:
+			_errors.append("配方 %s.count 必须为正" % sub_path)
+
+
+## 附魔词条的校验：数组非空，每条含 target，且 value 或 ratioBp 二选一为正。
+func _validate_recipe_modifiers(list: Variant, path: String) -> void:
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("附魔配方缺少非空的 modifiers：%s" % path)
+		return
+	for i in range((list as Array).size()):
+		var sub: Variant = (list as Array)[i]
+		var sub_path: String = "%s.modifiers[%d]" % [path, i]
+		if not (sub is Dictionary):
+			_errors.append("附魔词条 %s 必须是对象" % sub_path)
+			continue
+		var entry: Dictionary = sub
+		if str(entry.get("target", "")).is_empty():
+			_errors.append("附魔词条缺少 target：%s" % sub_path)
+		if int(entry.get("value", 0)) <= 0 and int(entry.get("ratioBp", 0)) <= 0:
+			_errors.append("附魔词条必须有正的 value 或 ratioBp：%s" % sub_path)
+
+
+## 采集点的产出表校验：spotId 唯一、技能在生产白名单、产出表非空且均可解析。
+func _validate_gather(entry: Variant, path: String, seen: Dictionary) -> void:
+	if not (entry is Dictionary):
+		_errors.append("采集点 %s 必须是对象" % path)
+		return
+	var spot: Dictionary = entry
+	var spot_id: String = str(spot.get("spotId", ""))
+	if spot_id.is_empty():
+		_errors.append("采集点缺少字段：%s.spotId" % path)
+	elif seen.has(spot_id):
+		_errors.append("采集点 spotId 重复：%s" % spot_id)
+	else:
+		seen[spot_id] = true
+
+	var skill: String = str(spot.get("skill", ""))
+	if not PRODUCTION_SKILLS.has(skill):
+		_errors.append("采集点的技能非法：%s.skill = %s" % [path, skill])
+
+	var outputs: Variant = spot.get("outputs", null)
+	if not (outputs is Array) or (outputs as Array).is_empty():
+		_errors.append("采集点缺少非空的 outputs：%s" % path)
+		return
+	for i in range((outputs as Array).size()):
+		var sub_path: String = "%s.outputs[%d]" % [path, i]
+		var sub: Variant = (outputs as Array)[i]
+		if not (sub is Dictionary):
+			_errors.append("采集点产出 %s 必须是对象" % sub_path)
+			continue
+		var drop: Dictionary = sub
+		var item_id: String = str(drop.get("itemId", ""))
+		if item_id.is_empty():
+			_errors.append("采集点产出缺少 itemId：%s" % sub_path)
+		elif get_item(item_id).is_empty():
+			_errors.append("采集点产出指向不存在的物品：%s.itemId = %s" % [sub_path, item_id])
+		if int(drop.get("weight", 0)) <= 0:
+			_errors.append("采集点产出 weight 必须为正：%s.weight" % sub_path)
 
 
 ## 天赋与缺陷配置（《数值框架》7 节）。当量的正负必须与分类一致，

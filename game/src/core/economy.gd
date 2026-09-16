@@ -347,6 +347,11 @@ func list_stock(
 func is_available(city: City, template: Dictionary, channel: String = CHANNEL_SHOP) -> bool:
 	if city == null:
 		return false
+	# M14 只售基础材料：中间/高级材料（铁锭、皮革、碳、附魔粉尘等）不进货架，
+	# 只能靠采集/制造/掉落——不然"不采就没高级货"这句就落空了。
+	if str(template.get("category", "")) == "material" \
+		and not bool(template.get("baseMaterial", false)):
+		return false
 	var rarity: String = str(template.get("rarity", ""))
 	if rarity == RARITY_DRAGONFORGED and city.city_id != _dragonforged_city:
 		return false

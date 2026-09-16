@@ -1,0 +1,28 @@
+{
+  "_comment": "M14 生产技能配方集。recipe 列表承载 craft（消耗原料产出物品）与 enchant（就地给指定实例追加词条）两类；gathers 列表承载城郊/野外的采集产出表（按技能与权重落 1..yieldMax 件基础材料）。kind 取值 craft|enchant，与计划文档口径一致。稀缺材料而商店只售基础（baseMaterial:true）的过滤在贸易侧做，不写在这里。",
+  "recipes": [
+    { "recipeId": "craft_iron_ingot", "skill": "forge", "displayName": "冶铁锭", "kind": "craft", "requiredLevel": 0, "ingredients": [ { "itemId": "material_iron_ore", "count": 2 } ], "outputs": [ { "itemId": "material_iron_ingot", "count": 1 } ], "effectText": "铁矿石×2 → 铁锭" },
+    { "recipeId": "craft_leather", "skill": "forge", "displayName": "鞣皮革", "kind": "craft", "requiredLevel": 0, "ingredients": [ { "itemId": "material_animal_hide", "count": 1 } ], "outputs": [ { "itemId": "material_leather", "count": 1 } ], "effectText": "兽皮×1 → 皮革" },
+    { "recipeId": "craft_charcoal", "skill": "forge", "displayName": "烧炭", "kind": "craft", "requiredLevel": 0, "ingredients": [ { "itemId": "material_wood", "count": 1 } ], "outputs": [ { "itemId": "material_charcoal", "count": 1 } ], "effectText": "木材×1 → 碳" },
+
+    { "recipeId": "craft_dagger", "skill": "forge", "displayName": "锻造匕首", "kind": "craft", "requiredLevel": 0, "ingredients": [ { "itemId": "material_iron_ingot", "count": 1 } ], "outputs": [ { "itemId": "weapon_dagger_common", "count": 1 } ], "effectText": "铁锭×1 → 匕首（装备类，档位随锻造熟练爬升）" },
+    { "recipeId": "craft_longsword", "skill": "forge", "displayName": "锻造长剑", "kind": "craft", "requiredLevel": 20, "ingredients": [ { "itemId": "material_iron_ingot", "count": 2 }, { "itemId": "material_wood", "count": 1 } ], "outputs": [ { "itemId": "weapon_longsword_common", "count": 1 } ], "effectText": "铁锭×2 + 木材×1 → 长剑（装备类，档位随锻造熟练爬升）" },
+    { "recipeId": "craft_leather_armor", "skill": "forge", "displayName": "缝皮甲", "kind": "craft", "requiredLevel": 10, "ingredients": [ { "itemId": "material_leather", "count": 2 } ], "outputs": [ { "itemId": "armor_leather_common", "count": 1 } ], "effectText": "皮革×2 → 皮甲（装备类，档位随锻造熟练爬升）" },
+
+    { "recipeId": "craft_enchant_dust", "skill": "alchemy", "displayName": "精炼附魔粉尘", "kind": "craft", "requiredLevel": 30, "ingredients": [ { "itemId": "material_iron_ore", "count": 2 }, { "itemId": "material_salt", "count": 1 } ], "outputs": [ { "itemId": "material_enchant_dust", "count": 1 } ], "effectText": "铁矿石×2 + 盐×1 → 附魔粉尘" },
+
+    { "recipeId": "craft_healing_potion", "skill": "alchemy", "displayName": "调治疗药水", "kind": "craft", "requiredLevel": 0, "ingredients": [ { "itemId": "material_herb", "count": 2 } ], "outputs": [ { "itemId": "consumable_healing_potion", "count": 1 } ], "effectText": "草药×2 → 治疗药水（HP +50）" },
+    { "recipeId": "craft_stamina_potion", "skill": "alchemy", "displayName": "调耐力药水", "kind": "craft", "requiredLevel": 20, "ingredients": [ { "itemId": "material_herb", "count": 2 }, { "itemId": "material_salt", "count": 1 } ], "outputs": [ { "itemId": "consumable_stamina_potion", "count": 1 } ], "effectText": "草药×2 + 盐×1 → 耐力药水（SP +50）" },
+
+    { "recipeId": "craft_bread", "skill": "cooking", "displayName": "烤面包", "kind": "craft", "requiredLevel": 0, "ingredients": [ { "itemId": "material_wheat", "count": 2 } ], "outputs": [ { "itemId": "consumable_bread", "count": 1 } ], "effectText": "小麦×2 → 烤面包（SP +20）" },
+    { "recipeId": "craft_roast_meat", "skill": "cooking", "displayName": "烤肉", "kind": "craft", "requiredLevel": 10, "ingredients": [ { "itemId": "material_raw_meat", "count": 1 }, { "itemId": "material_salt", "count": 1 } ], "outputs": [ { "itemId": "consumable_roast_meat", "count": 1 } ], "effectText": "生肉×1 + 盐×1 → 烤肉（SP +40）" },
+
+    { "recipeId": "enchant_sharpness", "skill": "enchant", "displayName": "附魔·锋利", "kind": "enchant", "requiredLevel": 40, "appliesTo": "weapon", "ingredients": [ { "itemId": "material_enchant_dust", "count": 2 } ], "modifiers": [ { "target": "attack", "ratioBp": 100 } ], "effectText": "武器攻击 +10%（按该武器基值折算）" },
+    { "recipeId": "enchant_hardness", "skill": "enchant", "displayName": "附魔·坚固", "kind": "enchant", "requiredLevel": 40, "appliesTo": "armor", "ingredients": [ { "itemId": "material_enchant_dust", "count": 2 } ], "modifiers": [ { "target": "armor", "value": 10 } ], "effectText": "护甲 +10" }
+  ],
+  "gathers": [
+    { "spotId": "mine", "skill": "mine", "displayName": "矿脉", "yieldMax": 3, "outputs": [ { "itemId": "material_iron_ore", "weight": 100 } ], "effectText": "采矿：铁矿石" },
+    { "spotId": "lumber", "skill": "lumber", "displayName": "林地", "yieldMax": 3, "outputs": [ { "itemId": "material_wood", "weight": 100 } ], "effectText": "伐木：木材" },
+    { "spotId": "herbalism", "skill": "herb", "displayName": "药草丛", "yieldMax": 3, "outputs": [ { "itemId": "material_herb", "weight": 80 }, { "itemId": "material_salt", "weight": 20 } ], "effectText": "采药：草药为主，偶得盐" }
+  ]
+}
