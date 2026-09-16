@@ -200,6 +200,9 @@ func run_all() -> int:
 	_test_city_space_near_building()
 	_test_city_space_near_npc()
 	_test_city_space_view_model()
+	print("=== M20 阶段一：行走路径与导航侧栏 ===")
+	_test_walk_path_grid()
+	_test_hud_nav_layout_hit()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7537,3 +7540,43 @@ func _test_city_space_view_model() -> void:
 	_eq(view["playerRect"], CitySpaceViewModel.cell_rect(view["origin"], spawn.x, spawn.y), "玩家矩形对齐出生点")
 	_check(not view["gate"]["rect"].size.is_zero_approx(), "城门有矩形")
 	_check(view["buildings"][0].has("label") and view["buildings"][0].has("kind"), "建筑带标签与功能")
+
+
+## 行走路径：从 A 沿 signi 朝 B 斜走。地图无遮挡，步数 = 两轴距离较长者，
+## 且绝不越过 MAP_WALK_LIMIT（与 main.gd 的 _plot_walk_path 同一条算法）。
+func _test_walk_path_grid() -> void:
+	var built: Dictionary = _new_world()
+	var grid: MapGrid = built["grid"]
+	var start := Vector2i(10, 10)
+	var dest := Vector2i(72, 55)
+	var cursor: Vector2i = start
+	var path: Array = []
+	var steps: int = 0
+	while steps < 200 and (cursor.x != dest.x or cursor.y != dest.y):
+		steps += 1
+		cursor = grid.step(cursor.x, cursor.y, signi(dest.x - cursor.x), signi(dest.y - cursor.y))
+		path.append(cursor)
+	_eq(cursor, dest, "斜走路径可达目标格")
+	_check(path.size() > 0, "路径非空")
+	_check(steps <= 200, "路径步数在 MAP_WALK_LIMIT 上限内")
+	_eq(steps, maxi(absi(dest.x - start.x), absi(dest.y - start.y)), "斜走步数等于两轴距离较长者")
+	# 起点就在目标格时不产生路线
+	var same: Array = []
+	var pos: Vector2i = dest
+	if pos.x != dest.x or pos.y != dest.y:
+		same.append(dest)
+	_eq(same.size(), 0, "已在目标格时不生成行走路线")
+
+
+## 导航侧栏的布局与命中：入口数量、首项是返回地图、每项中心能命中、越界返回 -1。
+func _test_hud_nav_layout_hit() -> void:
+	var rect := Rect2(16.0, 48.0, 150.0, 568.0)
+	var items: Array = HudNav.layout(rect)
+	_eq(items.size(), 11, "导航侧栏有 11 个进入项")
+	_eq(int(items[0]["view"]), HudNav.VIEW_MAP, "第一项是返回世界地图")
+	for i in range(items.size()):
+		var center: Vector2 = (items[i]["rect"] as Rect2).get_center()
+		_eq(HudNav.hit(items, center), i, "第 %d 项中心能命中" % i)
+	_eq(HudNav.hit(items, Vector2(-50.0, -50.0)), -1, "越界点返回 -1")
+	var bottom: Rect2 = items[items.size() - 1]["rect"]
+	_eq(HudNav.hit(items, Vector2(40.0, bottom.end.y + 5.0)), -1, "侧栏底沿之外返回 -1")

@@ -175,6 +175,15 @@ var _panel: Dictionary = {}
 ## 否则鼠标每动一个像素都要重画整屏。
 var _hover: Dictionary = {}
 var _hover_signature: String = ""
+## 左侧导航侧栏（M20）里鼠标悬停到第几个入口；-1 = 没在侧栏上。
+var _nav_hover: int = -1
+
+# 世界地图行走动画（M20 阶段一）。点地图不再是瞬移，而是先规划一条路线、
+# 逐格走过去（视觉上逐格跳、画投影路线），动画完结时一次性判遭遇。
+var _walk: Dictionary = {}
+## 这张世界的确定性地形纹理缓存。种子变了就重烘焙（见 _build_map_terrain）。
+var _map_terrain_tex: ImageTexture = null
+var _map_terrain_seed: int = -1
 
 # 开局创建（M3.1 / M3.2）。段、光标、规格与视图都在会话里，主场景只做两件事：
 # 把键位与点击翻译成会话的方法调用，以及会话说"可以开始了"之后装配化身。
@@ -3112,10 +3121,16 @@ func _percent_bp(bp: int) -> int:
 ## 只在悬停目标真的换了才重绘：面板全在 _draw 里逐行画字，鼠标每动一个像素都
 ## 重画整屏的话，滚动列表时帧率会肉眼可见地掉下来。
 func _update_hover(point: Vector2) -> void:
+	# 二级面板先算左侧导航上的悬停（决定侧栏哪个入口亮起来），
+	# 再算面板里的悬停。两者任何一个变了都要重绘。
+	var nav_hover: int = -1
+	if _is_secondary_view(_view):
+		nav_hover = HudNav.hit(HudNav.layout(_nav_rect()), point)
 	var hover: Dictionary = _hit_test_at(point)
 	var signature: String = _hover_signature_of(hover)
-	if signature == _hover_signature:
+	if signature == _hover_signature and nav_hover == _nav_hover:
 		return
+	_nav_hover = nav_hover
 	_hover = hover
 	_hover_signature = signature
 	queue_redraw()
@@ -3177,6 +3192,13 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 		return
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return
+	# 二级面板下放给面板之前，先看左侧导航：命中入口就切视图，不再进面板。
+	if _is_secondary_view(_view):
+		var nav_items: Array = HudNav.layout(_nav_rect())
+		var nav_index: int = HudNav.hit(nav_items, event.position)
+		if nav_index >= 0:
+			_nav_go(int(nav_items[nav_index]["view"]))
+			return
 	match _view:
 		VIEW_CREATION:
 			_creation_click(event.position)
@@ -3422,30 +3444,94 @@ func _tile_at_point(point: Vector2) -> Vector2i:
 	return tile
 
 
-## 走到目标格。地图上没有任何障碍（MapGrid.can_enter 只查边界），移动也不推进
-## 时间，所以直接一步步走到为止，不必让玩家为跨半张地图按住方向键。上限只是
-## 兜底：万一以后哪里改出"原地不动"，这里不会变成死循环。
+## 走到目标格。地图上没有任何障碍（MapGrid.can_enter 只查边界），所以路线必然
+## 可达。M20 起改为：先规划一条路线、逐格走过去（点地图从瞬移改成看得见的走动），
+## 动画完结时一次性把总步数交给遭遇去攒，避免"点一下地图"变成连着打好几场。
 func _walk_to(tile: Vector2i) -> void:
 	var avatar: PlayerAvatar = _world.avatar
+	var path: Array = _plot_walk_path(Vector2i(avatar.pos_x, avatar.pos_y), tile)
+	# 已在目标格（或路线为空）：不进动画，清掉可能的残留行走态，直接报状态。
+	if path.is_empty():
+		if not _walk.is_empty():
+			_walk = {}
+			set_process(false)
+		_report_walk_stop(0)
+		return
+	_walk = {
+		"path": path,
+		"idx": 0,
+		"t": 0.0,
+		"total": path.size(),
+		"draw_from": Vector2i(avatar.pos_x, avatar.pos_y),
+		"draw_to": path[0],
+	}
+	set_process(true)
+	_status.text = "规划路线，向 (%d, %d) 行进…" % [tile.x, tile.y]
+	queue_redraw()
+
+
+## 沿 signi 朝 dest 一步步收集路线（不含起点、含终点）。斜走一步同时收两个轴的差，
+## 所以步数 = 两向距离的较长者；地图无遮挡必然可达，上限只是兜底。
+func _plot_walk_path(start: Vector2i, dest: Vector2i) -> Array:
+	var path: Array = []
+	var cursor: Vector2i = start
 	var steps: int = 0
-	while steps < MAP_WALK_LIMIT and (avatar.pos_x != tile.x or avatar.pos_y != tile.y):
+	while steps < MAP_WALK_LIMIT and (cursor.x != dest.x or cursor.y != dest.y):
 		steps += 1
-		var next: Vector2i = _grid.step(avatar.pos_x, avatar.pos_y,
-			signi(tile.x - avatar.pos_x), signi(tile.y - avatar.pos_y))
-		if next.x == avatar.pos_x and next.y == avatar.pos_y:
+		var next: Vector2i = _grid.step(cursor.x, cursor.y,
+			signi(dest.x - cursor.x), signi(dest.y - cursor.y))
+		if next.x == cursor.x and next.y == cursor.y:
 			break
-		avatar.pos_x = next.x
-		avatar.pos_y = next.y
+		path.append(next)
+		cursor = next
+	return path
+
+
+## 走完的收尾：清空行走态、关掉逐帧推进，报"走了几格 + 在哪"，并一次判遭遇。
+func _finish_walk() -> void:
+	var total: int = int(_walk.get("total", 0))
+	_walk = {}
+	set_process(false)
+	_report_walk_stop(total)
+
+
+## 报"走了 N 格、现在在 (x,y)"，站在城里时补一句"再点一次看它的状态"，
+## 并把步数一次交给遭遇积累。
+func _report_walk_stop(steps: int) -> void:
+	var avatar: PlayerAvatar = _world.avatar
 	var city_id: String = _grid.get_city_id_at(avatar.pos_x, avatar.pos_y)
 	var here: String = ""
 	if not city_id.is_empty():
 		# 站在城里时报出"再点一次"能开面板——不然"点城市"这条规则要靠猜
 		here = "，这里是%s（再点一次看它的状态）" % str(_table("cityNames").get(city_id, city_id))
 	_status.text = "走了 %d 格，现在在 (%d, %d)%s。" % [steps, avatar.pos_x, avatar.pos_y, here]
-	# 一次点出多格只判一次遭遇：把步数一次交给它去攒，
-	# 免得"点一下地图"变成连着打好几场
 	_encounter_advance(steps)
 	_refresh()
+
+
+## 行走动画的逐格推进。每帧把误差跑满一格就把化身推到下一格，直到走完最后一段。
+## 只有在地图视图且正在行走时才做任何事；玩家走一半切走视图时动画挂起、切回续走。
+func _process(delta: float) -> void:
+	if _walk.is_empty() or _view != VIEW_MAP:
+		return
+	var path: Array = _walk["path"]
+	_walk["t"] = float(_walk["t"]) + delta * float(_walk.get("speed", 12.0))
+	while float(_walk["t"]) >= 1.0:
+		_walk["t"] = float(_walk["t"]) - 1.0
+		var idx: int = int(_walk["idx"])
+		if idx >= path.size():
+			break
+		var cell: Vector2i = path[idx]
+		_world.avatar.pos_x = cell.x
+		_world.avatar.pos_y = cell.y
+		_walk["idx"] = idx + 1
+		_walk["draw_from"] = cell
+		if idx + 1 < path.size():
+			_walk["draw_to"] = path[idx + 1]
+		if idx >= path.size() - 1:
+			_finish_walk()
+			return
+	queue_redraw()
 
 
 # --- 城内空间（M19）---
@@ -4202,6 +4288,7 @@ func _switch_view(view: int) -> void:
 	# 莫名其妙高亮着的按钮——鼠标还没动过，却被上一屏的坐标指着。
 	_hover = {}
 	_hover_signature = ""
+	_nav_hover = -1
 	_apply_view_visibility()
 	_refresh()
 
@@ -4335,21 +4422,52 @@ func _draw() -> void:
 			CitySpacePanel.draw(self, _city_space_view, PANEL_RECT, _hover)
 		_:
 			_draw_map()
+	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。
+	_draw_secondary_nav()
+
+
+# --- 左侧垂直导航（M20 阶段一）---
+
+## 导航侧栏占的左区：从地图原点起、宽 150、向下到面板底沿。
+func _nav_rect() -> Rect2:
+	return Rect2(16.0, 48.0, 150.0, PANEL_RECT.size.y)
+
+
+## 哪些视图是"地图之下的二级面板"，需要叠左侧导航。战斗/遭遇/开局创建是
+## 全屏会话，不该被侧栏挡住，也不在二级视图列表里。
+func _is_secondary_view(view: int) -> bool:
+	return view == VIEW_CITY or view == VIEW_TRADE or view == VIEW_SMUGGLING \
+		or view == VIEW_QUEST or view == VIEW_EVENT or view == VIEW_AVATAR \
+		or view == VIEW_CRAFTING or view == VIEW_HISTORY or view == VIEW_NPC \
+		or view == VIEW_CITY_SPACE
+
+
+## 侧栏入口按下。所有入口共用切视图这一条路，「返回世界地图」（VIEW_MAP）也在列。
+func _nav_go(view: int) -> void:
+	_switch_view(view)
+
+
+## 在二级面板之上渲左侧导航。只有二级视图才会被 _draw 走到这里（见 _draw 末尾）。
+func _draw_secondary_nav() -> void:
+	if not _is_secondary_view(_view):
+		return
+	var nav_rect: Rect2 = _nav_rect()
+	HudNav.draw(self, nav_rect, _view, HudNav.layout(nav_rect), _nav_hover)
 
 
 func _draw_map() -> void:
+	if _map_terrain_tex == null:
+		_build_map_terrain()
 	var map_px: Vector2 = Vector2(_grid.width * TILE, _grid.height * TILE)
-	draw_rect(Rect2(MAP_ORIGIN, map_px), Color(0.07, 0.08, 0.10))
+	if _map_terrain_tex != null:
+		draw_texture(_map_terrain_tex, MAP_ORIGIN)
+	else:
+		draw_rect(Rect2(MAP_ORIGIN, map_px), Color(0.07, 0.08, 0.10))
+	# 外缘画一层细框，弱化地形贴边的生硬感
+	draw_rect(Rect2(MAP_ORIGIN - Vector2(1.0, 1.0), map_px + Vector2(2.0, 2.0)),
+		Color(0.16, 0.17, 0.20), false, 1.0)
 
-	var grid_color: Color = Color(0.15, 0.17, 0.21)
-	for x in range(_grid.width + 1):
-		var px: float = MAP_ORIGIN.x + x * TILE
-		draw_line(Vector2(px, MAP_ORIGIN.y), Vector2(px, MAP_ORIGIN.y + map_px.y), grid_color, 1.0)
-	for y in range(_grid.height + 1):
-		var py: float = MAP_ORIGIN.y + y * TILE
-		draw_line(Vector2(MAP_ORIGIN.x, py), Vector2(MAP_ORIGIN.x + map_px.x, py), grid_color, 1.0)
-
-	# 先画商路，让城市方块压在上面
+	# 先画商路，让城市地标压在上面
 	for route in _world.get_routes_sorted():
 		var ca: City = _world.get_city(str(route.city_a))
 		var cb: City = _world.get_city(str(route.city_b))
@@ -4364,25 +4482,127 @@ func _draw_map() -> void:
 			color, 1.0
 		)
 
+	var font: Font = UiTheme.font()
 	for city_id in _world.get_city_ids():
 		var c: City = _world.get_city(city_id)
 		var pos: Vector2 = MAP_ORIGIN + Vector2(c.coord_x * TILE, c.coord_y * TILE)
-		# 方块大小随城市阶段变化，让"建模变化"在地图上直接可见（M6.3）
-		var scale: float = 1.0 + float(c.get_tier()) * 0.35
-		draw_rect(Rect2(pos - Vector2(TILE, TILE) * scale, Vector2(TILE, TILE) * 2.0 * scale),
-			Color(0.85, 0.72, 0.35))
+		# 淡金地标圆 + 中心深色小菱形 + 名签外排，取代原来的金色方块（M20 阶段一）
+		var radius: float = 3.0 + float(c.get_tier()) * 1.2
+		draw_circle(pos, radius, Color(0.85, 0.72, 0.35))
+		var half: float = radius * 0.5
+		draw_colored_polygon(PackedVector2Array([
+			pos + Vector2(0.0, -half), pos + Vector2(half, 0.0),
+			pos + Vector2(0.0, half), pos + Vector2(-half, 0.0),
+		]), Color(0.33, 0.27, 0.13))
+		# 名签排在右下，浅字可读；名签不参与命中测试（_city_at_point 仍按网格语义）
+		if font != null:
+			UiTheme.draw_text(self, font, pos + Vector2(radius + 3.0, 4.0),
+				str(_table("cityNames").get(city_id, city_id)),
+				Color(0.80, 0.81, 0.86), UiTheme.SIZE_SMALL)
 		# 上月人口净流出用红环标出来，衰败的城市在地图上一眼可见
 		var population_milli: int = int(
 			_last_deltas.get(city_id, {}).get(City.DIM_POPULATION, {}).get("milli", 0)
 		)
 		if population_milli < 0:
-			var radius: float = TILE * (2.0 * scale + 1.4)
-			draw_arc(pos, radius, 0.0, TAU, 20, Color(0.87, 0.44, 0.41), 1.0)
+			var ring: float = TILE * (2.0 * radius / 3.0 + 2.8)
+			draw_arc(pos, ring, 0.0, TAU, 20, Color(0.87, 0.44, 0.41), 1.0)
 
+	# 化身：青色小圆。行走中就画在插值出来的位置上，并把后续路线高亮出来。
 	if _world.avatar != null:
-		var p: Vector2 = MAP_ORIGIN + Vector2(_world.avatar.pos_x * TILE, _world.avatar.pos_y * TILE)
-		draw_rect(Rect2(p - Vector2(TILE, TILE) * 0.5, Vector2(TILE, TILE)),
-			Color(0.35, 0.85, 0.95))
+		var p: Vector2
+		if not _walk.is_empty() and _view == VIEW_MAP:
+			var f: Vector2 = Vector2(_walk["draw_from"])
+			var to: Vector2 = Vector2(_walk["draw_to"])
+			p = MAP_ORIGIN + f.lerp(to, float(_walk["t"])) * TILE
+			_draw_walk_route()
+		else:
+			p = MAP_ORIGIN + Vector2(_world.avatar.pos_x * TILE, _world.avatar.pos_y * TILE)
+		draw_circle(p, 3.0, Color(0.40, 0.88, 0.95))
+
+
+## 把 _walk 里尚未走到的路线用柔金细线 + 圆点画出来（从化身当前位置串到终点）。
+func _draw_walk_route() -> void:
+	var path: Array = _walk["path"]
+	var idx: int = int(_walk["idx"])
+	if idx >= path.size():
+		return
+	var color := Color(0.90, 0.78, 0.45, 0.55)
+	var f: Vector2 = Vector2(_walk["draw_from"])
+	var to: Vector2 = Vector2(_walk["draw_to"])
+	var p0: Vector2 = MAP_ORIGIN + f.lerp(to, float(_walk["t"])) * TILE
+	var p1: Vector2 = MAP_ORIGIN + Vector2(to) * TILE
+	draw_line(p0, p1, color, 1.0)
+	for i in range(idx + 1, path.size()):
+		var a: Vector2 = MAP_ORIGIN + Vector2(path[i - 1]) * TILE
+		var b: Vector2 = MAP_ORIGIN + Vector2(path[i]) * TILE
+		draw_line(a, b, color, 1.0)
+		draw_circle(b, 1.5, color)
+
+
+# 世界地图确定性地形。种子不变就复用缓存；世界换了（新世界 / 读回别的档）种子
+# 变，_map_terrain_seed 对不上就重烘焙。逐像素填值噪音，形成大块有机色块，
+# 而不是一格一色的棋盘。
+
+func _build_map_terrain() -> void:
+	if _grid == null or _world == null:
+		return
+	if _map_terrain_seed == _world.world_seed and _map_terrain_tex != null:
+		return
+	var w: int = _grid.width
+	var h: int = _grid.height
+	var img := Image.create(w * TILE, h * TILE, false, Image.FORMAT_RGBA8)
+	var rng := DeterministicRNG.new(_world.world_seed)
+	var seed1: int = rng.next_u32()
+	var seed2: int = rng.next_u32()
+	var seed3: int = rng.next_u32()
+	for py in range(h * TILE):
+		for px in range(w * TILE):
+			# 两档频率的值噪音叠出大块色块：24 格的主形 + 8 格的细节
+			var v: float = 0.62 * _value_noise(px, py, 24, seed1) \
+				+ 0.38 * _value_noise(px, py, 8, seed2)
+			# 一点点像素级抖动，让同色区域不是死板纯色
+			v += (_hash01(px, py, seed3) - 0.5) * 0.08
+			img.set_pixel(px, py, _terrain_color(v))
+	_map_terrain_seed = _world.world_seed
+	_map_terrain_tex = ImageTexture.create_from_image(img)
+
+
+## 由噪音值分档出地形色：低=浅水，中=草地，偏高=林/丘陵，高=山（灰褐）。
+func _terrain_color(v: float) -> Color:
+	if v < 0.30:
+		return Color(0.24, 0.44, 0.62)
+	if v < 0.56:
+		return Color(0.42, 0.62, 0.38)
+	if v < 0.76:
+		return Color(0.32, 0.50, 0.30)
+	return Color(0.55, 0.50, 0.42)
+
+
+## 整数 → [0,1) 的确定性哈希。负索引（边界上 gx/gy+1 可能为负）也能算，
+## 掩掉低 16 位取分之即可。
+static func _hash01(x: int, y: int, seed: int) -> float:
+	var h: int = seed ^ (x * 374761393) ^ (y * 668265263)
+	h = (h ^ (h >> 13)) * 1274126177
+	h = h ^ (h >> 16)
+	return float((h & 0xFFFF) % 1000) / 1000.0
+
+
+## 低位频率的值噪音：以 freq 为格子间隔采样哈希，smoothstep 双线性插值，
+## 得到连续过渡的色块，而不是逐格随机。
+static func _value_noise(px: int, py: int, freq: int, seed: int) -> float:
+	var gx: int = int(floorf(float(px) / float(freq)))
+	var gy: int = int(floorf(float(py) / float(freq)))
+	var fx: float = float(px - gx * freq) / float(freq)
+	var fy: float = float(py - gy * freq) / float(freq)
+	fx = fx * fx * (3.0 - 2.0 * fx)
+	fy = fy * fy * (3.0 - 2.0 * fy)
+	var v00: float = _hash01(gx, gy, seed)
+	var v10: float = _hash01(gx + 1, gy, seed)
+	var v01: float = _hash01(gx, gy + 1, seed)
+	var v11: float = _hash01(gx + 1, gy + 1, seed)
+	var top: float = lerpf(v00, v10, fx)
+	var bot: float = lerpf(v01, v11, fx)
+	return lerpf(top, bot, fy)
 
 
 func _ticks_per_day() -> int:
