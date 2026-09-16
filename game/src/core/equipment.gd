@@ -166,6 +166,17 @@ func loadout(avatar: PlayerAvatar) -> Dictionary:
 			continue
 		var instance: Dictionary = instance_of(avatar, instance_id)
 		var entry_template: Dictionary = template(str(instance.get("templateId", "")))
+		if _rules.broken(instance):
+			# 损坏即失效（D-63）：这一件不参与任何数值——武器坏在手里就是没武器，
+			# 护甲坏在身就是没护甲。行照留，让玩家看得见"身上这件坏了"
+			out["rows"].append({
+				"slot": str(slot),
+				"instanceId": instance_id,
+				"templateId": str(entry_template.get("templateId", "")),
+				"displayName": _rules.display_name(instance),
+				"broken": true,
+			})
+			continue
 		var stats: Dictionary = _rules.effective_stats(instance)
 		out["rows"].append({
 			"slot": str(slot),

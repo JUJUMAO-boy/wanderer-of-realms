@@ -116,8 +116,6 @@ func complete(quest_id: String, branch_id: String, month: int) -> Dictionary:
 		avatar.money += money
 		avatar.set_reputation(quest.city_id, avatar.get_reputation(quest.city_id) + reputation)
 		avatar.karma += karma
-		# 功绩（D-62）：交付过几张单子，是这一世"做过什么"里最实的一项
-		avatar.note_deed(PlayerAvatar.DEED_QUESTS_COMPLETED)
 
 	# M4.3：后果链的写入侧。标记带城市与类型，供生成侧按城读回
 	var flags: Array = _write_flags(quest, preview["outcome"])
@@ -292,8 +290,6 @@ func abandon(quest_id: String) -> Dictionary:
 	if quest == null:
 		return _fail(ERROR_NOT_FOUND, "没有这张委托：%s" % quest_id)
 	world.remove_quest(quest_id)
-	if world.avatar != null:
-		world.avatar.note_deed(PlayerAvatar.DEED_QUESTS_ABANDONED)
 	return {
 		"ok": true, "questId": quest_id, "cityId": quest.city_id,
 		"errorCode": ERROR_NONE, "error": "",

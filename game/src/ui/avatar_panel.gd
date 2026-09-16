@@ -225,7 +225,7 @@ static func _draw_header(
 		"幸运 %d    善恶 %d" % [int(view.get("luck", 0)), int(view.get("karma", 0))],
 		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
 	UiTheme.draw_text_right(canvas, font, Vector2(info_right - 470.0, top + 56.0),
-		"↑↓ 选（装备 / 背包）　回车 穿脱", UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
+		"↑↓ 选（装备 / 背包）　回车 穿脱　R 就地修", UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
 
 	canvas.draw_line(Vector2(left, top + HEADER_HEIGHT - 8.0),
 		Vector2(left + width, top + HEADER_HEIGHT - 8.0), UiTheme.COLOR_BORDER, 1.0)
@@ -560,12 +560,19 @@ static func _draw_bag_section(
 		return bottom + 1.0
 	UiTheme.draw_section_title(canvas, font, Vector2(x, y + 14.0),
 		"背包（%d 件）" % rows.size(), width)
+	var selected: Dictionary = view.get("selected", {})
+	var repair: Dictionary = selected.get("portableRepair", {})
 	var action: String = str(view.get("actionLine", ""))
-	if not action.is_empty():
+	if str(repair.get("actionLine", "")).is_empty() and action.is_empty():
+		pass
+	else:
+		# 光标停在一件能就地修的装备上时，把"R 就地修"顶到最显眼的位置；
+		# 否则照旧显示穿脱那行（词缀与耐久已由视图模型拼接进 actionLine）。
+		var show: String = str(repair.get("actionLine", action))
 		UiTheme.draw_text_right(canvas, font, Vector2(x + width - 6.0, y + 14.0),
-			action,
-			UiTheme.COLOR_ACCENT if bool(view.get("selected", {}).get("canAct", false))
-				else UiTheme.COLOR_DIM,
+			show, UiTheme.COLOR_ACCENT if bool(repair.get("canRepair", false))
+				else (UiTheme.COLOR_ACCENT if bool(selected.get("canAct", false))
+					else UiTheme.COLOR_DIM),
 			UiTheme.SIZE_SMALL)
 	y += SECTION_TITLE_HEIGHT
 

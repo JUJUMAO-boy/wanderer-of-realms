@@ -38,37 +38,6 @@ const BODY_PARTS: Array = [
 	"head", "torso", "left_arm", "right_arm", "left_leg", "right_leg",
 ]
 
-## 这一世开始的月份（Clock.total_months()）与当时的年龄。年龄由这两样推算（D-60）：
-## 快进一跳十年、存档来回读几次，算出来的都是同一个数。
-##
-## `age` 仍是"现在的年龄"，但它成了派生值——Lifecycle 每次推进时间后把它重写一遍，
-## 真相是下面那两个字段。读到还没有它们的旧存档时是 LIFE_START_UNSET，
-## 此时 age 保持原样，与这个模块进来之前的行为一致。
-const LIFE_START_UNSET: int = -1
-
-## 功绩计数（每一世的功绩成就）。挂在化身上而不是世界里：这一世的账随这一世结束
-## （D-61）。键只增不改，世代记录按它们列"这一生做过什么"。
-const DEED_QUESTS_COMPLETED: String = "questsCompleted"
-const DEED_QUESTS_ABANDONED: String = "questsAbandoned"
-const DEED_EVENTS_RESOLVED: String = "eventsResolved"
-const DEED_BATTLES_WON: String = "battlesWon"
-const DEED_BATTLES_LOST: String = "battlesLost"
-const DEED_ITEMS_FORGED: String = "itemsForged"
-const DEED_ROUTES_BUILT: String = "routesBuilt"
-const DEED_KEYS: Array = [
-	DEED_QUESTS_COMPLETED, DEED_QUESTS_ABANDONED, DEED_EVENTS_RESOLVED,
-	DEED_BATTLES_WON, DEED_BATTLES_LOST, DEED_ITEMS_FORGED, DEED_ROUTES_BUILT,
-]
-const DEED_LABELS: Dictionary = {
-	DEED_QUESTS_COMPLETED: "交付委托",
-	DEED_QUESTS_ABANDONED: "放弃委托",
-	DEED_EVENTS_RESOLVED: "处置城市事件",
-	DEED_BATTLES_WON: "打赢的仗",
-	DEED_BATTLES_LOST: "打输的仗",
-	DEED_ITEMS_FORGED: "敲过的炉子",
-	DEED_ROUTES_BUILT: "开设的航线",
-}
-
 ## 性别（《世界模拟量化规则》11.4 节：男/女各 50%）
 const GENDER_MALE: String = "male"
 const GENDER_FEMALE: String = "female"
@@ -125,16 +94,6 @@ var dragonization: int = 0
 var dragon_soul: int = 0
 var known_runes: Array[String] = []
 
-## 这一世开始的月份与年龄。见 LIFE_START_UNSET。
-var life_start_month: int = LIFE_START_UNSET
-var life_start_age: int = 0
-
-## 这一世的功绩计数。见 DEED_* 常量。
-var deeds: Dictionary = {}
-
-## 这一世踏足过的城市，按先后次序、不重复。功绩里"走过哪些地方"取的就是它。
-var visited_cities: Array[String] = []
-
 var pos_x: int = 0  ## 世界网格坐标，M6.1 地图与移动
 var pos_y: int = 0
 
@@ -160,24 +119,6 @@ func get_reputation(city_id: String) -> int:
 
 func set_reputation(city_id: String, value: int) -> void:
 	city_reputation[city_id] = clampi(value, REPUTATION_MIN, REPUTATION_MAX)
-
-
-## 记一笔功绩。计数只增不减——"做过什么"不是"现在还剩什么"。
-func note_deed(key: String, amount: int = 1) -> void:
-	if amount == 0:
-		return
-	deeds[key] = int(deeds.get(key, 0)) + amount
-
-
-func deed(key: String) -> int:
-	return int(deeds.get(key, 0))
-
-
-## 记下"这一世到过这座城"。去过的地方不该因为后来又走了一遍而重复记。
-func visit_city(city_id: String) -> void:
-	if city_id.is_empty() or visited_cities.has(city_id):
-		return
-	visited_cities.append(city_id)
 
 
 func to_dict() -> Dictionary:
@@ -207,10 +148,6 @@ func to_dict() -> Dictionary:
 		"dragonization": dragonization,
 		"dragonSoul": dragon_soul,
 		"knownRunes": known_runes.duplicate(),
-		"lifeStartMonth": life_start_month,
-		"lifeStartAge": life_start_age,
-		"deeds": deeds.duplicate(),
-		"visitedCities": visited_cities.duplicate(),
 		"posX": pos_x,
 		"posY": pos_y,
 	}
@@ -251,14 +188,6 @@ static func from_dict(data: Dictionary) -> PlayerAvatar:
 	a.dragon_soul = int(data.get("dragonSoul", 0))
 	for r in data.get("knownRunes", []):
 		a.known_runes.append(str(r))
-	# 旧存档里没有起点：保持 LIFE_START_UNSET，年龄退回 age 那个数（D-60）。
-	# 主场景读档时会替它补一段起点（当前月份 − 年龄 × 12，起点年龄取 age），
-	# 于是年龄算出来还是原来那个，往后才开始正常走。
-	a.life_start_month = int(data.get("lifeStartMonth", LIFE_START_UNSET))
-	a.life_start_age = int(data.get("lifeStartAge", 0))
-	a.deeds = _int_dict(data.get("deeds", {}))
-	for c in data.get("visitedCities", []):
-		a.visited_cities.append(str(c))
 	a.pos_x = int(data.get("posX", 0))
 	a.pos_y = int(data.get("posY", 0))
 	return a

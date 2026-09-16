@@ -35,7 +35,9 @@ static func draw(
 	_draw_header(canvas, font, view, rect)
 	_draw_buttons(canvas, font, view, rect, hover)
 	_draw_list(canvas, font, view, rect, hover)
-	if is_forge(view):
+	if is_repair(view):
+		_draw_repair_detail(canvas, font, view, rect)
+	elif is_forge(view):
 		_draw_forge_detail(canvas, font, view, rect)
 	else:
 		_draw_detail(canvas, font, view, rect)
@@ -46,6 +48,12 @@ static func draw(
 ## 说明），只有"明细写什么"与"回车做什么"不同。
 static func is_forge(view: Dictionary) -> bool:
 	return str(view.get("pane", TradeViewModel.PANE_TRADE)) == TradeViewModel.PANE_FORGE
+
+
+## 这一页是修理（铁匠铺里切进来的第二档活计，D-64）。与强化共用"看着一件货决定
+## 花钱"的骨架，右边写耐久的现在与两档修完的样子。
+static func is_repair(view: Dictionary) -> bool:
+	return str(view.get("pane", TradeViewModel.PANE_TRADE)) == TradeViewModel.PANE_REPAIR
 
 
 # --- 布局（draw 与 hit_test 共用）---
@@ -91,7 +99,16 @@ static func _row_rect(rect: Rect2, view: Dictionary, index: int) -> Rect2:
 ## 「返回地图」留在最右——它是各视图共有的锚点，位置不随本面板多出几个按钮而漂移。
 static func buttons(view: Dictionary, rect: Rect2) -> Array:
 	var specs: Array = []
-	if is_forge(view):
+	if is_repair(view):
+		specs = [
+			{
+				"id": "deal",
+				"label": "修理",
+				"enabled": bool(view.get("canTrade", false)),
+			},
+			{"id": "forge", "label": "回铁匠铺"},
+		]
+	elif is_forge(view):
 		specs = [
 			{
 				"id": "deal",
@@ -193,8 +210,9 @@ static func _draw_header(
 		UiTheme.COLOR_TEXT if here else UiTheme.COLOR_WARN, UiTheme.SIZE_SMALL)
 	UiTheme.draw_text_right(canvas, font,
 		Vector2(_button_left(view, rect) - BACK_BUTTON_RESERVE, top + 56.0),
-		"↑↓ 选货　←→ 换城市　回车 敲一炉　F 回商铺" if is_forge(view) \
-			else "↑↓ 选货    ←→ 换城市看价    回车 成交    Tab 换买卖",
+		"↑↓ 选货　回车 修理　F 回铁匠铺　G 切档位" if is_repair(view) \
+			else ("↑↓ 选货　←→ 换城市　回车 敲一炉　F 回商铺" if is_forge(view) \
+				else "↑↓ 选货    ←→ 换城市看价    回车 成交    Tab 换买卖"),
 		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
 
 	canvas.draw_line(
@@ -227,6 +245,8 @@ static func _draw_list(
 			if str(view.get("side", "")) == TradeViewModel.SIDE_BUY else "你身上没什么可卖的。"
 		if is_forge(view):
 			empty_text = "背包里没有能进炉子的东西——炉子只收武器与防具。"
+		elif is_repair(view):
+			empty_text = "背包里没有会损坏的装备。"
 		UiTheme.draw_text(canvas, font, list.position + Vector2(10.0, 26.0),
 			empty_text, UiTheme.COLOR_DIM, UiTheme.SIZE_NORMAL)
 		return
@@ -261,19 +281,28 @@ static func _draw_row(
 	var kind_label: String = "货架" if kind == TradeViewModel.ROW_KIND_STOCK else "身上"
 	if kind == TradeViewModel.ROW_KIND_FORGE:
 		kind_label = "背包"
+	elif kind == TradeViewModel.ROW_KIND_REPAIR:
+		kind_label = "装备"
 
 	UiTheme.draw_text(canvas, font, Vector2(rect.position.x + 8.0, rect.position.y + 19.0),
 		"[%s]" % kind_label, UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
 	UiTheme.draw_text(canvas, font, Vector2(rect.position.x + 52.0, rect.position.y + 19.0),
 		str(row.get("label", "")), name_color, UiTheme.SIZE_NORMAL)
+	var price_text: String = str(row.get("priceText", ""))
+	if price_text.is_empty() and kind == TradeViewModel.ROW_KIND_REPAIR:
+		# 修理行没有常规"价"——看的是修到最省那档要花多少；视图模型把最省的
+		# 档位金额放在 price，这里铸成文本，免得右列空着
+		price_text = AvatarViewModel.money_label(int(row.get("price", 0)))
 	UiTheme.draw_text_right(canvas, font,
 		Vector2(rect.position.x + rect.size.x - 8.0, rect.position.y + 19.0),
-		str(row.get("priceText", "")),
+		price_text,
 		UiTheme.COLOR_ACCENT if enabled else UiTheme.COLOR_DIM, UiTheme.SIZE_NORMAL)
 
 	UiTheme.draw_text(canvas, font, Vector2(rect.position.x + 52.0, rect.position.y + 33.0),
 		"%s · %s · %s" % [
-			str(row.get("rarityLabel", "")), str(row.get("categoryLabel", "")),
+			str(row.get("rarityLabel", "")),
+			str(row.get("categoryLabel", "")) if kind != TradeViewModel.ROW_KIND_REPAIR \
+				else str(row.get("durabilityText", "")),
 			str(row.get("detail", "")),
 		],
 		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
@@ -291,10 +320,11 @@ static func _draw_row(
 			str(row.get("levelLabel", "")), UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
 
 	if selected and not enabled:
+		var reason: String = "现在动不了" if kind == TradeViewModel.ROW_KIND_FORGE \
+			else ("修不起" if kind == TradeViewModel.ROW_KIND_REPAIR else "买不起")
 		UiTheme.draw_text_right(canvas, font,
 			Vector2(rect.position.x + rect.size.x - 8.0, rect.position.y + 33.0),
-			"现在动不了" if kind == TradeViewModel.ROW_KIND_FORGE else "买不起",
-			UiTheme.COLOR_WARN, UiTheme.SIZE_SMALL)
+			reason, UiTheme.COLOR_WARN, UiTheme.SIZE_SMALL)
 
 
 # --- 绘制：右列价目 ---
@@ -393,6 +423,51 @@ static func _draw_forge_detail(
 		UiTheme.draw_text(canvas, font, Vector2(x, y), str(affix.get("text", "")),
 			UiTheme.COLOR_UP, UiTheme.SIZE_NORMAL)
 		y += FACTOR_LINE_HEIGHT
+
+
+## 右列：修理的明细。抬头、因子的排法与强化一模一样（同一个版面），底下补一句
+## 便携工具的提醒——背包里那个修补工具不进这里，是野外就地用的（D-64）。
+static func _draw_repair_detail(
+	canvas: CanvasItem, font: Font, view: Dictionary, rect: Rect2
+) -> void:
+	var column: Rect2 = column_rect(rect)
+	canvas.draw_rect(column, UiTheme.COLOR_LIST_BG)
+	var selected: Dictionary = view.get("selected", {})
+	if selected.is_empty():
+		UiTheme.draw_text(canvas, font, column.position + Vector2(12.0, 26.0),
+			"左边选一件装备，这里写它现在的耐久与两档修理的工钱。",
+			UiTheme.COLOR_DIM, UiTheme.SIZE_NORMAL)
+		return
+
+	var x: float = column.position.x + 12.0
+	UiTheme.draw_text(canvas, font, column.position + Vector2(12.0, 26.0),
+		"%s（%s）" % [str(selected.get("label", "")), str(selected.get("rarityLabel", ""))],
+		UiTheme.COLOR_ACCENT, UiTheme.SIZE_TITLE)
+	UiTheme.draw_text(canvas, font, column.position + Vector2(12.0, 50.0),
+		"%s · %s · %s" % [
+			str(selected.get("categoryLabel", "")),
+			str(selected.get("detail", "")),
+			str(selected.get("durabilityText", "")),
+		],
+		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
+
+	canvas.draw_line(Vector2(x, column.position.y + FACTOR_TOP - 26.0),
+		Vector2(column.position.x + column.size.x - 12.0, column.position.y + FACTOR_TOP - 26.0),
+		UiTheme.COLOR_BORDER, 1.0)
+
+	var y: float = column.position.y + FACTOR_TOP
+	y = _draw_factor_rows(canvas, font, selected.get("factorRows", []), x, y)
+
+	y += 12.0
+	canvas.draw_line(Vector2(x, y - 18.0),
+		Vector2(column.position.x + column.size.x - 12.0, y - 18.0),
+		UiTheme.COLOR_BORDER, 1.0)
+	UiTheme.draw_text(canvas, font, Vector2(x, y),
+		"工匠修回九成、满修修到满（按强化加价）。",
+		UiTheme.COLOR_TEXT, UiTheme.SIZE_NORMAL)
+	UiTheme.draw_text(canvas, font, Vector2(x, y + 22.0),
+		"背包里的「修补工具」走另一条路：野外就地用，不进这口炉子。",
+		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
 
 
 ## 逐因子的价目行。买卖与铁匠铺共用，两页的读法因此一致。

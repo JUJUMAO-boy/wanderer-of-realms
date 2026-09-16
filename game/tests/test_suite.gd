@@ -122,20 +122,26 @@ func run_all() -> int:
 	_test_item_affix_roll()
 	_test_item_affix_effects()
 	_test_item_durability()
+	_test_item_wear_and_broken()
+	_test_item_three_tier_repair()
+	_test_portable_tool()
 	_test_item_enhancement()
 	_test_item_instance_price()
 	_test_item_instance_round_trip()
 	_test_forge_view_model()
 	_test_forge_panel_hit_test()
-	print("=== 跨世转生：寿命、死亡与功绩 ===")
-	_test_lifecycle_lifespan()
-	_test_lifecycle_age()
-	_test_deeds_from_avatar()
-	_test_world_deeds()
-	_test_death_archive_and_clear()
-	_test_deed_counters()
-	_test_life_view_model()
-	_test_life_panel_hit_test()
+	print("=== 世界遭遇 ===")
+	_test_encounter_tier()
+	_test_encounter_chance()
+	_test_encounter_roll()
+	_test_encounter_group()
+	_test_encounter_city_npc()
+	_test_encounter_avoid()
+	_test_encounter_parley()
+	_test_encounter_units_and_resolve()
+	_test_level_gap_penalty()
+	_test_encounter_view_model()
+	_test_encounter_panel_hit_test()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -4067,6 +4073,15 @@ func _failing_seed(chance_bp: int) -> int:
 	return 1
 
 
+## 找一个"磨损必中"的种子：next_int(BP_FULL) 小于给定基点（武器磨损率 3000、
+## 护甲 5000）。测的是"掉下去之后会怎样"，所以按结果挑种子。
+func _wearing_seed(under_bp: int) -> int:
+	for seed_value in range(1, 20000):
+		if DeterministicRNG.new(seed_value).next_int(ItemInstance.BP_FULL) < under_bp:
+			return seed_value
+	return 1
+
+
 ## 往背包里塞一件模板，返回实例 id。
 func _give(avatar: PlayerAvatar, template_id: String, instance_id: String) -> String:
 	return CharacterCreation.add_item(avatar, template_id, instance_id)
@@ -4095,13 +4110,14 @@ func _test_equipment_slots() -> void:
 	_check(not gear.can_equip("consumable_healing_potion"), "药水穿不上")
 	_check(gear.can_equip("weapon_longsword_common"), "长剑穿得上")
 
-	# 配置里每一件都查一遍：装备的槽位要合法、消耗品不能声明槽位、武器的手数只能是 1 或 2
+	# 配置里每一件都查一遍：装备的槽位要合法、消耗品/工具不能声明槽位、武器的手数只能是 1 或 2
 	var weapons: int = 0
 	for item in ContentLoader.get_items():
 		var template_id: String = str(item.get("templateId", ""))
 		var category: String = str(item.get("category", ""))
-		if category == "consumable":
-			_eq(str(item.get("slot", "")), "", "消耗品不声明槽位：" + template_id)
+		if category != "weapon" and category != "armor":
+			# 消耗品与工具（如修补工具）都不占槽位——它们不是穿在身上的东西
+			_eq(str(item.get("slot", "")), "", "非装备不声明槽位：" + template_id)
 			continue
 		_check(gear.has_slot(str(item.get("slot", ""))), "装备的槽位合法：" + template_id)
 		if category == "weapon":
@@ -4537,7 +4553,8 @@ func _test_item_durability() -> void:
 	var rules: ItemInstance = _new_rules()
 	var instance: Dictionary = rules.roll_instance("weapon_longsword_common", "dur-1")
 	_eq(int(instance.get("durability", 0)), rules.durability_max(), "新货是满耐久")
-	_eq(rules.durability_text(instance), "耐久 100/100", "文案写着当前与上限")
+	_eq(rules.durability_text(instance), "耐久 %d/%d" % [rules.durability_max(), rules.durability_max()],
+		"新货是满耐久")
 	# 旧存档里没有这个字段时按满耐久算，而不是 0——0 会读成"这件东西坏了"
 	_eq(rules.durability({"templateId": "weapon_longsword_common"}), rules.durability_max(),
 		"缺字段按满耐久算")
@@ -4548,11 +4565,164 @@ func _test_item_durability() -> void:
 	var gear: Equipment = _new_gear()
 	gear.equip(avatar, sword)
 	var before: int = rules.durability(avatar.item_instances[sword])
-	_eq(rules.durability_text(avatar.item_instances[sword]), "耐久 100/100", "身上的货也写着耐久")
+	_eq(rules.durability_text(avatar.item_instances[sword]),
+		"耐久 %d/%d" % [rules.durability_max(), rules.durability_max()], "身上的货也写着耐久")
 	rules.forge(avatar.item_instances[sword], 100000, DeterministicRNG.new(1))
 	_eq(rules.durability(avatar.item_instances[sword]), before, "进炉子不改耐久")
 	gear.unequip(avatar, "main_hand")
 	_eq(rules.durability(avatar.item_instances[sword]), before, "穿脱也不改耐久")
+
+
+## 磨损与失效（D-62/D-63）。磨损是概率掉落、就地扣；归零即失效——武器不算攻击、
+## 护甲不算护甲，损坏的文字也标注出来。
+func _test_item_wear_and_broken() -> void:
+	var rules: ItemInstance = _new_rules()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-wear"
+	var gear: Equipment = _new_gear()
+	var sword: String = _give(avatar, "weapon_longsword_common", "wear-sword")
+	var body: String = _give(avatar, "armor_leather_common", "wear-body")
+	gear.equip(avatar, sword)
+	gear.equip(avatar, body)
+	var weapon: Dictionary = avatar.item_instances[sword]
+	var armor: Dictionary = avatar.item_instances[body]
+	var full: int = rules.durability_max()
+	_eq(int(weapon["durability"]), full, "新货满耐久")
+
+	# 命中武器：落在"必掉"的种子上，耐久应少 1 点
+	var weapon_before: int = rules.durability(weapon)
+	var wore: bool = rules.wear(weapon, true, DeterministicRNG.new(_wearing_seed(3000)))
+	_check(wore, "这次命中把武器磨掉了一点")
+	_eq(rules.durability(weapon), weapon_before - 1, "武器确实掉了一点")
+
+	# 护甲受击：同理
+	var armor_before: int = rules.durability(armor)
+	rules.wear(armor, false, DeterministicRNG.new(_wearing_seed(5000)))
+	_eq(rules.durability(armor), armor_before - 1, "护甲受击磨掉一点")
+
+	# 归零即失效：把武器打到 0
+	weapon["durability"] = 0
+	_check(rules.broken(weapon), "耐久归零判为损坏")
+	_check(str(rules.durability_text(weapon)).contains("损坏"), "损坏的文案带标记")
+	var loadout: Dictionary = gear.loadout(avatar)
+	_eq(int(loadout["attack"]), 0, "主手损坏时攻击归零")
+	_eq(int(loadout["armor"]), 6, "护甲没坏，护甲值照旧")
+	var has_broken_row: bool = false
+	for row in loadout["rows"]:
+		if bool(row.get("broken", false)):
+			has_broken_row = true
+	_check(has_broken_row, "损坏的货在栏位里被标出来")
+
+
+## 三档修理（便携/工匠/满修，D-64）。便携每次回五成、封顶九成、不花钱；
+## 工匠修回九成；满修到满且按强化等级加价。缺口为零时修不动。
+func _test_item_three_tier_repair() -> void:
+	var rules: ItemInstance = _new_rules()
+	var full: int = rules.durability_max()
+	_eq(full, 150, "上限提到 150（更耐用），否则这段算式没意义")
+	var ninty: int = roundi(full * 0.9)
+	var portable_cap: int = roundi(full * 0.9)
+	var portable_restore: int = roundi(full * 0.5)
+
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-repair"
+	avatar.money = 100000
+	var sword: String = _give(avatar, "weapon_longsword_common", "rep-sword")
+	var inst: Dictionary = avatar.item_instances[sword]
+
+	# 满耐久的东西修不动
+	_eq(str(rules.can_repair(inst, ItemInstance.REPAIR_FULL, 100000).get("errorCode", "")),
+		ItemInstance.ERROR_PRECONDITION_FAILED, "满耐久不用修")
+	_check(not bool(rules.apply_repair(inst, ItemInstance.REPAIR_FULL).get("ok", false)),
+		"满耐久调用 apply_repair 返回失败")
+
+	# 强化一级，验证满修按强化加价（+1 → 每点单价 3×(1+0.2)）
+	inst["modifiers"] = []
+	inst["durability"] = full
+	_check(bool(rules.forge(inst, 100000, DeterministicRNG.new(1)).get("upgraded", false)),
+		"把这一件敲到 +1")
+	_eq(int(inst["enhancement"]), 1, "强化一级")
+	# 磨掉 30 点
+	inst["durability"] = full - 30
+	var mid: int = full - 30
+
+	# 各档目标
+	_eq(rules.repair_target(inst, ItemInstance.REPAIR_FULL), full, "满修的目标是顶")
+	_eq(rules.repair_target(inst, ItemInstance.REPAIR_CRAFTSMAN), ninty, "工匠修回九成")
+	_eq(rules.repair_target(inst, ItemInstance.REPAIR_PORTABLE),
+		mini(mid + portable_restore, portable_cap), "便携回五成、封顶九成")
+
+	# 各档工钱：工匠每点 2 铜，满修每点 3×(1+0.2)=4 铜（按缺口算）
+	_eq(rules.repair_cost(inst, ItemInstance.REPAIR_CRAFTSMAN), (ninty - mid) * 2, "工匠按缺口计价")
+	_eq(rules.repair_cost(inst, ItemInstance.REPAIR_FULL), (full - mid) * 4, "满修按缺口、按强化加价")
+	_eq(rules.repair_cost(inst, ItemInstance.REPAIR_PORTABLE), 0, "便携不花钱")
+
+	# 便携就地修：改这一件、返回前后与成本
+	var portable: Dictionary = rules.apply_repair(inst, ItemInstance.REPAIR_PORTABLE)
+	_check(bool(portable.get("ok", false)), "便携修得动")
+	_eq(int(portable["after"]), mini(mid + portable_restore, portable_cap), "便携的目标吻合")
+	_eq(int(portable["cost"]), 0, "便携不花钱")
+	_check(not rules.broken(inst), "修完之后不是损坏了")
+
+	# 钱不够满修的时候 can_repair 拦得下来
+	var drained: Dictionary = rules.can_repair(inst, ItemInstance.REPAIR_FULL, 1)
+	_eq(str(drained.get("errorCode", "")), ItemInstance.ERROR_PRECONDITION_FAILED, "钱不够修不成")
+
+	# 便携反复用顶到九成就不涨了
+	var after_portable: int = rules.durability(inst)
+	while rules.can_repair(inst, ItemInstance.REPAIR_PORTABLE, 0).get("ok", false):
+		rules.apply_repair(inst, ItemInstance.REPAIR_PORTABLE)
+	_eq(rules.repair_target(inst, ItemInstance.REPAIR_PORTABLE), rules.durability(inst),
+		"便携永远修不满，顶死在九成")
+
+
+## 道具库的修补工具（D-64）。配置里写明功能与获取途径；背包里带着它、光标停在一
+## 件受伤装备上时，角色面板报"可以就地修"；不带则不报。
+func _test_portable_tool() -> void:
+	var tool: Dictionary = {}
+	for item in ContentLoader.get_items():
+		if str(item.get("repairTool", "")) == "portable":
+			tool = item
+			break
+	_check(not tool.is_empty(), "表里有修补工具")
+	_eq(str(tool.get("templateId", "")), "tool_repair_portable", "工具 id")
+	_eq(str(tool.get("category", "")), "tool", "归在工具类")
+	_eq(str(tool.get("subtype", "")), "repair", "子类是修理")
+	_check(str(tool.get("effectText", "")).length() > 0, "道具库写明功能")
+	_check(str(tool.get("getMethod", "")).length() > 0, "道具库写明获取途径")
+	_check(int(tool.get("price", 0)) > 0, "有标价（买得到）")
+
+	var tables: Dictionary = {"itemTemplates": _item_template_table()}
+	var gear: Equipment = _new_gear()
+	var rules: ItemInstance = gear.rules()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-tool"
+	var sword: String = _give(avatar, "weapon_longsword_common", "tool-sword")
+	gear.equip(avatar, sword)
+	var inst: Dictionary = avatar.item_instances[sword]
+
+	# 没带工具时，光标停在这把受伤的剑上也不给"就地修"
+	inst["durability"] = 100
+	_check(not AvatarViewModel.has_portable_tool(avatar, tables["itemTemplates"]),
+		"没带工具时 has_portable_tool 为假")
+	var bare_view := AvatarViewModel.build(avatar, _new_derived(), tables, "野外", gear, 0)
+	_check(not bool(bare_view["selected"].get("portableRepair", {}).get("canRepair", false)),
+		"没带工具时不给就地修提示")
+
+	# 带上工具之后，同样这件剑就修得动了
+	_give(avatar, "tool_repair_portable", "tool-1")
+	_check(AvatarViewModel.has_portable_tool(avatar, tables["itemTemplates"]),
+		"带了工具后 has_portable_tool 为真")
+	var repair_view := AvatarViewModel.build(avatar, _new_derived(), tables, "野外", gear, 0)
+	var info: Dictionary = repair_view["selected"].get("portableRepair", {})
+	_check(bool(info.get("canRepair", false)), "光标停在受伤装备且带工具时可修")
+	_check(str(info.get("actionLine", "")).length() > 0, "就地修的动作说明已有人话")
+
+	# 满耐久的装备即使带着工具也不报"可修"
+	inst["durability"] = rules.durability_max()
+	var full_view := AvatarViewModel.build(avatar, _new_derived(), tables, "野外", gear, 0)
+	_check(not bool(full_view["selected"].get("portableRepair", {}).get("canRepair", false)),
+		"满耐久的装备不报可修")
 
 
 ## 强化（D-57）：上限 +5、每级按基础值加一成、第 3 级起会失手、失手掉一级且钱照扣。
@@ -4847,411 +5017,478 @@ func _test_forge_panel_hit_test() -> void:
 				"多出来的按钮不压到邻居：%d / %d" % [i, j])
 
 
-# --- 跨世转生（M9）---
+# --- 世界遭遇（M9：谁在什么地方因为什么拦住你）---
 
-## 《数值框架》2.2 节的种族寿命 × 魂力系数（D-58）。
-func _test_lifecycle_lifespan() -> void:
-	var life := _new_lifecycle()
-	# SOU 10 是普通成年的基准 → 系数 1.0，于是普通人正好活到种族寿命那一年
-	_eq(life.lifespan("human", 10), 80, "魂力 10 的人类活到 80 岁")
-	_eq(life.lifespan("elf", 10), 500, "精灵活到 500 岁（取自配置，不是另一张表）")
-	_eq(life.lifespan("half_orc", 10), 60, "半兽人的寿命也在配置里")
-	# 魂力每高 1 点系数 +0.005：SOU 30 → 1.10，SOU 100 → 1.45
-	_eq(life.lifespan("human", 30), 88, "魂力 30 → 系数 1.10 → 88 岁")
-	_eq(life.lifespan("human", 100), 116, "魂力 100 → 系数 1.45 → 116 岁")
-	_check(life.lifespan("elf", 100) > life.lifespan("elf", 10), "魂力越高活得越久")
-	# 魂力低也不至于短到活不完一个童年：下限是护栏
-	_eq(life.lifespan("human", 0), 76, "魂力 0 → 系数 0.95 → 76 岁")
-	_eq(life.lifespan("human", 1000), 160, "魂力再高也被上限 2.0 封住（护栏）")
-	_eq(life.soul_factor(10), 1.0, "基准魂力的系数正好是 1.0")
-
-	# 种族没配寿命时退回兜底值——拼错一个 raceId 不该让人一出生就寿终
-	_eq(life.lifespan("nobody", 10), 80, "没见过的种族退回兜底寿命")
-	var avatar := PlayerAvatar.new()
-	avatar.race = "dwarf"
-	_eq(life.lifespan_of(avatar), 300, "化身的寿命按它的种族取")
-	avatar.attributes[PlayerAvatar.ATTR_SOUL] = 100
-	_check(life.lifespan_of(avatar) > 300, "魂力算在化身身上，不是只算在种族上")
+## 一格的坐标：相对某座城挪 dx / dy 格。分档用例都从城市坐标出发算，
+## 免得把"哪一格属于第几档"再抄一遍。
+func _pos_near(world: WorldState, city_id: String, dx: int, dy: int) -> Vector2i:
+	var city: City = world.get_city(city_id)
+	return Vector2i(city.coord_x + dx, city.coord_y + dy)
 
 
-## 年龄从"这一世开始的月份"推算（D-60）：快进一跳十年也算得对。
-func _test_lifecycle_age() -> void:
-	var life := _new_lifecycle()
-	_eq(life.age_at(20, 0, 0), 20, "刚开始的那一个月不多算")
-	_eq(life.age_at(20, 0, 11), 20, "差一个月不到一岁，还是 20")
-	_eq(life.age_at(20, 0, 12), 21, "满一年加一岁")
-	_eq(life.age_at(20, 36, 156), 30, "第 36 月起始、第 156 月是 30 岁")
-	_eq(life.age_at(45, PlayerAvatar.LIFE_START_UNSET, 999), 45,
-		"起点未知（旧存档）时年龄退回 age 那个数")
-
-	var avatar := PlayerAvatar.new()
-	avatar.age = 20
-	avatar.life_start_age = 20
-	avatar.life_start_month = 0
-	_eq(life.current_age(avatar, 24), 22, "两年之后是 22 岁")
-	_eq(life.current_age(avatar, 120), 30, "快进十年就是十岁，不靠逐月自增")
-	_eq(life.months_lived(avatar, 30), 30, "活了 30 个月")
-	# 读到旧存档：没有起点，age 就是它自己那个数
-	var old := PlayerAvatar.new()
-	old.age = 44
-	_eq(life.current_age(old, 500), 44, "旧存档的年龄不因为读了一次档就变")
-
-	var span: int = life.lifespan_of(avatar)
-	_eq(span, 80, "普通人类的寿命上限")
-	_check(life.is_elder(64, 80), "64 岁起算暮年（寿命的 80%）")
-	_check(not life.is_elder(63, 80), "63 岁还没到暮年线")
-	_eq(life.elder_age(80), 64, "暮年线是寿命的八成")
-	_check(not life.has_reached(79, 80), "79 岁还没到头")
-	_check(life.has_reached(80, 80), "80 岁寿终")
-	_eq(life.remaining_years(75, 80), 5, "75 岁时还剩 5 年")
-	_eq(life.remaining_years(90, 80), 0, "过了寿命线就剩 0 年，不给负数")
-	_eq(life.death_month(20, 0, 80), 720, "20 岁开始、寿命 80 → 第 720 月寿终")
-	_eq(life.death_month(20, PlayerAvatar.LIFE_START_UNSET, 80), PlayerAvatar.LIFE_START_UNSET,
-		"起点未知时给不出寿终的那个月")
-
-
-## 功绩表：身家、名声、经历、关系、对世界做过的事（D-62）。
-func _test_deeds_from_avatar() -> void:
-	var reinc: Reincarnation = _new_reincarnation(7)
-	var avatar := PlayerAvatar.new()
-	avatar.avatar_id = "avatar-deeds"
-	avatar.display_name = "试剑人"
-	avatar.money = 12345
-	avatar.debt_copper = 300
-	avatar.karma = -6
-	avatar.luck = 12
-	avatar.attributes[PlayerAvatar.ATTR_STRENGTH] = 33
-	avatar.skills = {"sword_slash": 60, "fire_bolt": 80, "cooking": 5}
-	_give(avatar, "weapon_longsword_common", "deed-sword")
-	avatar.set_reputation("port_thorne", 40)
-	avatar.set_reputation("ironhold", -25)
-	avatar.set_reputation("green_hollow", 0)
-	avatar.note_deed(PlayerAvatar.DEED_QUESTS_COMPLETED, 3)
-	avatar.note_deed(PlayerAvatar.DEED_BATTLES_WON, 2)
-	avatar.visit_city("port_thorne")
-	avatar.visit_city("port_thorne")
-	avatar.visit_city("ironhold")
-
-	var deeds: Dictionary = reinc.deeds_from(avatar, {
-		"age": 62,
-		"lifespan": 88,
-		"monthsLived": 504,
-		"world": {"routesOwned": 2, "routesTotal": 9, "flags": 4, "cities": 8},
-	})
-	_eq(int(deeds["age"]), 62, "记着享年")
-	_eq(int(deeds["lifespan"]), 88, "也记着寿命上限")
-	_eq(int(deeds["monthsLived"]), 504, "活了 42 年 = 504 个月")
-	_eq(int(deeds["money"]), 12345, "身家：终了时的现钱")
-	_eq(int(deeds["debtCopper"]), 300, "身家：欠着的债")
-	_eq(int(deeds["itemCount"]), 1, "身家：背包件数")
-	_eq(int(deeds["equippedCount"]), 0, "身家：身上披挂件数")
-	_eq(int(deeds["karma"]), -6, "名声：善恶")
-	_eq(int(deeds["luck"]), 12, "名声：幸运")
-	_eq(int(deeds["attributes"][PlayerAvatar.ATTR_STRENGTH]), 33, "记着终了时的七维")
-
-	_eq(deeds["topSkills"].size(), 3, "练过的技能都记下来")
-	_eq(str(deeds["topSkills"][0]["skillId"]), "fire_bolt", "熟练度最高的排最前")
-	_eq(int(deeds["topSkills"][0]["level"]), 80, "它的熟练度也对")
-	_eq(str(deeds["topSkills"][2]["skillId"]), "cooking", "练得最少的排最后")
-
-	_eq(deeds["reputation"].size(), 2, "声誉 0 的城不进名单")
-	_eq(str(deeds["reputation"][0]["cityId"]), "port_thorne", "按绝对值从大到小排")
-	_eq(int(deeds["reputation"][1]["value"]), -25, "负声誉也照写")
-
-	_eq(int(deeds["counters"][PlayerAvatar.DEED_QUESTS_COMPLETED]), 3, "经历：交付过 3 张单子")
-	_eq(int(deeds["counters"][PlayerAvatar.DEED_BATTLES_WON]), 2, "经历：赢过 2 场")
-	_eq(int(deeds["counters"][PlayerAvatar.DEED_BATTLES_LOST]), 0,
-		"没打过的仗记 0，而不是整行消失")
-	_eq(deeds["visitedCities"].size(), 2, "去过的地方不重复记")
-	_eq(int(deeds["world"]["routesOwned"]), 2, "世界侧的那一份照搬进来")
-	_eq(int(deeds["world"]["flags"]), 4, "世界标记数也照搬")
-
-
-## 世界侧功绩：玩家名下的航线、世界标记、城数（D-62）。
-func _test_world_deeds() -> void:
-	# 用带 NPC 的那一套：预置商路是在 bootstrap 里铺的，而这里要数它
-	var built: Dictionary = _new_sim()
+## 装了遭遇系统的测试世界。with_npcs 为真时城里才有人可拦路（城内遭遇要用真人）。
+func _new_encounters(with_npcs: bool = true) -> Dictionary:
+	var built: Dictionary = _new_sim(with_npcs)
 	var world: WorldState = built["world"]
-	var plain: Dictionary = Reincarnation.world_deeds(world)
-	_eq(int(plain["routesOwned"]), 0, "开局玩家名下没有航线")
-	_check(int(plain["routesTotal"]) > 0, "世界自己是有商路的")
-	_eq(int(plain["cities"]), world.get_city_count(), "城数取自世界")
-	_eq(int(plain["flags"]), 0, "开局没有世界标记")
-
-	var ids: Array = Array(world.get_city_ids())
-	world.add_route(TradeRoute.make(
-		str(ids[0]), str(ids[1]), TradeRoute.KIND_SMUGGLING, 0, TradeRoute.OWNER_PLAYER
-	))
-	world.world_flags["deed-test"] = true
-	var after: Dictionary = Reincarnation.world_deeds(world)
-	_eq(int(after["routesOwned"]), 1, "玩家自己开的航线算在自己头上")
-	_eq(int(after["flags"]), 1, "世界标记数跟着涨")
-	_eq(int(Reincarnation.world_deeds(null).get("routesOwned", -1)), 0,
-		"没有世界时给一份空功绩，而不是崩掉")
-
-
-## 死亡结算与清空：档案、死因、未办完的委托随化身作废（D-61）。
-func _test_death_archive_and_clear() -> void:
-	var built: Dictionary = _new_sim(false)
-	var world: WorldState = built["world"]
-	var sim: WorldSim = built["sim"]
-	var reinc: Reincarnation = _new_reincarnation(3)
-	var soul := SoulRecord.new()
-	soul.soul_id = "soul-m9"
-
+	var grid: MapGrid = built["grid"]
 	var avatar := PlayerAvatar.new()
-	avatar.avatar_id = "avatar-0001"
-	avatar.display_name = "退隐者"
-	avatar.skills = {"sword_slash": 50}
+	avatar.avatar_id = "avatar-enc"
+	avatar.display_name = "试作角色"
+	avatar.attributes = _plain_attributes()
 	world.avatar = avatar
-
-	# 手上接一张委托：它应当随这一世一起作废
-	_set_all_dimensions(world, "aedran", 90)
-	world.get_city("aedran").wealth = 40
-	var offer: Quest = sim.quests.list_available("aedran", 0)[0]
-	sim.quests.accept(offer.quest_id, 0)
-	_eq(world.quests.size(), 1, "手上有一张没办完的委托")
-	# 世界侧留下的东西：不该被死亡抹掉
-	world.world_flags["quest.aedran.haul.kept"] = true
-
-	var report: Dictionary = reinc.settle_death(soul, avatar, Reincarnation.CAUSE_RETIRE, 44, {
-		"age": 31,
-		"lifespan": 88,
-		"deeds": {"money": 999, "counters": {}, "world": {"routesOwned": 1}},
-	})
-	_eq(soul.reincarnation_count, 1, "转生次数 +1")
-	_eq(soul.life_archives.size(), 1, "留下一份生命存档")
-	var archive: Dictionary = soul.life_archives[0]
-	_eq(str(archive["archiveId"]), str(report["archiveId"]), "返回的存档 ID 就是那一份")
-	_eq(int(archive["endedMonth"]), 44, "记着结束月")
-	_eq(str(archive["deathCause"]), Reincarnation.CAUSE_RETIRE, "记着死因")
-	_eq(int(archive["age"]), 31, "记着享年")
-	_eq(int(archive["lifespan"]), 88, "记着寿命上限")
-	_eq(int(archive["deeds"]["money"]), 999, "功绩原样进档案")
-	_eq(int(archive["deeds"]["world"]["routesOwned"]), 1, "世界侧的功绩也在里面")
-	_eq(str(archive["worldImpact"]["backgroundId"]), "", "worldImpact 照旧带着出身")
-
-	var cleared: Dictionary = reinc.clear_avatar_life(world)
-	_eq(int(cleared["abandonedQuests"]), 1, "没办完的委托随化身作废")
-	_eq(str(cleared["avatarId"]), "avatar-0001", "报出作废的是哪一世的化身")
-	_check(world.avatar == null, "这一世结束后世界上没有化身")
-	_eq(world.quests.size(), 0, "委托列表清空")
-	_check(world.world_flags.has("quest.aedran.haul.kept"),
-		"世界侧的账（世界标记）不随化身消失")
-
-
-## 功绩计数的三个钩子：委托交付、放弃、事件处置（D-62）。
-func _test_deed_counters() -> void:
-	var built: Dictionary = _new_sim()
-	var world: WorldState = built["world"]
-	var sim: WorldSim = built["sim"]
-	var avatar := PlayerAvatar.new()
-	avatar.avatar_id = "avatar-deeds-hook"
-	world.avatar = avatar
-
-	# 委托：交付一张、放弃一张
-	_set_all_dimensions(world, "aedran", 90)
-	world.get_city("aedran").wealth = 40
-	var offer: Quest = sim.quests.list_available("aedran", 0)[0]
-	sim.quests.accept(offer.quest_id, 0)
-	sim.quests.complete(offer.quest_id, "honest", 0)
-	_eq(avatar.deed(PlayerAvatar.DEED_QUESTS_COMPLETED), 1, "交付一张委托记一笔")
-
-	var second: Quest = sim.quests.list_available("aedran", 0)[0]
-	sim.quests.accept(second.quest_id, 0)
-	sim.quests.abandon(second.quest_id)
-	_eq(avatar.deed(PlayerAvatar.DEED_QUESTS_ABANDONED), 1, "放弃一张也记一笔")
-	_eq(avatar.deed(PlayerAvatar.DEED_QUESTS_COMPLETED), 1, "放弃不会把它算成交付")
-
-	# 事件：处置一次（索恩港的封港在第一个月自己触发）
-	sim.settle_month(1)
-	var event: CityEvent = world.find_event("ev-ev_02_kraken_blockade-1")
-	if event == null:
-		_check(false, "封港没有触发，事件那一条断言无从谈起")
-	else:
-		sim.events.resolve(event.event_id, "expose", 1)
-		_eq(avatar.deed(PlayerAvatar.DEED_EVENTS_RESOLVED), 1, "处置一场事件记一笔")
-
-	# 计数只增不减，且跟着化身过一遍 JSON
-	_eq(avatar.deed(PlayerAvatar.DEED_BATTLES_WON), 0, "没打过的仗是 0")
-	var restored: PlayerAvatar = PlayerAvatar.from_dict(avatar.to_dict())
-	_eq(restored.deed(PlayerAvatar.DEED_QUESTS_COMPLETED), 1, "计数能过存档往返")
-	_eq(restored.visited_cities.size(), avatar.visited_cities.size(), "到过的城也能往返")
-	_eq(restored.life_start_month, avatar.life_start_month, "这一世的起点月往返一致")
-	_eq(restored.life_start_age, avatar.life_start_age, "起点年龄往返一致")
-	var deeds: Dictionary = _new_reincarnation(1).deeds_from(avatar)
-	_eq(int(deeds["counters"][PlayerAvatar.DEED_EVENTS_RESOLVED]), 1,
-		"功绩表读的就是这些计数")
-
-
-## 世代记录界面：历代列表、功绩段落、两个按钮的取舍（D-62）。
-func _test_life_view_model() -> void:
-	var soul := SoulRecord.new()
-	soul.soul_id = "soul-view"
-	soul.reincarnation_count = 1
-	var life := _new_lifecycle()
-	var avatar := PlayerAvatar.new()
-	avatar.avatar_id = "avatar-0002"
-	avatar.display_name = "在世者"
-	avatar.race = "human"
-	avatar.age = 30
-	avatar.life_start_age = 30
-	avatar.life_start_month = 0
-
-	# 在世：只有这一世一行，底部给「结束这一生」
-	var alive: Dictionary = LifeViewModel.build(soul, avatar, life, 24, 0,
-		LifeViewModel.MODE_REVIEW, {"port_thorne": "索恩港"}, {})
-	_eq(int(alive["rowCount"]), 1, "还没死过：只有这一世一行")
-	_eq(str(alive["rows"][0]["kind"]), LifeViewModel.ROW_KIND_ALIVE, "那一行是在世的这一世")
-	# 起点是第 0 月、年龄 30；此刻是第 24 月，所以抬头该写 32 岁
-	_check(str(alive["aliveLine"]).contains("32 岁"), "抬头写的是现算的当前年龄")
-	_check(str(alive["aliveLine"]).contains("寿命上限约 80 岁"), "也写着寿命上限")
-	_check(bool(alive["canRetire"]), "在世时能主动结束这一生")
-	_check(not bool(alive["canRebirth"]), "在世时不给转生按钮")
-
-	# 加一份刚结束的档案：这一世与历代同时在列
-	soul.life_archives.append(_fake_archive(1, "先人", 60, 80))
-	var two: Dictionary = LifeViewModel.build(soul, avatar, life, 24, 0,
-		LifeViewModel.MODE_REVIEW, {"port_thorne": "索恩港"}, {"sword_slash": "挥砍"})
-	_eq(int(two["rowCount"]), 2, "历代与在世的那一世都在列上")
-	_eq(str(two["rows"][0]["kind"]), LifeViewModel.ROW_KIND_ALIVE, "在世的那一世排最上")
-	_eq(str(two["rows"][1]["kind"]), LifeViewModel.ROW_KIND_ARCHIVE, "其后是刚结束的那一世")
-	_eq(int(two["rows"][1]["lifeNumber"]), 1, "它是第 1 世")
-	_check(str(two["rows"][1]["meta"]).contains("寿终"), "行上写着死因")
-
-	# 光标停在那一世上：右列是它的功绩
-	var archived: Dictionary = LifeViewModel.build(soul, avatar, life, 24, 1,
-		LifeViewModel.MODE_REVIEW, {"port_thorne": "索恩港"}, {"sword_slash": "挥砍"})
-	var text: String = _section_text(archived)
-	_check(text.contains("享年 60 岁"), "功绩里写着享年")
-	_check(text.contains("寿终"), "也写着死因")
-	_check(text.contains("索恩港"), "名声那一栏翻得出城名")
-	_check(text.contains("挥砍"), "技艺那一栏翻得出技能名")
-	_check(text.contains("交付委托"), "经历那一栏翻得出功绩项")
-	_check(text.contains("对世界做过的事"), "世界侧那一栏也在")
-
-	# 死后：没有化身，落在最新那一世上，底部给「转生」
-	var dead: Dictionary = LifeViewModel.build(soul, null, life, 24, 0,
-		LifeViewModel.MODE_SETTLE, {}, {})
-	_eq(int(dead["rowCount"]), 1, "死后就只剩历代")
-	_check(bool(dead["canRebirth"]), "死后给转生按钮")
-	_check(not bool(dead["canRetire"]), "死后没有结束这一生")
-	_check(str(dead["hint"]).contains("转生"), "页脚说清按回车做什么")
-
-	# 上膛之后按钮换一句话，别让人以为第一次就结束了
-	var armed: Dictionary = LifeViewModel.build(soul, avatar, life, 24, 0,
-		LifeViewModel.MODE_REVIEW, {}, {}, true)
-	_check(str(armed["hint"]).contains("再按一次"), "上膛之后页脚改口提醒")
-	_check(bool(armed["retireArmed"]), "上膛状态传给了界面")
-	_eq(str(LifePanel.buttons(armed, PANEL_RECT)[0]["label"]), "再按一次就结束这一生",
-		"上膛之后按钮上写着这是一次确认")
-
-
-## 世代记录面板：行与按钮都点得中，段落不会被排出界（D-62）。
-func _test_life_panel_hit_test() -> void:
-	var soul := SoulRecord.new()
-	soul.soul_id = "soul-panel"
-	soul.reincarnation_count = 2
-	soul.life_archives.append(_fake_archive(1, "先人", 60, 80))
-	soul.life_archives.append(_fake_archive(2, "次人", 88, 88))
-	var life := _new_lifecycle()
-	var avatar := PlayerAvatar.new()
-	avatar.display_name = "在世者"
-	avatar.age = 40
-	avatar.life_start_age = 40
-	avatar.life_start_month = 0
-
-	var view: Dictionary = LifeViewModel.build(soul, avatar, life, 60, 0,
-		LifeViewModel.MODE_REVIEW, {"port_thorne": "索恩港"}, {})
-	var buttons: Array = LifePanel.buttons(view, PANEL_RECT)
-	_check(not UiTheme.find_button(buttons, "retire").is_empty(), "在世时有「结束这一生」")
-	_check(not UiTheme.find_button(buttons, "back").is_empty(), "在世时有「返回地图」")
-	_check(UiTheme.find_button(buttons, "rebirth").is_empty(), "在世时没有「转生」")
-
-	var sweep: Dictionary = _sweep_hits("life", view, PANEL_RECT)
-	_check(sweep.has("button"), "按钮在命中范围内")
-	_check(sweep.has("row"), "左列的行可点")
-	_eq(int(_hit_for("life", view, PANEL_RECT, "row", 0).get("index", -1)), 0,
-		"第一行报出自己的行号")
-	_check(LifePanel.hit_test(view, PANEL_RECT, Vector2(4.0, 4.0)).is_empty(),
-		"面板外的点击不算命中")
-
-	# 死后那一屏：转生按钮点得中
-	var dead: Dictionary = LifeViewModel.build(soul, null, life, 60, 0,
-		LifeViewModel.MODE_SETTLE, {}, {})
-	var dead_buttons: Array = LifePanel.buttons(dead, PANEL_RECT)
-	var rebirth: Dictionary = UiTheme.find_button(dead_buttons, "rebirth")
-	_check(not rebirth.is_empty(), "死后有「转生」按钮")
-	_eq(str(LifePanel.hit_test(dead, PANEL_RECT, _center(rebirth["rect"])).get("id", "")),
-		"rebirth", "转生那个按钮点得中")
-
-	# 功绩段落排成两栏：每一段都要落在右列之内，不然它会画到别的栏上或被裁掉
-	var placed: Array = LifePanel._detail_layout(view, PANEL_RECT)
-	var sections: Array = view.get("sections", [])
-	_eq(placed.size(), sections.size(), "每一段都有位置")
-	var column: Rect2 = LifePanel.column_rect(PANEL_RECT)
-	for entry in placed:
-		var position: Vector2 = entry["position"]
-		var width: float = float(entry["width"])
-		_check(position.x >= column.position.x and position.x + width <= column.end.x + 1.0,
-			"段落落在右列之内：%s" % str(entry["section"].get("title", "")))
-		_check(position.y >= column.position.y and position.y <= column.end.y,
-			"段落的起点在右列之内：%s" % str(entry["section"].get("title", "")))
-
-
-## 一份假的历代档案，只带功绩段落要读的那几样。
-func _fake_archive(index: int, name: String, age: int, lifespan_value: int) -> Dictionary:
 	return {
-		"archiveId": "soul-test-life-%03d" % index,
-		"soulId": "soul-test",
-		"avatarSnapshot": {
-			"displayName": name,
-			"race": "human",
-			"gender": PlayerAvatar.GENDER_MALE,
-			"attributes": _plain_attributes(),
-			"backgroundId": "",
-		},
-		"endedMonth": index * 120,
-		"deathCause": Reincarnation.CAUSE_NATURAL,
-		"age": age,
-		"lifespan": lifespan_value,
-		"deeds": {
-			"age": age,
-			"lifespan": lifespan_value,
-			"monthsLived": age * 12,
-			"money": 500,
-			"debtCopper": 0,
-			"itemCount": 2,
-			"equippedCount": 1,
-			"karma": 5,
-			"luck": 1,
-			"attributes": _plain_attributes(),
-			"topSkills": [{"skillId": "sword_slash", "level": 55}],
-			"reputation": [{"cityId": "port_thorne", "value": 30}],
-			"counters": {PlayerAvatar.DEED_QUESTS_COMPLETED: 4},
-			"visitedCities": ["port_thorne"],
-			"relations": {"hostName": "", "kin": 0, "enemies": 0},
-			"world": {"routesOwned": 1, "routesTotal": 9, "flags": 3, "cities": 8},
-		},
-		"worldImpact": {"hostAvatarId": "", "backgroundId": "", "debtCopper": 0},
+		"world": world, "grid": grid, "sim": built["sim"],
+		"system": EncounterSystem.create(world, grid, _new_derived()),
 	}
 
 
-## 把右列所有段落的标题与正文拼成一段文字，用来断言"界面上有没有这句话"。
-func _section_text(view: Dictionary) -> String:
-	var parts: Array = []
-	for section in view.get("sections", []):
-		parts.append(str(section.get("title", "")))
-		for line in section.get("lines", []):
-			parts.append(str(line))
-	return " / ".join(PackedStringArray(parts))
+func _test_encounter_tier() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var system: EncounterSystem = built["system"]
+
+	# 三档按离最近城市的距离切：0–9 / 10–19 / 20 以上（balance.encounters.tierBoundaries）
+	_eq(system.distance_to_nearest_city(_pos_near(world, "aedran", 0, 0)), 0, "站在城里距离为 0")
+	_eq(system.tier_at(_pos_near(world, "aedran", 9, 0)), 0, "离城 9 格是近郊")
+	_eq(system.tier_at(_pos_near(world, "aedran", 10, 0)), 1, "离城 10 格进远郊")
+	_eq(system.tier_at(_pos_near(world, "aedran", 19, 0)), 1, "离城 19 格还是远郊")
+	_eq(system.tier_at(_pos_near(world, "aedran", 20, 0)), 2, "离城 20 格进荒野深处")
+
+	# 三档的 TL 区间照《数值框架》12.1 的分层：平凡 1–5、精锐 6–10、凶险 11–20
+	_eq(system.tier_threat_range(0), [1, 5], "近郊的 TL 区间是平凡档")
+	_eq(system.tier_threat_range(1), [6, 10], "远郊的 TL 区间是精锐档")
+	_eq(system.tier_threat_range(2), [11, 20], "荒野深处的 TL 区间是凶险档")
+	_eq(system.tier_threat_range(99), [11, 20], "档位越界时退到最后一档")
+
+	# 离最近城市远的那一格不该算在城里，也不该算在路上
+	_eq(system.context_at(Vector2i(0, 0)), EncounterSystem.CONTEXT_WILD,
+		"地图角落是荒野")
+
+	# 站在城的坐标上就是"城里"
+	_eq(system.context_at(_pos_near(world, "aedran", 0, 0)), EncounterSystem.CONTEXT_CITY,
+		"站在城的坐标上算城里")
 
 
-func _new_lifecycle() -> Lifecycle:
-	return Lifecycle.new(
-		ContentLoader.get_balance_section("lifecycle"),
-		ContentLoader.race_lifespans()
+func _test_encounter_chance() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var system: EncounterSystem = built["system"]
+
+	_eq(system.encounter_chance_bp(EncounterSystem.CONTEXT_WILD, ""), 1600,
+		"荒野每判一次撞上的概率")
+	_eq(system.encounter_chance_bp(EncounterSystem.CONTEXT_ROAD, ""), 900,
+		"路上比荒野低——有人走的地方野兽少")
+
+	# 城里按治安线性缩：治安到 ceiling（30）就一点都不出，治安 0 是满值
+	var greenwade: City = world.get_city("greenwade")
+	greenwade.set_dimension(City.DIM_SECURITY, 30)
+	_eq(system.encounter_chance_bp(EncounterSystem.CONTEXT_CITY, "greenwade"), 0,
+		"治安到顶的城里不会出事")
+	greenwade.set_dimension(City.DIM_SECURITY, 0)
+	_eq(system.encounter_chance_bp(EncounterSystem.CONTEXT_CITY, "greenwade"), 2000,
+		"治安 0 的城里每次进城都可能被拦")
+	greenwade.set_dimension(City.DIM_SECURITY, 20)
+	_eq(system.encounter_chance_bp(EncounterSystem.CONTEXT_CITY, "greenwade"), 667,
+		"治安 20 的城里概率按比例缩到三分之一强")
+	_eq(system.encounter_chance_bp(EncounterSystem.CONTEXT_CITY, "no_such_city"), 0,
+		"没有这座城市就没有遭遇")
+
+	# 判定节奏：每 stepInterval（8）格一次
+	_check(not system.should_check(7), "走了 7 格还不判")
+	_check(system.should_check(8), "走满 8 格判一次")
+
+	# 路上：地图上画出来的那条线就是判据
+	var routes: Array = world.get_routes_sorted()
+	_check(not routes.is_empty(), "预置路线装上了")
+	if not routes.is_empty():
+		var route: TradeRoute = routes[0]
+		var a: City = world.get_city(str(route.city_a))
+		var b: City = world.get_city(str(route.city_b))
+		@warning_ignore("integer_division")
+		var mid := Vector2i((a.coord_x + b.coord_x) / 2, (a.coord_y + b.coord_y) / 2)
+		_check(system.on_route(mid), "商路中点算在路上")
+		_eq(system.context_at(mid), EncounterSystem.CONTEXT_ROAD, "商路中点走在路上")
+		_check(not system.on_route(Vector2i(0, 0)), "地图角落不在任何一条路上")
+
+
+func _test_encounter_roll() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = world.avatar
+	var system: EncounterSystem = built["system"]
+
+	# 荒野：偏好野兽与亡灵
+	avatar.pos_x = _pos_near(world, "aedran", 9, 0).x
+	avatar.pos_y = _pos_near(world, "aedran", 9, 0).y
+	var wild: Dictionary = system.roll(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-0001", DeterministicRNG.new(7)
 	)
+	_check(not wild.is_empty(), "荒野摇得出对手")
+	_eq(int(wild["tier"]), 0, "这一场记下了自己在第几档")
+	_check(int(wild["threatLevel"]) >= 1 and int(wild["threatLevel"]) <= 5,
+		"近郊的对手落在平凡档")
+	var wild_category: String = str((wild["opponents"][0] as Dictionary)["category"])
+	_check(wild_category == "beast" or wild_category == "undead",
+		"荒野上遇上的是野兽或亡灵%s" % _detail(wild_category))
+	_check(str(wild.get("story", "")).length() > 0, "写了一句为什么拦住你")
+
+	# 商路：偏好人形
+	var routes: Array = world.get_routes_sorted()
+	if not routes.is_empty():
+		var route: TradeRoute = routes[0]
+		var a: City = world.get_city(str(route.city_a))
+		var b: City = world.get_city(str(route.city_b))
+		@warning_ignore("integer_division")
+		var mid := Vector2i((a.coord_x + b.coord_x) / 2, (a.coord_y + b.coord_y) / 2)
+		avatar.pos_x = mid.x
+		avatar.pos_y = mid.y
+		var road: Dictionary = system.roll(
+			EncounterSystem.CONTEXT_ROAD, "aedran", 12, "enc-0002", DeterministicRNG.new(9)
+		)
+		_check(not road.is_empty(), "路上摇得出对手")
+		if not road.is_empty():
+			_eq(str((road["opponents"][0] as Dictionary)["category"]), "humanoid",
+				"路上遇上的是人形")
+
+	# 越走越凶：最远那一档的对手 TL 明显更高。(5, 5) 离八座城里的任何一座
+	# 都在 40 格以上（最近的索恩港在 (15, 40)），是最干净的一片荒野深处
+	avatar.pos_x = 5
+	avatar.pos_y = 5
+	var deep: Dictionary = system.roll(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-0003", DeterministicRNG.new(11)
+	)
+	_eq(int(deep["tier"]), 2, "地图角落是荒野深处")
+	_check(int(deep["threatLevel"]) >= 11, "荒野深处的对手落在凶险档以上")
+
+	# 同一段种子摇出同一场（存档重放要与当初一致）
+	var again: Dictionary = system.roll(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-0003", DeterministicRNG.new(11)
+	)
+	_eq(str(again["title"]), str(deep["title"]), "同种子摇出同一场遭遇")
+	_eq(int(again["threatLevel"]), int(deep["threatLevel"]), "对手强度也一致")
+
+	# check 的 engaged 为假是正常结果，不是错误
+	var quiet: Dictionary = system.check(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-0004",
+		DeterministicRNG.new(1), false
+	)
+	_check(bool(quiet.get("ok", false)), "判定本身总是成功")
+	_check(quiet.has("engaged"), "判定会说明这一次有没有撞上人")
+	# force 会跳过概率——调试用的"就地摇一场"走的就是这条
+	var forced: Dictionary = system.check(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-0005",
+		DeterministicRNG.new(1), true
+	)
+	_check(bool(forced.get("engaged", false)), "force 一定摇得出一场")
+
+
+func _test_encounter_group() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var system: EncounterSystem = built["system"]
+	var avatar: PlayerAvatar = world.avatar
+	avatar.pos_x = _pos_near(world, "aedran", 5, 0).x
+	avatar.pos_y = _pos_near(world, "aedran", 5, 0).y
+
+	var max_opponents: int = int(system.rules().get("maxOpponents", 3))
+	var seen: int = 0
+	for seed_value in range(1, 21):
+		var spec: Dictionary = system.roll(
+			EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-g%02d" % seed_value,
+			DeterministicRNG.new(seed_value)
+		)
+		if spec.is_empty():
+			continue
+		var count: int = (spec["opponents"] as Array).size()
+		_check(count >= 1 and count <= max_opponents,
+			"对手数量落在 1–%d 之间（这一场 %d 个）" % [max_opponents, count])
+		seen += 1
+	_check(seen > 0, "跑了若干种子，至少摇出一场")
+
+	# "成群"写在生物表上：野狼 groupMin 是 2
+	var wolf: Dictionary = ContentLoader.get_monster("mon_wolf")
+	_eq(int(wolf.get("groupMin", 0)), 2, "野狼是成群出现的")
+	_check(int(wolf.get("groupMax", 0)) >= int(wolf.get("groupMin", 0)),
+		"成群的上下限成序")
+	# 每条生物都能被某一档选中（否则"少了两种怪"从界面上看不出来）
+	for entry in ContentLoader.get_monsters():
+		var tl: int = int(entry.get("threatLevel", 0))
+		var matched: bool = false
+		for tier in range(3):
+			var range: Array = system.tier_threat_range(tier)
+			if tl >= int(range[0]) and tl <= int(range[1]):
+				matched = true
+				break
+		_check(matched, "生物 %s（TL %d）落在某一档里" % [str(entry.get("monsterId", "")), tl])
+
+
+func _test_encounter_city_npc() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var system: EncounterSystem = built["system"]
+	# 十字路治安 20，是最可能出事的那座城
+	var city: City = world.get_city("crossroad")
+	_check(city.get_dimension(City.DIM_SECURITY) < 30, "十字路的治安在门槛以下")
+	var avatar: PlayerAvatar = world.avatar
+	avatar.pos_x = _pos_near(world, "crossroad", 0, 0).x
+	avatar.pos_y = _pos_near(world, "crossroad", 0, 0).y
+
+	var spec: Dictionary = system.roll(
+		EncounterSystem.CONTEXT_CITY, "crossroad", 12, "enc-city", DeterministicRNG.new(3)
+	)
+	_check(not spec.is_empty(), "治安差的城里摇得出拦路的人")
+	if spec.is_empty():
+		return
+	_eq(str(spec["kind"]), EncounterSystem.KIND_NPC, "城里的对手是真人")
+	_eq(str(spec["nearestCityId"]), "crossroad", "这一场记在十字路头上")
+	var opponents: Array = spec["opponents"]
+	_check(opponents.size() >= 1 and opponents.size() <= 2, "城里拦路的一两个人")
+	var wanted: Array = system.rules().get("cityNpcCategories", [])
+	for opponent in opponents:
+		_check(bool(opponent.get("isNpc", false)), "对手是模拟居民")
+		_check(not str(opponent.get("npcId", "")).is_empty(), "带着这个人的 id")
+		var npc: SimNpc = world.get_npc(str(opponent["npcId"]))
+		_check(npc != null, "那个人真的在世界里")
+		if npc != null:
+			var category: String = str(EncounterSystem.profession_categories().get(
+				npc.profession_id, ""
+			))
+			_check(wanted.has(category), "拦路的是军中或灰色的人（%s）" % category)
+			_check(not npc.is_named, "具名 NPC 不会被当街拦住")
+		_check(bool(opponent.get("parleyable", false)), "人形对手谈得拢")
+	_eq(str((opponents[0] as Dictionary)["unitId"]), str((opponents[0] as Dictionary)["npcId"]),
+		"人形对手的单位 id 就是他的 id——标记才追得到人")
+
+
+func _test_encounter_avoid() -> void:
+	var built: Dictionary = _new_encounters()
+	var system: EncounterSystem = built["system"]
+
+	# 基础 + 敏捷 × 12 + 幸运 × 2（基点）
+	_eq(system.avoid_chance_bp(_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 10), 0), 5200,
+		"敏捷 10 的绕开率")
+	_eq(system.avoid_chance_bp(_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 20), 0), 6400,
+		"敏捷 20 的绕开率")
+	_eq(system.avoid_chance_bp(_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 10), 50), 6200,
+		"幸运 50 也算进去")
+	_eq(system.avoid_chance_bp(_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 0), -100), 2000,
+		"运气差、身子笨的人不好甩")
+	_eq(system.avoid_chance_bp(_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 100), 100), 9500,
+		"再高也封在 95%")
+	_eq(system.avoid_chance_bp(_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 0), -300), 500,
+		"再差也留着 5%")
+	_eq(system.avoid_time_days(), 1, "绕开要花掉一天")
+
+	var first: Dictionary = system.avoid_check(
+		_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 20), 0, DeterministicRNG.new(5)
+	)
+	var second: Dictionary = system.avoid_check(
+		_attributes_with(PlayerAvatar.ATTR_DEXTERITY, 20), 0, DeterministicRNG.new(5)
+	)
+	_eq(bool(first["escaped"]), bool(second["escaped"]), "同种子绕开的结果一致")
+	_check(first.has("chanceBp") and first.has("rollBp"), "判定报得出成功率与掷出的点数")
+
+
+func _test_encounter_parley() -> void:
+	var built: Dictionary = _new_encounters()
+	var system: EncounterSystem = built["system"]
+
+	# 两端是硬门槛，中间线性
+	_eq(system.parley_chance_bp(60), 10000, "敬重以上直接放行")
+	_eq(system.parley_chance_bp(100), 10000, "声誉满也还是放行")
+	_eq(system.parley_chance_bp(-60), 0, "敌视以下谈不拢")
+	_eq(system.parley_chance_bp(0), 5000, "无名之人的交涉率")
+	_eq(system.parley_chance_bp(20), 6000, "名声好一点就好谈一点")
+	_eq(system.parley_chance_bp(-20), 4000, "名声差一点就难谈一点")
+	_eq(system.parley_chance_bp(-59), 2050, "刚好在敌视门槛之前")
+
+	# 说不动的东西没有交涉可言，而且给出的理由不能让人误以为是名声不够
+	_eq(EncounterSystem.parley_block_reason_of(false, "beast"), "野兽不听人话",
+		"野兽那一条的理由")
+	_eq(EncounterSystem.parley_block_reason_of(false, "undead"), "这些东西没有能谈的余地",
+		"亡灵那一条的理由")
+	_eq(EncounterSystem.parley_block_reason_of(true, "humanoid"), "", "谈得拢就没有拦阻理由")
+
+
+func _test_encounter_units_and_resolve() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = world.avatar
+	var system: EncounterSystem = built["system"]
+	avatar.pos_x = _pos_near(world, "aedran", 5, 0).x
+	avatar.pos_y = _pos_near(world, "aedran", 5, 0).y
+
+	var spec: Dictionary = system.roll(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-fight", DeterministicRNG.new(4)
+	)
+	_check(not spec.is_empty(), "摇出一场来打")
+	if spec.is_empty():
+		return
+	var opponents: Array = spec["opponents"]
+	var spawns: Array = [[11, 3], [11, 5], [11, 7]]
+	var units: Array = system.units_of(spec, spawns)
+	_eq(units.size(), opponents.size(), "每个对手都变成一个参战单位")
+	for i in range(units.size()):
+		var unit: Dictionary = units[i]
+		_eq(str(unit["side"]), Combat.SIDE_ENEMY, "都在敌方一侧")
+		_eq(str(unit["unitId"]), str((opponents[i] as Dictionary)["unitId"]), "单位 id 对应得上")
+		_eq(int(unit["weaponAttack"]), int((opponents[i] as Dictionary)["attack"]),
+			"伤害就是生物表里那一口")
+		_eq(unit["position"], spawns[i], "站位由调用方给")
+		_check(int(unit["hp"]) > 0, "带着血量")
+
+	# 这样一支队伍开得起来
+	var combat: Combat = _new_combat(17)
+	var opened: Dictionary = combat.start({
+		"sessionId": "enc-test",
+		"units": units,
+		"obstacles": [],
+	})
+	_check(bool(opened.get("ok", false)), "遭遇的对手能直接开一场战斗")
+
+	# 结算只产出文案与世界事件流的一条记录（掉落与标记由战斗层与调用方落）
+	var won: Dictionary = system.resolve(
+		spec, EncounterSystem.OUTCOME_WON, 12, "补了刀"
+	)
+	_check(bool(won.get("ok", false)), "胜利结算得出来")
+	_check(str(won["text"]).contains(str(spec["title"])), "文案里写着对手是谁")
+	_check(str(won["text"]).contains("补了刀"), "文案里写着怎么处置的")
+	var notices: Array = won["notices"]
+	_eq(notices.size(), 1, "往事件流里记一条")
+	_eq(int((notices[0] as Dictionary)["month"]), 12, "记的是这个月")
+	_check(str((notices[0] as Dictionary)["text"]).length() > 0, "这条记录有内容")
+
+	var avoided: Dictionary = system.resolve(spec, EncounterSystem.OUTCOME_AVOIDED, 12)
+	_check(str(avoided["text"]).contains("绕开"), "绕开有自己的说法")
+	var parleyed: Dictionary = system.resolve(spec, EncounterSystem.OUTCOME_PARLEYED, 12)
+	_check(str(parleyed["text"]).contains("谈拢"), "交涉有自己的说法")
+	var bad: Dictionary = system.resolve(spec, "nonsense", 12)
+	_check(not bool(bad.get("ok", false)), "未知的结局给错误")
+	var missing: Dictionary = system.resolve({}, EncounterSystem.OUTCOME_WON, 12)
+	_check(not bool(missing.get("ok", false)), "没有这一场就结不了算")
+
+
+func _test_level_gap_penalty() -> void:
+	var combat: Combat = _new_combat(3)
+
+	# 《数值框架》13.2：TL 差超过 5 时命中与伤害逐步下降；低打低不惩罚
+	_eq(combat.level_gap(3, 9), 1, "差 6 级算越级 1 级")
+	_eq(combat.level_gap(3, 8), 0, "差 5 级还不罚")
+	_eq(combat.level_gap(9, 3), 0, "高打低不罚")
+	_eq(combat.level_gap_hit_penalty_bp(3, 9), 300, "越一级扣 3 个百分点的命中")
+	_eq(combat.level_gap_hit_penalty_bp(3, 14), 1800, "差 11 级扣 18 个百分点")
+	_check(absf(combat.level_gap_damage_ratio(3, 9) - 0.92) < 0.0001, "越一级伤害打九二折")
+	_check(absf(combat.level_gap_damage_ratio(3, 3) - 1.0) < 0.0001, "同级不折")
+	_check(absf(combat.level_gap_damage_ratio(1, 40) - 0.25) < 0.0001,
+		"差得再多也留着四分之一")
+	_eq(combat.apply_level_gap_to_damage(100, 3, 9), 92, "伤害按比例折")
+	_eq(combat.apply_level_gap_to_damage(100, 3, 3), 100, "没有差距就不动它")
+	_eq(combat.apply_level_gap_to_damage(1, 1, 40), 1, "折完仍有 1 点保底")
+
+
+func _test_encounter_view_model() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = world.avatar
+	var system: EncounterSystem = built["system"]
+	avatar.attributes = _attributes_with(PlayerAvatar.ATTR_DEXTERITY, 20)
+	# 站到最凶的那一档上去：近郊的对手与玩家同级，看不出越级警示
+	avatar.pos_x = 5
+	avatar.pos_y = 5
+
+	var spec: Dictionary = system.roll(
+		EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-view", DeterministicRNG.new(6)
+	)
+	var names: Dictionary = _city_names(world)
+	var view: Dictionary = EncounterViewModel.build(system, spec, 1, names, 0)
+	_check(not view.is_empty(), "视图建得出来")
+	_eq(str(view["title"]), str(spec["title"]), "抬头就是对手的名字")
+	_eq(int(view["rowCount"]), (spec["opponents"] as Array).size(), "左列一件一件列出对手")
+
+	var choices: Array = view["choices"]
+	_eq(choices.size(), 3, "三条路都摆出来")
+	_eq(str((choices[0] as Dictionary)["choiceId"]), EncounterSystem.CHOICE_FIGHT, "第一条是迎战")
+	_eq(str((choices[1] as Dictionary)["choiceId"]), EncounterSystem.CHOICE_AVOID, "第二条是绕开")
+	_eq(str((choices[2] as Dictionary)["choiceId"]), EncounterSystem.CHOICE_PARLEY, "第三条是交涉")
+	_check(str((choices[1] as Dictionary)["effectLabel"]).contains("成功率"),
+		"绕开上写着大概几成")
+	_check(str((choices[0] as Dictionary)["effectLabel"]).contains("个对手"),
+		"迎战上写着对面有几个人")
+
+	# 越级危险必须在按下迎战之前就写出来（13.2 的惩罚会实打实生效）
+	_eq(bool(view["outmatched"]), true, "对手比玩家高出一大截时会标出来")
+	_eq(str(view["dangerLabel"]), "比你强出一大截", "危险等级写在抬头下面")
+	var same: Dictionary = EncounterViewModel.build(system, spec, int(spec["threatLevel"]), names)
+	_eq(str(same["dangerLabel"]), "与你势均力敌", "TL 相同时是另一种说法")
+	_eq(bool(same["outmatched"]), false, "势均力敌不算越级")
+
+	# 野兽那一条没有交涉，且理由要说清
+	if not bool(spec["parleyable"]):
+		_eq(bool((choices[2] as Dictionary)["enabled"]), false, "说不动的东西交涉不可选")
+		_check(str((choices[2] as Dictionary)["blockedReason"]).length() > 0, "并且说明理由")
+
+	# 光标越界会被夹住
+	var clamped: Dictionary = EncounterViewModel.build(system, spec, 1, names, 99)
+	_eq(int(clamped["cursor"]), 2, "光标夹在最后一条上")
+	var negative: Dictionary = EncounterViewModel.build(system, spec, 1, names, -5)
+	_eq(int(negative["cursor"]), 0, "负数夹回第一条")
+	_check(EncounterViewModel.build(system, {}, 1, names).is_empty(), "没有遭遇就没有这一屏")
+
+
+func _test_encounter_panel_hit_test() -> void:
+	var built: Dictionary = _new_encounters()
+	var world: WorldState = built["world"]
+	var avatar: PlayerAvatar = world.avatar
+	var system: EncounterSystem = built["system"]
+	avatar.pos_x = _pos_near(world, "aedran", 5, 0).x
+	avatar.pos_y = _pos_near(world, "aedran", 5, 0).y
+	# 找一个"交涉不可选"的场合：野兽与亡灵都不讲道理
+	var spec: Dictionary = {}
+	for seed_value in range(1, 40):
+		var candidate: Dictionary = system.roll(
+			EncounterSystem.CONTEXT_WILD, "aedran", 12, "enc-panel", DeterministicRNG.new(seed_value)
+		)
+		if not candidate.is_empty() and not bool(candidate["parleyable"]):
+			spec = candidate
+			break
+	_check(not spec.is_empty(), "找到一个说不动的对手（近郊的野兽与亡灵）")
+	if spec.is_empty():
+		return
+	var view: Dictionary = EncounterViewModel.build(
+		system, spec, 1, _city_names(world), 0
+	)
+
+	_check(EncounterPanel.buttons(view, PANEL_RECT).is_empty(),
+		"遭遇里没有「返回地图」按钮：三个做法就是全部出口")
+	var first: Dictionary = _hit_for("encounter", view, PANEL_RECT, "choice", 0)
+	_eq(int(first.get("index", -1)), 0, "第一条做法点得中")
+	var third: Dictionary = _hit_for("encounter", view, PANEL_RECT, "choice", 2)
+	_eq(int(third.get("index", -1)), 2, "第三条做法也点得中")
+	var sweep: Dictionary = _sweep_hits("encounter", view, PANEL_RECT)
+	_check(sweep.has("choice"), "做法在命中范围内")
+	_check(not sweep.has("row"), "左列的对手只看不能点")
+	_check(not sweep.has("button"), "面板上没有按钮")
+	_eq(bool(EncounterPanel.choice_enabled(view, 2)), false, "说不动的对手那条动不了手")
+
+	# 左列（对手行）点不出东西来
+	var list: Rect2 = EncounterPanel.list_rect(PANEL_RECT)
+	var list_point: Vector2 = list.position + Vector2(20.0, 20.0)
+	_check(EncounterPanel.hit_test(view, PANEL_RECT, list_point).is_empty(),
+		"对手行不响应点击")
+	_check(EncounterPanel.hit_test(view, PANEL_RECT, Vector2(4.0, 4.0)).is_empty(),
+		"面板外的点击不算命中")
+	# 三条做法的矩形互不重叠（画在这里、点在那里不可能发生）
+	var rects: Array = []
+	for i in range(3):
+		rects.append(EncounterPanel.choice_rect(PANEL_RECT, i))
+	for i in range(rects.size()):
+		for j in range(i + 1, rects.size()):
+			_check(not (rects[i] as Rect2).intersects(rects[j] as Rect2),
+				"做法行不压到邻居：%d / %d" % [i, j])
+	_check(rects[2].position.y + rects[2].size.y
+			<= EncounterPanel.column_rect(PANEL_RECT).position.y
+				+ EncounterPanel.column_rect(PANEL_RECT).size.y,
+		"三条做法都落在右列之内")
 
 
 # --- 辅助 ---
@@ -5484,8 +5721,8 @@ func _panel_hit(panel: String, view: Dictionary, rect: Rect2, point: Vector2) ->
 			return EventPanel.hit_test(view, rect, point)
 		"trade":
 			return TradePanel.hit_test(view, rect, point)
-		"life":
-			return LifePanel.hit_test(view, rect, point)
+		"encounter":
+			return EncounterPanel.hit_test(view, rect, point)
 	return {}
 
 

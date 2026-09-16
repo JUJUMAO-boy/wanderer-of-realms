@@ -111,8 +111,8 @@
   },
   "itemInstance": {
     "_comment": "物品实例层（《技术设计文档》3.3 节 ITEM_INSTANCE 的 durability / enhancement / modifiers）。模板与实例分离的理由是同一把铁剑的每个实例各不相同；文档只列了三个字段名，没写耐久怎么掉、强化怎么算、词缀从哪来，见 D-54。词缀内容本身在 affixes.json，这里放规则。",
-    "_comment_durability": "耐久只记录与显示，不磨损（D-55）：战斗还是调试入口的时候，「装备打着打着没了」这种挫败不该出现。字段留着，磨损与修理属于锻造模块。",
-    "durabilityMax": 100,
+    "_comment_durability": "耐久的磨损与修理（D-62）。比 D-55 只记录不磨损的时期更耐用：上限提到 150，且磨损走概率——每次命中武器只有三成才掉 1 点、每次受击护甲只有五成掉 1 点，一场仗平均掉个位数，一件好装备能打几十场才需要修。归零即失效（D-63）：损坏的武器不算攻击、损坏的护甲不算护甲，得修回才用得了——这也是给「耐久有价值」的第一个压力点。",
+    "durabilityMax": 150,
     "_comment_affixCount": "各稀有度附带几条词缀，取《数值框架》8 节那张表的「附带词条数」一列：0/1/2/3/4/5。普通货没有词缀是有意的——「白板货」与「有点来头的货」得能一眼分开。",
     "affixCountByRarity": {
       "common": 0, "fine": 1, "rare": 2, "epic": 3, "legendary": 4, "dragonforged": 5
@@ -131,7 +131,23 @@
     "_comment_enhancementChanceBp": "第 n 级（下标 n-1）的成功率，基点。前两级必成：一件还没强化的货连 +1 都失败，玩家会以为是自己哪里点错了。",
     "enhancementChanceBp": [10000, 10000, 8500, 7000, 5500],
     "_comment_enhancementCostRatio": "第 n 级（下标 n-1）的费用，按模板基准价的倍数取。+5 一路花掉 4.4 倍模板价，而强化带来的涨幅最多五成——铁匠铺是花钱的地方，不是理财。",
-    "enhancementCostRatio": [0.3, 0.5, 0.8, 1.2, 1.6]
+    "enhancementCostRatio": [0.3, 0.5, 0.8, 1.2, 1.6],
+    "_comment_repair": "修理的三档价目（D-64）。磨损分两处扣（D-62）：武器在打出命中时、护甲在被击中时，各按自己的概率小额扣。修回做什么用由耐用取向决定——普通装备修到满分最实惠，更强化的装备修到满分才划算。",
+    "repair": {
+      "_comment_wearChanceBp": "每次命中或受击时发生磨损的概率，基点。武器 3 成、护甲 5 成：武器常有所以磨损慢，护甲总挨打开消耗得起反而是天然的「更耐用」来源。",
+      "weaponWearChanceBp": 3000,
+      "armorWearChanceBp": 5000,
+      "_comment_wearAmount": "每次磨损扣的耐久点数。固定 1 点，配合 150 上限与上面的概率，一件武器打几十场才需要修一次。",
+      "wearAmount": 1,
+      "_comment_repairTiers": "三档修理（便携/工匠/满修），各修到上限的多少成、单价按缺口。满修修满但要按强化等级加价：强化+3 的神器宁可回城，别拿磨刀石糟蹋。",
+      "portableRestoreRatio": 0.5,
+      "portableDoesNotExceed": 0.9,
+      "craftsmanRestoreRatio": 0.9,
+      "fullRestoreRatio": 1.0,
+      "craftsmanPerPointCopper": 2,
+      "fullPerPointCopper": 3,
+      "fullEnhancementSurchargeRatio": 0.2
+    }
   },
   "events": {
     "_comment": "《城市事件剧本》与《世界模拟量化规则》4 章。触发与冲击量本身写在 events.json（那是内容），这里只放规则侧的手感数值。",
@@ -139,6 +155,46 @@
     "recurrenceCooldownMonths": 12,
     "_comment_blockadeLiftMonths": "封锁无人过问多久之后自行解除（世界自己走完：船改走别的航道，海怪退回深海）。剧本没有这一条，但不加它「快进十年」就等于让一座城无限流血——每月的持续扣减没有尽头，财富会被钳到 0 并一直贴在 0 上。解除之后这一场不再重演（同「病根已除」）：否则世界会在无人过问时永远振荡——财富涨回阈值就再封一次，而玩家什么也没做。",
     "blockadeLiftMonths": 12
+  },
+  "encounters": {
+    "_comment": "世界遭遇（《世界模拟量化规则》9.1 的地图、《数值框架》12.1 的 TL 分层与 14 章的掉落）。上游一处也没写「谁在什么地方因为什么拦住你」——遭遇模块本身不在 10.2 的接口清单里（与事件模块同一条处境，见 D-58），所以这一段全部是补出来的规则侧初值，对手内容在 monsters.json。",
+    "_comment_stepInterval": "野外每走这么多格做一次判定。取 8 是因为一趟城际旅行（两城相距三四十格）会撞上四到五回：少到能记住每一场，多到让「赶路」这件事有分量。城中遭遇不受它管——那是进城那一下判定的（见 D-58）。",
+    "stepInterval": 8,
+    "_comment_roadWidthTiles": "点到商路（含走私航线）线段的距离在这以内就算「在路上」。路是地图上画出来的线（_draw_map），玩家看到的那条线才是判定依据——判据与画面必须是同一件事。",
+    "roadWidthTiles": 2,
+    "_comment_wildChanceBp": "野外每判一次撞上的概率，基点。荒地比路上高近一倍：路是有人走的地方，人形劫道的多，但野兽与亡灵少。",
+    "wildChanceBp": 1600,
+    "roadChanceBp": 900,
+    "_comment_cityChanceBp": "城里进一次城的遭遇概率，按治安线性缩：治安 0 → 满值，治安到 citySecurityCeiling → 0。索恩港（治安 40）与铁锤堡（75）因此不会出这事，十字路（20）与赤沙（30）才会——「乱世的城里也不安全」必须能从城的面板上读出来。",
+    "cityBaseChanceBp": 2000,
+    "citySecurityCeiling": 30,
+    "_comment_tierBoundaries": "离最近城市的距离（格）分三档的上下边界，对应《数值框架》12.1 的平凡 / 精锐 / 凶险。跑得越远越凶，是玩家自己就能推出来的规律——这也是地图上的距离第一次有代价。",
+    "tierBoundaries": [9, 19],
+    "_comment_tierThreat": "每一档的 TL 区间（闭区间）。与 12.1 的分层对齐：平凡 1–5、精锐 6–10、凶险 11–20。12.1 的灾厄与天灾（21+）不收，它们是事件与传奇线的对手。",
+    "tierThreatMin": [1, 6, 11],
+    "tierThreatMax": [5, 10, 20],
+    "_comment_maxOpponents": "一场遭遇里对手数量的上限。14×9 的战场站得下更多，但站在对面的人一多，玩家连自己该打谁都看不清。",
+    "maxOpponents": 3,
+    "_comment_avoid": "绕开：花掉 avoidTimeDays 天，成功率 = 基础 + 敏捷×每点 + 幸运×每点，钳在 5%–95% 之间。敏捷高、运气好的人能甩掉，笨重的人只能打——这条算式让「绕开」不是白送的，也不是必输的。",
+    "avoidBaseBp": 4000,
+    "avoidPerDexBp": 120,
+    "avoidPerLuckBp": 20,
+    "avoidMinBp": 500,
+    "avoidMaxBp": 9500,
+    "avoidTimeDays": 1,
+    "_comment_parley": "交涉：只对人形（monsters.json 里 category 为 humanoid 的，以及城里那些模拟居民）有效。声誉到 parleyAcceptReputation 以上直接放行，到 parleyRefuseReputation 以下谈不拢（与委托、商铺取同一组阈值），中间按「基础 + 声誉 × 每点」算。野兽与亡灵不跟你讲道理。",
+    "parleyBaseBp": 5000,
+    "parleyPerReputationBp": 50,
+    "parleyAcceptReputation": 60,
+    "parleyRefuseReputation": -60,
+    "_comment_cityNpcCategories": "城里遭遇时从哪个职业类别里挑拦路的人。取军中与灰色两个类别（守卫、佣兵、盗贼、乞丐）——农夫与面包师不会无缘无故拦你。",
+    "cityNpcCategories": ["military", "gray"],
+    "_comment_cityNpcSize": "城里拦路的人数区间。「一群人在街上堵你」不像这座城市平时会发生的事，所以上限压在 2（野外的成群由生物表自己的 groupMin/groupMax 给）。",
+    "cityNpcMin": 1,
+    "cityNpcMax": 2,
+    "_comment_cityNpcAttributes": "模拟 NPC 身上没有属性字段（世界模拟不需要它），所以拦路者的七维在这一层现抽。区间与旧的陪练一致：8–14 是一个成年人的普通水平。",
+    "cityNpcAttributeMin": 8,
+    "cityNpcAttributeMax": 14
   },
   "quests": {
     "_comment": "《世界模拟量化规则》10.2 / 10.3 与 6 章。委托板不落盘：它由城市六维与 worldFlags 推导（QuestBoard），所以「城市状态越差、对应类型的委托越多」是结构上的必然，而不是定期刷新的结果。",
@@ -213,20 +269,6 @@
     "hostDebtMinCopper": 300,
     "hostDebtMaxCopper": 3000
   },
-  "lifecycle": {
-    "_comment": "寿命与年龄（《技术设计文档》9.12 节 D-58）。《数值框架》2.2 节给了两样东西：每个种族的「约 N 年」（人类 80、精灵 500……）与返魂者的「灵魂每 20 点维持躯壳约 10 年」。两句话口径不同，而「活到多少岁算寿终」「几岁算暮年」文档一处也没写。本作取「种族寿命 × 魂力系数」把两句合起来：系数 = clamp(1 + (SOU − soulFactorBase) × soulFactorPerPoint, min, max)。SOU 10 是普通成年的基准，于是普通人正好活到种族寿命那一年，魂力越高活得越久、最多两倍。",
-    "soulFactorBase": 10,
-    "soulFactorPerPoint": 0.005,
-    "soulFactorMin": 0.5,
-    "soulFactorMax": 2.0,
-    "_comment_elder": "暮年线：活过寿命的这个比例之后，界面开始提示「来日无多」。它只是提示，不参与任何判定。",
-    "elderRatio": 0.8,
-    "_comment_fallback": "种族配置里没有 lifespan 时用的兜底寿命（取人类那一档）。不兜底的话，一个拼错的 raceId 会让寿命变成 0，人一出生就寿终。",
-    "fallbackLifespan": 80,
-    "_comment_record": "世代记录里「最高的几项技能」「最近结下的关系」各列多少条。列满一屏不是目的，能一眼看出这一世是个什么样的人就够了。",
-    "recordSkillCount": 5,
-    "recordReputationCount": 4
-  },
   "derivedStats": {
     "_comment": "《数值框架》4.1、4.2 节的派生值公式系数。派生值一律不落盘，每次由属性、装备与部位状态重算（《技术设计文档》3.3 / 3.6 节）——落盘会导致属性变更后派生值不同步。PL（实力等级）原文标注 [待 playtest]。",
     "hpBase": 30,
@@ -282,7 +324,12 @@
     "lootLuckDivisor": 200,
     "lootChanceMinBp": 500,
     "lootChanceMaxBp": 10000,
-    "luckPerRarityStep": 20
+    "luckPerRarityStep": 20,
+    "_comment_levelGap": "越级惩罚（《数值框架》13.2：「TL 差超过 5 时，命中与伤害逐步下降，防止低级磨死高级的呆板解法」）。原文只给了「逐步」两个字，这里落成每差一级的线性扣减：命中每级 −300 基点、伤害每级 −8%，伤害最低保留四分之一。低于自己或持平不惩罚——惩罚只朝一个方向。",
+    "levelGapThreshold": 5,
+    "levelGapHitPenaltyBp": 300,
+    "levelGapDamageRatio": 0.08,
+    "levelGapDamageFloorRatio": 0.25
   },
   "hiddenAttributes": {
     "_comment": "《数值框架》第 3 章",

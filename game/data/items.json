@@ -46,6 +46,7 @@
     { "templateId": "consumable_intelligence_potion", "displayName": "智力药水", "category": "consumable", "subtype": "potion", "rarity": "rare", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 1, "price": 200, "effectText": "智力 +10，持续 5 回合" },
     { "templateId": "consumable_bread", "displayName": "烤面包", "category": "consumable", "subtype": "food", "rarity": "common", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 1, "price": 2, "effectText": "恢复 SP 20" },
     { "templateId": "consumable_dried_meat", "displayName": "肉干", "category": "consumable", "subtype": "food", "rarity": "common", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 1, "price": 5, "effectText": "恢复 SP 30（可保存）" },
-    { "templateId": "consumable_stew", "displayName": "炖汤", "category": "consumable", "subtype": "food", "rarity": "common", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 2, "price": 12, "effectText": "恢复 HP 30 + SP 30" }
+    { "templateId": "consumable_stew", "displayName": "炖汤", "category": "consumable", "subtype": "food", "rarity": "common", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 2, "price": 12, "effectText": "恢复 HP 30 + SP 30" },
+    { "templateId": "tool_repair_portable", "displayName": "修补工具", "category": "tool", "subtype": "repair", "rarity": "common", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 1, "price": 40, "repairTool": "portable", "effectText": "野外就地修一件装备：每次回至上限的 50%，最多到九成；不区分武器护甲，也修不了满", "getMethod": "铁匠铺可购，遭遇战掉落可得" }
   ]
 }

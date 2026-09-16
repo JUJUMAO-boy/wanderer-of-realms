@@ -33,6 +33,11 @@ const ROW_KIND_FORGE: String = "forge"
 ## （同一个入口、同一套光标与页脚），所以用 pane 分。见 D-57。
 const PANE_TRADE: String = "trade"
 const PANE_FORGE: String = "forge"
+## 铁匠铺的第二档活计：修理（D-64）。与强化共用一块版面——都是"看着一件货决定
+## 花钱"，分开的两个 pane 各写各的工钱。工匠修回九成、满修修到满，两档在这里切换。
+const PANE_REPAIR: String = "repair"
+
+const ROW_KIND_REPAIR: String = "repair"
 
 
 ## 卖东西时不看可得性：商铺什么都收（收价是公式价的一半），龙魂装备也照样
@@ -67,6 +72,10 @@ static func build(
 	if pane == PANE_FORGE:
 		return _build_forge(
 			economy, templates, avatar, city, at_city, money, cursor, channel, side
+		)
+	if pane == PANE_REPAIR:
+		return _build_repair(
+			economy, templates, avatar, city, at_city, money, cursor, side
 		)
 
 	var rows: Array = []
@@ -209,6 +218,136 @@ static func _held_rows(
 
 
 # --- 铁匠铺那一页 ---
+
+## 铁匠铺的修理页（D-64）。与强化的区别只在"花的是修的钱而不是烧的钱"——
+## 同一块版面、同一套光标。这里只有工匠与满修两档（都在城里、都花工钱）；
+## 便携工具是"不占炉子"的活计，放在背包里随时可用，不进铁匠铺（见 PANE_REPAIR）。
+static func _build_repair(
+	economy: Economy, templates: Dictionary, avatar: PlayerAvatar, city: City,
+	at_city: bool, money: int, cursor: int, side: String
+) -> Dictionary:
+	var rules: ItemInstance = economy.item_rules()
+	var rows: Array = []
+	if avatar != null:
+		for instance_id in avatar.inventory:
+			var instance: Dictionary = avatar.item_instances.get(instance_id, {})
+			var template: Dictionary = _template(templates, str(instance.get("templateId", "")))
+			# 只有会受损的装备才进得了修理页；消耗品与工具不会损坏
+			if not ItemInstance.AFFIX_CATEGORIES.has(str(template.get("category", ""))):
+				continue
+			rows.append(_repair_row(rules, instance, template, str(instance_id), at_city, money))
+
+	cursor = clampi(cursor, 0, maxi(0, rows.size() - 1))
+	var selected: Dictionary = rows[cursor] if not rows.is_empty() else {}
+	var blocked: String = ""
+	if avatar == null:
+		blocked = "还没有化身，先完成开局创建。"
+	elif not at_city:
+		blocked = "你不在这座城——炉子得当面烧，修理也是。"
+	elif rows.is_empty():
+		blocked = "背包里没有会坏的东西。"
+	elif not bool(selected.get("enabled", true)):
+		blocked = str(selected.get("blockedReason", ""))
+
+	return {
+		"pane": PANE_REPAIR,
+		"cityId": city.city_id,
+		"cityLabel": city.display_name,
+		"channel": Economy.CHANNEL_SHOP,
+		"channelLabel": "铁匠铺",
+		"hasBlackMarket": city.has_black_market,
+		"otherChannel": Economy.CHANNEL_SHOP,
+		"side": side,
+		"sideLabel": "修理",
+		"otherSide": side,
+		"atCity": at_city,
+		"refused": false,
+		"rows": rows,
+		"rowCount": rows.size(),
+		"cursor": cursor,
+		"selected": _repair_detail(selected),
+		"money": money,
+		"moneyLabel": AvatarViewModel.money_label(money),
+		"moneyAfterLabel": AvatarViewModel.money_label(
+			maxi(0, money - int(selected.get("price", 0)))
+		),
+		"dealSummary": _repair_summary(selected),
+		"canTrade": blocked.is_empty() and not selected.is_empty(),
+		"blockedReason": blocked,
+	}
+
+
+## 修理页左列的一行。工钱那格写满修那档的价——玩家看的是"修到满要多少"，
+## 工匠那档更便宜，敲回车时用 chosen 档位结算（见 PANE_REPAIR）。
+static func _repair_row(
+	rules: ItemInstance, instance: Dictionary, template: Dictionary,
+	instance_id: String, at_city: bool, money: int
+) -> Dictionary:
+	var row: Dictionary = AvatarViewModel.instance_info(rules, instance, template)
+	var full: int = rules.repair_cost(instance, ItemInstance.REPAIR_FULL)
+	var craftsman: int = rules.repair_cost(instance, ItemInstance.REPAIR_CRAFTSMAN)
+	var cheapest: int = mini(full, craftsman)
+	var enabled: bool = not rules.broken(instance) \
+		or full > 0 or craftsman > 0
+	var blocked_reason: String = ""
+	if at_city and rules.broken(instance) and full <= 0 and craftsman <= 0:
+		blocked_reason = "满耐久，不用修"
+	elif at_city and money < cheapest:
+		blocked_reason = "钱不够修到最便宜的那档"
+	row["instanceId"] = instance_id
+	row["kind"] = ROW_KIND_REPAIR
+	row["price"] = cheapest  # 页脚按最省的那档报
+	row["fullCost"] = full
+	row["craftsmanCost"] = craftsman
+	row["enabled"] = enabled and at_city and not blocked_reason
+	row["blockedReason"] = blocked_reason
+	row["storeBlocked"] = not at_city
+	return row
+
+
+static func _repair_summary(selected: Dictionary) -> String:
+	if selected.is_empty():
+		return ""
+	if not bool(selected.get("enabled", true)):
+		return str(selected.get("blockedReason", ""))
+	return "回车修理：%s，工匠 %s / 满修 %s（满修按强化等级加价）。" % [
+		str(selected.get("label", "")),
+		AvatarViewModel.money_label(int(selected.get("craftsmanCost", 0))),
+		AvatarViewModel.money_label(int(selected.get("fullCost", 0))),
+	]
+
+
+## 修理页右列：耐久的现在与两档修完的样子。和强化页一样 "一项、一个值、一句解释"。
+static func _repair_detail(selected: Dictionary) -> Dictionary:
+	if selected.is_empty():
+		return {}
+	var factors: Array = [
+		{"label": "当前耐久", "value": str(selected.get("durabilityText", "")),
+			"hint": "损坏则都不参与数值"},
+		{"label": "工匠", "value": AvatarViewModel.money_label(int(selected.get("craftsmanCost", 0))),
+			"hint": "修回九成"},
+		{"label": "满修", "value": AvatarViewModel.money_label(int(selected.get("fullCost", 0))),
+			"hint": "修到满，按强化等级加价"},
+	]
+	return {
+		"templateId": str(selected.get("templateId", "")),
+		"label": str(selected.get("label", "")),
+		"rarityLabel": str(selected.get("rarityLabel", "")),
+		"categoryLabel": str(selected.get("categoryLabel", "")),
+		"detail": str(selected.get("detail", "")),
+		"durabilityText": str(selected.get("durabilityText", "")),
+		"side": PANE_REPAIR,
+		"sideLabel": "修理",
+		"kind": ROW_KIND_REPAIR,
+		"instanceId": str(selected.get("instanceId", "")),
+		"price": int(selected.get("price", 0)),
+		"unitPriceText": str(selected.get("durabilityText", "")),
+		"sellPriceText": "满修",
+		"dealText": str(selected.get("fullCost", 0)),
+		"factorRows": factors,
+		"affixRows": selected.get("affixRows", []),
+		"refused": false,
+	}
 
 ## 铁匠铺。左列是背包里能进炉子的货（武器与防具），右列是选中那一件的现在与
 ## 下一级。它和买卖共用这块版面，因为玩家在这里做的事与在商铺里是同一件——

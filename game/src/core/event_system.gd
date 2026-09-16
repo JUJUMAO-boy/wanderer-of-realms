@@ -352,8 +352,6 @@ func _apply(
 	if avatar != null:
 		avatar.set_reputation(event.city_id, avatar.get_reputation(event.city_id) + reputation)
 		avatar.karma += karma
-		# 功绩（D-62）：处置过一次就算一次，打输了也算——"管过这件事"本身就是经历
-		avatar.note_deed(PlayerAvatar.DEED_EVENTS_RESOLVED)
 
 	var flags: Array = _write_flags(event, spec)
 	var unlock: Dictionary = _route_unlock_of(spec, event)

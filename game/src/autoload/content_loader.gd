@@ -22,6 +22,7 @@ const BACKGROUND_FILE: String = "backgrounds.json"
 const QUEST_FILE: String = "quests.json"
 const EVENT_FILE: String = "events.json"
 const AFFIX_FILE: String = "affixes.json"
+const MONSTER_FILE: String = "monsters.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -40,7 +41,7 @@ const SKILL_TIERS: Array = ["novice", "skilled", "expert", "master", "grandmaste
 const DAMAGE_TYPES: Array = ["physical", "fire", "water", "holy", "dark", "soul", "none"]
 
 ## 物品分类与稀有度（《数值框架》8 节）
-const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable"]
+const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool"]
 const ITEM_RARITIES: Array = [
 	"common", "fine", "rare", "epic", "legendary", "dragonforged",
 ]
@@ -61,6 +62,13 @@ const AFFIX_TARGETS: Array = [
 ## 天赋与缺陷的分类（《数值框架》7 节，当量正负即分类）
 const TALENT_CATEGORIES: Array = ["talent", "flaw"]
 
+## 生物分类（《数值框架》14.3 节的掉落分类表）。遭遇的野外一侧按它挑对手：
+## 荒野多野兽与亡灵、商路多人形——见 D-59。
+const MONSTER_CATEGORIES: Array = ["beast", "undead", "humanoid", "dragon"]
+
+## 不算"谈得拢"的分类：交涉只对人形有效（balance.encounters 的注释）。
+const MONSTER_PARLEYABLE_CATEGORY: String = "humanoid"
+
 ## 技能熟练度上限（《数值框架》1 节核心标尺：技能熟练度 0–100）
 const SKILL_LEVEL_MAX: int = 100
 
@@ -76,6 +84,7 @@ var _backgrounds: Dictionary = {}
 var _quests: Dictionary = {}
 var _events: Dictionary = {}
 var _affixes: Dictionary = {}
+var _monsters: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -85,11 +94,11 @@ func _ready() -> void:
 	var report: Dictionary = load_all()
 	if report.get("ok", false):
 		var loaded: Dictionary = report.get("loaded", {})
-		print("[ContentLoader] 配置装载完成：城市 %d 座，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，天赋 %d 个，出身 %d 个" % [
+		print("[ContentLoader] 配置装载完成：城市 %d 座，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个" % [
 			_city_configs.size(), _balance.size(), int(loaded.get("professions", 0)),
 			int(loaded.get("races", 0)), _trade_routes.size(),
 			int(loaded.get("skills", 0)), int(loaded.get("items", 0)),
-			int(loaded.get("affixes", 0)),
+			int(loaded.get("affixes", 0)), int(loaded.get("monsters", 0)),
 			int(loaded.get("talents", 0)), int(loaded.get("backgrounds", 0)),
 		])
 	else:
@@ -114,6 +123,7 @@ func load_all() -> Dictionary:
 	_quests = {}
 	_events = {}
 	_affixes = {}
+	_monsters = {}
 	_loaded = false
 
 	# 先读 balance：城市校验要用到世界网格尺寸与六维范围
@@ -167,6 +177,12 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("词缀配置为空或读取失败")
 
+	var monster_root: Dictionary = _read_json(MONSTER_FILE, "生物配置")
+	if not monster_root.is_empty():
+		_validate_monsters(monster_root)
+	else:
+		_errors.append("生物配置为空或读取失败")
+
 	var talent_root: Dictionary = _read_json(TALENT_FILE, "天赋配置")
 	if not talent_root.is_empty():
 		_validate_talents(talent_root)
@@ -207,6 +223,7 @@ func load_all() -> Dictionary:
 			"questTypes": _quests.get("quests", []).size(),
 			"events": _events.get("events", []).size(),
 			"affixes": _affixes.get("affixes", []).size(),
+			"monsters": _monsters.get("monsters", []).size(),
 		},
 		"errors": _errors.duplicate(),
 		"warnings": _warnings.duplicate(),
@@ -301,6 +318,21 @@ func get_affixes() -> Array:
 func get_affix(affix_id: String) -> Dictionary:
 	for entry in get_affixes():
 		if str(entry.get("affixId", "")) == affix_id:
+			return entry
+	return {}
+
+
+func get_monster_config() -> Dictionary:
+	return _monsters
+
+
+func get_monsters() -> Array:
+	return _monsters.get("monsters", [])
+
+
+func get_monster(monster_id: String) -> Dictionary:
+	for entry in get_monsters():
+		if str(entry.get("monsterId", "")) == monster_id:
 			return entry
 	return {}
 
@@ -628,20 +660,6 @@ func get_playable_races() -> Array:
 	return out
 
 
-## 全部种族。
-func get_races() -> Array:
-	return _array_of(_name_pools.get("races", []))
-
-
-## raceId -> 寿命。寿命只有这一处来源（《数值框架》2.2 节的种族表），
-## 所以 Lifecycle 不在自己那边再抄一份表。
-func race_lifespans() -> Dictionary:
-	var out: Dictionary = {}
-	for entry in get_races():
-		out[str(entry.get("raceId", ""))] = int(entry.get("lifespan", 0))
-	return out
-
-
 func get_race(race_id: String) -> Dictionary:
 	for entry in _name_pools.get("races", []):
 		if str(entry.get("raceId", "")) == race_id:
@@ -741,6 +759,18 @@ func _validate_balance() -> void:
 		# 同理：这一段的主体是两张键名即规则的表（词缀条数、词缀折价），
 		# 数字项只有下面三个，其余由 _validate_item_instance 校验
 		"itemInstance": ["durabilityMax", "enhancementMax", "enhancementPerLevelRatio"],
+		# 遭遇段的主体同样是"键名即规则"的表（三档的边界与 TL 区间、城里挑人的类别），
+		# 数字项列在这里，数组型的三张表由 _validate_encounters 逐项校验
+		"encounters": [
+			"stepInterval", "roadWidthTiles", "wildChanceBp", "roadChanceBp",
+			"cityBaseChanceBp", "citySecurityCeiling", "maxOpponents",
+			"avoidBaseBp", "avoidPerDexBp", "avoidPerLuckBp",
+			"avoidMinBp", "avoidMaxBp", "avoidTimeDays",
+			"parleyBaseBp", "parleyPerReputationBp",
+			"parleyAcceptReputation", "parleyRefuseReputation",
+			"cityNpcMin", "cityNpcMax",
+			"cityNpcAttributeMin", "cityNpcAttributeMax",
+		],
 		"npc": [
 			"simulatedPerPopulationPoint", "simulatedCap", "familyMinSize", "familyMaxSize",
 			"ageMeanLifespanRatio", "ageJitterHalfRange",
@@ -759,11 +789,6 @@ func _validate_balance() -> void:
 		"sleepMonthsMinYears", "sleepMonthsMaxYears",
 		"hostMinAge", "hostMaxAgeMargin", "hostLuckWeightFactor",
 		"hostDebtChancePerMille", "hostDebtMinCopper", "hostDebtMaxCopper",
-	],
-	# 寿命与年龄（D-58）。主体是两个系数与两条界线，逐个校验放在 _validate_lifecycle
-	"lifecycle": [
-		"soulFactorBase", "soulFactorPerPoint", "soulFactorMin", "soulFactorMax",
-		"elderRatio", "fallbackLifespan", "recordSkillCount", "recordReputationCount",
 	],
 	"characterCreation": [
 		"baseAttribute", "allocatablePoints", "creationMaxAttribute",
@@ -790,6 +815,8 @@ func _validate_balance() -> void:
 		"armHitPenaltyBpPerSeverity", "legMoveCostPerSeverity", "healDaysPerSeverity",
 		"lootBaseChanceBp", "lootPerThreatLevelBp", "lootLuckDivisor",
 		"lootChanceMinBp", "lootChanceMaxBp", "luckPerRarityStep",
+		"levelGapThreshold", "levelGapHitPenaltyBp",
+		"levelGapDamageRatio", "levelGapDamageFloorRatio",
 	],
 }
 	for section in required_sections:
@@ -831,38 +858,89 @@ func _validate_balance() -> void:
 	_validate_economy(_balance.get("economy", {}))
 	_validate_equipment(_balance.get("equipment", {}))
 	_validate_item_instance(_balance.get("itemInstance", {}))
-	_validate_lifecycle(_balance.get("lifecycle", {}))
+	_validate_encounters(_balance.get("encounters", {}))
 
 
-## 寿命与年龄（D-58）。这里查的都是"填错了也不会崩、但会让人物在一开局就寿终"
-## 的地方：系数区间的上下限反了，钳制会把所有人压成同一个寿命；暮年比例不在
-## 0–1 之间，暮年提示要么永远不出现、要么从出生那天起就挂着；种族的 lifespan
-## 缺失或非正，那个人一出生就到期。
-func _validate_lifecycle(root: Dictionary) -> void:
+## 遭遇的规则侧（D-58 ~ D-61）。查的都是"填错了也能跑、但玩家体验会歪掉"的地方：
+## 三档的边界少一个 → 某一段距离的对手全落进相邻那一档；三档的 TL 区间与生物表
+## 对不上 → 那一档永远抽不出对手（每走八格判一次，抽不出就静默地什么都不发生）；
+## 概率写超过 10000 → 每一格都撞上。
+func _validate_encounters(root: Dictionary) -> void:
 	if root.is_empty():
 		return
-	if float(root.get("soulFactorPerPoint", 0.0)) < 0.0:
-		_errors.append("数值配置 lifecycle.soulFactorPerPoint 不能为负")
-	var factor_min: float = float(root.get("soulFactorMin", 0.0))
-	var factor_max: float = float(root.get("soulFactorMax", 0.0))
-	if factor_min <= 0.0:
-		_errors.append("数值配置 lifecycle.soulFactorMin 必须为正")
-	if factor_min > factor_max:
-		_errors.append("数值配置 lifecycle.soulFactorMin 不能大于 soulFactorMax")
-	var elder: float = float(root.get("elderRatio", 0.0))
-	if elder <= 0.0 or elder >= 1.0:
-		_errors.append("数值配置 lifecycle.elderRatio 必须落在 0 与 1 之间（暮年线）")
-	if int(root.get("fallbackLifespan", 0)) <= 0:
-		_errors.append("数值配置 lifecycle.fallbackLifespan 必须为正")
-	for key in ["recordSkillCount", "recordReputationCount"]:
-		if int(root.get(key, 0)) < 1:
-			_errors.append("数值配置 lifecycle.%s 至少为 1" % key)
+	if int(root.get("stepInterval", 0)) < 1:
+		_errors.append("数值配置 encounters.stepInterval 必须为正（每走几格判一次）")
+	if int(root.get("roadWidthTiles", 0)) < 0:
+		_errors.append("数值配置 encounters.roadWidthTiles 不能为负")
+	if int(root.get("maxOpponents", 0)) < 1:
+		_errors.append("数值配置 encounters.maxOpponents 必须为正")
 
-	# 种族的寿命是这张表的唯一来源，缺一个人的那份就等于"一出生就寿终"
-	for race in _name_pools.get("races", []):
-		var race_id: String = str(race.get("raceId", ""))
-		if int(race.get("lifespan", 0)) <= 0:
-			_errors.append("姓名池配置的种族寿命必须为正：%s.lifespan（raceId=%s）" % [race_id, race_id])
+	for key in [
+		"wildChanceBp", "roadChanceBp", "cityBaseChanceBp",
+		"avoidBaseBp", "avoidPerDexBp", "avoidPerLuckBp",
+		"avoidMinBp", "avoidMaxBp", "parleyBaseBp",
+	]:
+		var value: int = int(root.get(key, 0))
+		if value < 0 or value > 10000:
+			_errors.append("数值配置 %s 必须落在 0–10000 基点之间" % ("encounters." + key))
+	if int(root.get("avoidMinBp", 0)) > int(root.get("avoidMaxBp", 0)):
+		_errors.append("数值配置 encounters.avoidMinBp 不能大于 avoidMaxBp")
+	if int(root.get("avoidTimeDays", 0)) < 0:
+		_errors.append("数值配置 encounters.avoidTimeDays 不能为负")
+	if int(root.get("cityNpcMin", 0)) < 1:
+		_errors.append("数值配置 encounters.cityNpcMin 必须为正")
+	if int(root.get("cityNpcMax", 0)) < int(root.get("cityNpcMin", 0)):
+		_errors.append("数值配置 encounters.cityNpcMax 不能小于 cityNpcMin")
+	if int(root.get("cityNpcAttributeMax", 0)) < int(root.get("cityNpcAttributeMin", 0)):
+		_errors.append("数值配置 encounters.cityNpcAttributeMax 不能小于 cityNpcAttributeMin")
+
+	var dim_max: int = int(_balance.get("cityDimension", {}).get("max", DEFAULT_DIM_MAX))
+	var ceiling: int = int(root.get("citySecurityCeiling", 0))
+	if ceiling < 1 or ceiling > dim_max:
+		_errors.append("数值配置 encounters.citySecurityCeiling 必须落在 1–%d 之间" % dim_max)
+
+	var accept: int = int(root.get("parleyAcceptReputation", 0))
+	var refuse: int = int(root.get("parleyRefuseReputation", 0))
+	if accept <= refuse:
+		_errors.append("数值配置 encounters.parleyAcceptReputation 必须大于 parleyRefuseReputation")
+
+	# 三张按档取值的表：边界比档数少一个，TL 区间与档数等长且成序
+	var boundaries: Array = _array_of(root.get("tierBoundaries", null))
+	var tier_min: Array = _array_of(root.get("tierThreatMin", null))
+	var tier_max: Array = _array_of(root.get("tierThreatMax", null))
+	if tier_min.is_empty() or tier_max.is_empty():
+		_errors.append("数值配置 encounters 缺少 tierThreatMin / tierThreatMax")
+	elif tier_min.size() != tier_max.size():
+		_errors.append("数值配置 encounters 的 tierThreatMin 与 tierThreatMax 必须等长")
+	elif boundaries.size() != tier_min.size() - 1:
+		_errors.append("数值配置 encounters.tierBoundaries 的项数（%d）必须比档数（%d）少一个" % [
+			boundaries.size(), tier_min.size()
+		])
+	else:
+		for i in range(tier_min.size()):
+			if int(tier_min[i]) > int(tier_max[i]):
+				_errors.append("数值配置 encounters 第 %d 档的 TL 区间反了：%s > %s" % [
+					i + 1, str(tier_min[i]), str(tier_max[i])
+				])
+				break
+			if i > 0 and int(tier_min[i]) <= int(tier_max[i - 1]):
+				_errors.append("数值配置 encounters 第 %d 档的 TL 起点必须高于上一档的终点" % (i + 1))
+				break
+		var last: int = 0
+		for value in boundaries:
+			if int(value) <= last:
+				_errors.append("数值配置 encounters.tierBoundaries 必须严格递增")
+				break
+			last = int(value)
+
+	var categories: Array = _array_of(root.get("cityNpcCategories", null))
+	if categories.is_empty():
+		_errors.append("数值配置 encounters.cityNpcCategories 不能为空")
+	for category in categories:
+		if not PROFESSION_CATEGORIES.has(str(category)):
+			_errors.append("数值配置 encounters.cityNpcCategories 含未知职业类别：%s（应为 %s 之一）" % [
+				str(category), ", ".join(PackedStringArray(PROFESSION_CATEGORIES))
+			])
 
 
 ## 物品实例的规则（D-54 ~ D-57）。这里查的都是"填错了也能跑、但玩家体验会歪掉"
@@ -918,6 +996,48 @@ func _validate_item_instance(root: Dictionary) -> void:
 		if int(value) > 10000:
 			_errors.append("数值配置 itemInstance.enhancementChanceBp 的概率不能超过 10000 基点")
 			break
+	_validate_repair(root.get("repair", null))
+
+
+## 修理价目（D-64）。概率用基点且不能越界，比例在 0–1，比例间的大小关系
+## 也拦一道：便携回得比工匠多、工匠比满修多都是配置顺序写反了。
+func _validate_repair(root: Variant) -> void:
+	if not (root is Dictionary):
+		_errors.append("数值配置 itemInstance.repair 必须是对象")
+		return
+	var repair: Dictionary = root
+	for key in ["weaponWearChanceBp", "armorWearChanceBp"]:
+		var bp: int = int(repair.get(key, 0))
+		if bp <= 0 or bp > 10000:
+			_errors.append("数值配置 itemInstance.repair.%s 必须是 1–10000 的基点" % key)
+	if int(repair.get("wearAmount", 0)) <= 0:
+		_errors.append("数值配置 itemInstance.repair.wearAmount 必须为正")
+
+	# 三档比例各自钳在 (0,1] 且能比出大小：便携 < 九成界 < 工匠 < 满修
+	var ratios: Dictionary = {
+		"portableRestoreRatio": repair.get("portableRestoreRatio", 0.0),
+		"portableDoesNotExceed": repair.get("portableDoesNotExceed", 0.0),
+		"craftsmanRestoreRatio": repair.get("craftsmanRestoreRatio", 0.0),
+		"fullRestoreRatio": repair.get("fullRestoreRatio", 0.0),
+	}
+	var p_portable: float = float(ratios["portableRestoreRatio"])
+	var p_ceiling: float = float(ratios["portableDoesNotExceed"])
+	var p_craftsman: float = float(ratios["craftsmanRestoreRatio"])
+	var p_full: float = float(ratios["fullRestoreRatio"])
+	if not (p_portable > 0.0 and p_portable <= 1.0) or p_portable >= p_ceiling:
+		_errors.append("数值配置 repair.portableRestoreRatio 必须为正且小于 portableDoesNotExceed")
+	if not (p_ceiling > 0.0 and p_ceiling <= 1.0) or p_ceiling > p_full:
+		_errors.append("数值配置 repair.portableDoesNotExceed 必须为正且不超过 fullRestoreRatio")
+	if not (p_craftsman > 0.0 and p_craftsman <= 1.0) or p_craftsman > p_full:
+		_errors.append("数值配置 repair.craftsmanRestoreRatio 必须为正且不超过 fullRestoreRatio")
+	if not (p_full > 0.0 and p_full <= 1.0):
+		_errors.append("数值配置 repair.fullRestoreRatio 必须是 (0,1] 的比例")
+	if int(repair.get("craftsmanPerPointCopper", 0)) <= 0:
+		_errors.append("数值配置 repair.craftsmanPerPointCopper 必须为正")
+	if int(repair.get("fullPerPointCopper", 0)) <= 0:
+		_errors.append("数值配置 repair.fullPerPointCopper 必须为正")
+	if float(repair.get("fullEnhancementSurchargeRatio", 0.0)) < 0.0:
+		_errors.append("数值配置 repair.fullEnhancementSurchargeRatio 不能为负")
 
 
 ## 词缀配置（D-54）。池子是按类别与目标挑的，所以两处拼错都会静默：
@@ -980,6 +1100,119 @@ func _validate_affixes(root: Dictionary) -> void:
 	for category in ITEM_EQUIP_CATEGORIES:
 		if affixes_for(str(category)).is_empty():
 			_errors.append("词缀配置没有任何适用于 %s 的词缀，该类装备永远拿不到词缀" % str(category))
+
+
+## 生物配置（D-59）。字段错一个的后果都很静默：category 拼错 → 这条生物既不
+## 出在荒野也不出在路上（两侧的偏好名单里都没有它）；TL 落在三档之外 →
+## 它永远不会被选中，而"少了两种怪"从界面上完全看不出来。
+func _validate_monsters(root: Dictionary) -> void:
+	var list: Variant = root.get("monsters", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("生物配置缺少非空的 monsters 数组")
+		return
+
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "monsters[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("生物配置 %s 必须是对象" % path)
+			continue
+		var monster: Dictionary = entry
+
+		var monster_id: String = str(monster.get("monsterId", ""))
+		if monster_id.is_empty():
+			_errors.append("生物配置缺少字段：%s.monsterId" % path)
+		elif seen.has(monster_id):
+			_errors.append("生物配置 monsterId 重复：%s" % monster_id)
+		else:
+			seen[monster_id] = true
+			path = "monsters[%s]" % monster_id
+
+		if str(monster.get("displayName", "")).is_empty():
+			_errors.append("生物配置缺少字段：%s.displayName" % path)
+
+		var category: String = str(monster.get("category", ""))
+		if not MONSTER_CATEGORIES.has(category):
+			_errors.append("生物配置的类别非法：%s.category = %s（应为 %s 之一）" % [
+				path, category, ", ".join(PackedStringArray(MONSTER_CATEGORIES))
+			])
+
+		if int(monster.get("threatLevel", 0)) < 1:
+			_errors.append("生物配置的威胁等级必须为正：%s.threatLevel" % path)
+
+		var attributes: Variant = monster.get("attributes", null)
+		if not (attributes is Dictionary):
+			_errors.append("生物配置缺少 attributes：%s" % path)
+		else:
+			for attribute in PlayerAvatar.ALL_ATTRIBUTES:
+				if not (attributes as Dictionary).has(attribute):
+					_errors.append("生物配置的属性不全：%s.attributes 缺 %s" % [path, attribute])
+				elif int((attributes as Dictionary)[attribute]) <= 0:
+					_errors.append("生物配置的属性必须为正：%s.attributes.%s" % [path, attribute])
+
+		if int(monster.get("hp", 0)) <= 0:
+			_errors.append("生物配置的血量必须为正：%s.hp" % path)
+		for key in ["armor", "magicResist", "attack"]:
+			if int(monster.get(key, 0)) < 0:
+				_errors.append("生物配置的 %s 不能为负：%s" % [key, path])
+		if int(monster.get("attackRange", 0)) < 1:
+			_errors.append("生物配置的攻击距离必须为正：%s.attackRange" % path)
+
+		var group_min: int = int(monster.get("groupMin", 0))
+		var group_max: int = int(monster.get("groupMax", 0))
+		if group_min < 1:
+			_errors.append("生物配置的成群下限必须为正：%s.groupMin" % path)
+		if group_max < group_min:
+			_errors.append("生物配置的成群区间反了：%s.groupMax（%d）小于 groupMin（%d）" % [
+				path, group_max, group_min
+			])
+
+	_monsters = root
+	_validate_monster_tiers()
+
+
+## 每一条生物都必须能被某一档选中，且三档都得有货。这是遭遇与内容表之间唯一的
+## 接口：遭遇按距离取一档、再在该档的 TL 区间里挑生物，两边对不上就会出现
+## "走到最远处反而什么也遇不上"这种最难查的空白（什么都不发生，没有报错）。
+func _validate_monster_tiers() -> void:
+	var rules: Dictionary = _balance.get("encounters", {})
+	if rules.is_empty():
+		return
+	var tier_min: Array = _array_of(rules.get("tierThreatMin", null))
+	var tier_max: Array = _array_of(rules.get("tierThreatMax", null))
+	if tier_min.is_empty() or tier_min.size() != tier_max.size():
+		return
+
+	var covered: Array = []
+	for _i in range(tier_min.size()):
+		covered.append(0)
+	var has_humanoid: bool = false
+	for entry in get_monsters():
+		if not (entry is Dictionary):
+			continue
+		var monster: Dictionary = entry
+		var tl: int = int(monster.get("threatLevel", 0))
+		var matched: bool = false
+		for i in range(tier_min.size()):
+			if tl >= int(tier_min[i]) and tl <= int(tier_max[i]):
+				covered[i] = int(covered[i]) + 1
+				matched = true
+				break
+		if not matched:
+			_errors.append("生物配置的 %s（TL %d）落在遭遇的三档之外，永远不会被遇上" % [
+				str(monster.get("monsterId", "?")), tl
+			])
+		if str(monster.get("category", "")) == MONSTER_PARLEYABLE_CATEGORY:
+			has_humanoid = true
+
+	for i in range(covered.size()):
+		if int(covered[i]) <= 0:
+			_errors.append("遭遇第 %d 档（TL %d–%d）里没有任何生物，走到那一段距离只会静默地什么都不发生" % [
+				i + 1, int(tier_min[i]), int(tier_max[i])
+			])
+	if not has_humanoid:
+		_errors.append("生物配置里没有 humanoid 的生物，交涉这一条做法永远用不上")
 
 
 ## 某一类装备可用的词缀池，按配置里的书写次序。

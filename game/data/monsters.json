@@ -1,0 +1,25 @@
+{
+  "_comment": "《轮回之书》MVP 生物表。上游只给了分层与基准（《数值框架》12.1 的 TL 分层表、12.2 的「关键生物基准」），没有可落地的字段结构——这里照那两张表落成内容。世界遭遇的野外一侧从这张表里选对手，城里一侧仍用模拟 NPC（见 D-59）。",
+  "_comment_fields": "字段：monsterId（主键）、displayName（界面上写什么）、category（beast / undead / humanoid / dragon，用于「荒野多野兽、商路多人形」这条挑选偏好，也对应《数值框架》14.3 的掉落分类）、threatLevel（TL，掉落分档与越级惩罚都读它）、attributes（七维，一个不能少）、hp、armor、magicResist、attack（这一口的伤害，替代武器模板——野兽没有铁剑，龙息也不是短剑）、attackRange（射程，格）、groupMin / groupMax（成群还是独行）。",
+  "_comment_attack": "不写 weaponTemplateId 而直接给 attack，是因为「伤害」这件事在生物身上本来就与武器无关：让野狼去背一把普通匕首只会让配置表看起来像错位。战斗层本来就收 weaponAttack / weaponRange 覆盖（见 D-53 的 _weapon_of）。",
+  "_comment_range": "ML 与数值照 12.2 的基准取：骷髅 HP≈60 全属性≈6、僵尸 HP≈100 STR≈12、龙兽 HP≈300 全属性≈25、死亡骑士 HP≈500 STR≈45、巫妖 HP≈250 INT≈60、元素龙 HP≈800 单属性≈80。12.1 里「平凡」一档的代表（野狼、盗匪）12.2 没有给基准，按同档的骷髅与僵尸之间插值。",
+  "_comment_ghost": "12.2 的幽灵（TL 5，「无实体，仅灵魂系可伤」）不收：那条规则要改整条伤害管线（免疫物理、只能被灵魂系打），而 MVP 只有火、水两系法术，收进来就是一个玩家打不动的对手。它属于 Beta 的怪物特殊规则。",
+  "_comment_scale": "12.1 的「凶险」一档（TL 11–20）到元素龙为止；「灾厄」（TL 21–35）与「天灾」（36+）不收——古龙、骨龙、泰坦、天使都是事件与传奇线的对手，不是野外每走八格遇上一次的东西。野外遭遇的最高档因此封在 TL 20（元素龙），这也是离城 20 格以上那一档的上限。",
+  "monsters": [
+    { "monsterId": "mon_skeleton", "displayName": "骷髅", "category": "undead", "threatLevel": 1, "attributes": { "strength": 6, "dexterity": 6, "constitution": 6, "intelligence": 4, "perception": 6, "charisma": 3, "soul": 5 }, "hp": 60, "armor": 4, "magicResist": 0, "attack": 5, "attackRange": 1, "groupMin": 1, "groupMax": 2 },
+    { "monsterId": "mon_zombie", "displayName": "僵尸", "category": "undead", "threatLevel": 2, "attributes": { "strength": 12, "dexterity": 4, "constitution": 10, "intelligence": 3, "perception": 5, "charisma": 2, "soul": 6 }, "hp": 100, "armor": 2, "magicResist": 0, "attack": 7, "attackRange": 1, "groupMin": 1, "groupMax": 2 },
+
+    { "monsterId": "mon_wolf", "displayName": "野狼", "category": "beast", "threatLevel": 3, "attributes": { "strength": 8, "dexterity": 14, "constitution": 10, "intelligence": 3, "perception": 12, "charisma": 3, "soul": 5 }, "hp": 70, "armor": 1, "magicResist": 0, "attack": 8, "attackRange": 1, "groupMin": 2, "groupMax": 3 },
+    { "monsterId": "mon_bandit", "displayName": "盗匪", "category": "humanoid", "threatLevel": 3, "attributes": { "strength": 11, "dexterity": 11, "constitution": 10, "intelligence": 9, "perception": 10, "charisma": 8, "soul": 7 }, "hp": 80, "armor": 3, "magicResist": 0, "attack": 9, "attackRange": 1, "groupMin": 1, "groupMax": 2 },
+
+    { "monsterId": "mon_bandit_chief", "displayName": "山贼头目", "category": "humanoid", "threatLevel": 5, "attributes": { "strength": 14, "dexterity": 12, "constitution": 12, "intelligence": 10, "perception": 11, "charisma": 11, "soul": 8 }, "hp": 110, "armor": 5, "magicResist": 0, "attack": 12, "attackRange": 1, "groupMin": 1, "groupMax": 1 },
+
+    { "monsterId": "mon_drake", "displayName": "龙兽", "category": "beast", "threatLevel": 7, "attributes": { "strength": 25, "dexterity": 18, "constitution": 25, "intelligence": 6, "perception": 20, "charisma": 5, "soul": 10 }, "hp": 300, "armor": 8, "magicResist": 4, "attack": 16, "attackRange": 1, "groupMin": 1, "groupMax": 2 },
+    { "monsterId": "mon_raider_band", "displayName": "强盗团", "category": "humanoid", "threatLevel": 8, "attributes": { "strength": 16, "dexterity": 15, "constitution": 14, "intelligence": 11, "perception": 12, "charisma": 10, "soul": 8 }, "hp": 140, "armor": 7, "magicResist": 0, "attack": 15, "attackRange": 1, "groupMin": 1, "groupMax": 2 },
+    { "monsterId": "mon_skeleton_elite", "displayName": "精英骷髅", "category": "undead", "threatLevel": 9, "attributes": { "strength": 20, "dexterity": 16, "constitution": 18, "intelligence": 4, "perception": 14, "charisma": 3, "soul": 6 }, "hp": 200, "armor": 10, "magicResist": 4, "attack": 18, "attackRange": 1, "groupMin": 1, "groupMax": 2 },
+
+    { "monsterId": "mon_death_knight", "displayName": "死亡骑士", "category": "undead", "threatLevel": 14, "attributes": { "strength": 45, "dexterity": 24, "constitution": 30, "intelligence": 14, "perception": 18, "charisma": 12, "soul": 20 }, "hp": 500, "armor": 14, "magicResist": 8, "attack": 34, "attackRange": 1, "groupMin": 1, "groupMax": 1 },
+    { "monsterId": "mon_lich", "displayName": "巫妖", "category": "undead", "threatLevel": 16, "attributes": { "strength": 14, "dexterity": 18, "constitution": 18, "intelligence": 60, "perception": 22, "charisma": 16, "soul": 40 }, "hp": 250, "armor": 6, "magicResist": 20, "attack": 26, "attackRange": 3, "groupMin": 1, "groupMax": 1 },
+    { "monsterId": "mon_elemental_dragon", "displayName": "元素龙", "category": "dragon", "threatLevel": 20, "attributes": { "strength": 60, "dexterity": 40, "constitution": 60, "intelligence": 30, "perception": 30, "charisma": 40, "soul": 30 }, "hp": 800, "armor": 18, "magicResist": 16, "attack": 40, "attackRange": 2, "groupMin": 1, "groupMax": 1 }
+  ]
+}

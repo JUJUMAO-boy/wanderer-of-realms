@@ -1,4 +1,4 @@
-﻿class_name Combat
+class_name Combat
 extends RefCounted
 
 ## 网格回合战斗（M5，接口 I-19 ~ I-22）。
@@ -64,6 +64,11 @@ var obstacles: Dictionary = {}   ## "x,y" -> true
 var log: Array = []
 var loot: Array = []
 var world_flags: Dictionary = {}
+## 战斗中"谁磨了谁的装备"的统计（D-62）。战斗模块自己不碰装备实例——它只数数，
+## 主场景打完据此对玩家佩戴的实例扣耐久。各条事件只是"这一击是玩家打出的、
+## 打的哪种目标"，落下我们做纯计数，避免战斗层去改玩家背包里的东西。
+var wear_player_attacks: int = 0
+var wear_player_taken: int = 0
 
 var _derived: DerivedStats = null
 var _combat_cfg: Dictionary = {}
@@ -100,6 +105,8 @@ func start(encounter: Dictionary) -> Dictionary:
 	log.clear()
 	loot.clear()
 	world_flags.clear()
+	wear_player_attacks = 0
+	wear_player_taken = 0
 	finished = false
 	winner = RESULT_ONGOING
 	round = 1
@@ -236,6 +243,8 @@ func resolve() -> Dictionary:
 		"casualties": casualties,
 		"loot": loot.duplicate(true),
 		"worldFlags": world_flags.duplicate(),
+		"wearPlayerAttacks": wear_player_attacks,
+		"wearPlayerTaken": wear_player_taken,
 	}
 
 
@@ -470,6 +479,9 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	)
 	if not is_basic:
 		hit_bp += int(skill.get("hitBonus", 0)) * 100
+	# 越级惩罚在派生值的钳制之后扣：它要能把命中率压到常规下限（5%）以下，
+	# 否则"打不过的东西"依旧能靠 5% 一点点磨死（13.2 节明确要挡住这种解法）
+	hit_bp -= level_gap_hit_penalty_bp(int(actor["threatLevel"]), int(target["threatLevel"]))
 	hit_bp = clampi(hit_bp, 0, DerivedStats.BP_FULL)
 	if not _roll(hit_bp, DerivedStats.BP_FULL):
 		var entry: String = "%s 用%s攻击 %s，未命中（命中率 %.1f%%）" % [
@@ -482,10 +494,19 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	var crit_bonus: int = int(skill.get("critBonus", 0)) * 100 if not is_basic else 0
 	var is_crit: bool = _roll(_derived.crit_chance_bp(actor["attributes"], crit_bonus), DerivedStats.BP_FULL)
 	var damage: int = _compute_damage(actor, target, skill, skill_level, aim_part, is_crit)
+	damage = apply_level_gap_to_damage(
+		damage, int(actor["threatLevel"]), int(target["threatLevel"])
+	)
 
 	var before: int = int(target["hp"])
 	target["hp"] = before - damage
 	_apply_body_damage(target, aim_part, damage)
+
+	# 磨损只在 **命中** 时计（D-62）：打偏不磨武器、闪过的攻击不磨护甲。
+	if str(actor["side"]) == SIDE_PLAYER:
+		wear_player_attacks += 1
+	if str(target["side"]) == SIDE_PLAYER:
+		wear_player_taken += 1
 
 	var entry: String = "%s 用%s命中 %s 的%s，造成 %d 点伤害%s（HP %d → %d）" % [
 		str(actor["name"]), label, str(target["name"]), _part_label(aim_part),
@@ -502,6 +523,34 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 
 	_after_action(actor)
 	return {"ok": true, "state": get_state(), "log": [entry]}
+
+
+# --- 越级惩罚（《数值框架》13.2）---
+
+## TL 差超过阈值时，每多差一级算几级"越级"。低打高才有——反过来不惩罚。
+func level_gap(attacker_tl: int, target_tl: int) -> int:
+	return maxi(0, target_tl - attacker_tl - _cfg("levelGapThreshold", 5))
+
+
+## 越级带来的命中扣减（基点）。公开出来是为了让"差几级扣多少"能被直接断言。
+func level_gap_hit_penalty_bp(attacker_tl: int, target_tl: int) -> int:
+	return level_gap(attacker_tl, target_tl) * _cfg("levelGapHitPenaltyBp", 300)
+
+
+## 越级带来的伤害系数。原文只说"逐步下降"，这里按每级线性扣减，
+## 并留一个下限——留着下限是因为"完全打不动"与"打得很吃力"是两件事，
+## 后者才是玩家愿意整备之后再来一次的理由。
+func level_gap_damage_ratio(attacker_tl: int, target_tl: int) -> float:
+	var ratio: float = 1.0 - float(level_gap(attacker_tl, target_tl)) \
+		* _cfg_float("levelGapDamageRatio", 0.08)
+	return clampf(ratio, _cfg_float("levelGapDamageFloorRatio", 0.25), 1.0)
+
+
+func apply_level_gap_to_damage(damage: int, attacker_tl: int, target_tl: int) -> int:
+	var ratio: float = level_gap_damage_ratio(attacker_tl, target_tl)
+	if ratio >= 1.0:
+		return damage
+	return maxi(1, roundi(float(damage) * ratio))
 
 
 ## 伤害走哪条公式由技能分类决定：法术走魔法公式，武器技能与技艺走物理公式。
@@ -844,6 +893,10 @@ func _part_label(part: String) -> String:
 
 func _cfg(key: String, fallback: int) -> int:
 	return int(_combat_cfg.get(key, fallback))
+
+
+func _cfg_float(key: String, fallback: float) -> float:
+	return float(_combat_cfg.get(key, fallback))
 
 
 func _fill_attributes(source: Dictionary) -> Dictionary:

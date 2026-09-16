@@ -53,6 +53,7 @@ var _enhancement_max: int = 0
 var _per_level: float = 0.0
 var _chance_bp: Array = []
 var _cost_ratio: Array = []
+var _repair: Dictionary = {}
 
 
 ## 规则取 ContentLoader，模板表由调用方给。模板表外传的理由与 Equipment、
@@ -92,6 +93,7 @@ func _init(cfg: Dictionary = {}, affixes: Array = [], templates: Dictionary = {}
 	_per_level = maxf(0.0, float(cfg.get("enhancementPerLevelRatio", 0.0)))
 	_chance_bp = _array_of(cfg.get("enhancementChanceBp", null))
 	_cost_ratio = _array_of(cfg.get("enhancementCostRatio", null))
+	_repair = _dict_of(cfg.get("repair", null))
 
 
 # --- 规则查询 ---
@@ -293,6 +295,18 @@ func display_name(instance: Dictionary) -> String:
 
 # --- 耐久 ---
 
+## 修理的三档（D-64）：便携工具就地、工匠回九成、满修回满。
+const REPAIR_PORTABLE: String = "portable"
+const REPAIR_CRAFTSMAN: String = "craftsman"
+const REPAIR_FULL: String = "full"
+const ALL_REPAIR_TIERS: Array = [REPAIR_PORTABLE, REPAIR_CRAFTSMAN, REPAIR_FULL]
+
+const REPAIR_LABELS: Dictionary = {
+	REPAIR_PORTABLE: "便携",
+	REPAIR_CRAFTSMAN: "工匠",
+	REPAIR_FULL: "满修",
+}
+
 func durability(instance: Dictionary) -> int:
 	var value: Variant = instance.get("durability", null)
 	if value == null:
@@ -301,7 +315,106 @@ func durability(instance: Dictionary) -> int:
 
 
 func durability_text(instance: Dictionary) -> String:
+	if broken(instance):
+		return "耐久 %d/%d·损坏" % [durability(instance), _durability_max]
 	return "耐久 %d/%d" % [durability(instance), _durability_max]
+
+
+## 归零即失效（D-63）：损坏的武器不算攻击、损坏的护甲不算护甲。
+## Equipment.loadout 与买卖两处都先看它——"坏了"与"没坏"是两件不同的东西。
+func broken(instance: Dictionary) -> bool:
+	return int(instance.get("durability", _durability_max)) <= 0
+
+
+## 磨损一次（D-62）：按类别概率决定这次掉不掉 1 点，**就地扣**，返回是否真掉了。
+## 满耐久也能被扣——"刚抽出的这把剑连修都没修过就打仗"也应磨损。概率钳在 0–10000 基点。
+func wear(instance: Dictionary, weapon: bool, rng: DeterministicRNG) -> bool:
+	if instance.get("durability", null) == null:
+		instance["durability"] = _durability_max
+	if int(instance["durability"]) <= 0:
+		return false
+	var key: String = "weaponWearChanceBp" if weapon else "armorWearChanceBp"
+	var bp: int = clampi(int(_repair.get(key, 0)), 0, BP_FULL)
+	if rng != null and rng.next_int(BP_FULL) >= bp:
+		return false
+	instance["durability"] = maxi(0, int(instance["durability"]) - int(_repair.get("wearAmount", 1)))
+	return true
+
+
+## 修到多少是"修得动"：目标耐久 = 当前 + 本档的回量，便携还要被"不超过 N 成"卡住。
+## 已满或已满足下一档回量时返回与当前相同（调用方据此说"不需要修"）。
+func repair_target(instance: Dictionary, tier: String) -> int:
+	var current: int = durability(instance)
+	var ceiling: int = _durability_max
+	match tier:
+		REPAIR_PORTABLE:
+			# 便携每次在当前上回 5 成，但总耐久不超过上限的 9 成
+			var restore: int = roundi(float(_durability_max) \
+				* float(_repair.get("portableRestoreRatio", 0.0)))
+			ceiling = roundi(float(_durability_max) \
+				* float(_repair.get("portableDoesNotExceed", 0.0)))
+			return clampi(current + restore, 0, ceiling)
+		REPAIR_CRAFTSMAN:
+			return maxi(current, roundi(float(_durability_max) \
+				* float(_repair.get("craftsmanRestoreRatio", 0.0))))
+		REPAIR_FULL:
+			return _durability_max
+	return current
+
+
+func repair_cost(instance: Dictionary, tier: String) -> int:
+	# 便携是背包里的工具（D-64），就地用、不花钱；只有铁匠铺的工匠/满修收工钱。
+	# 这是个"要不要付铜"的分界，不能靠 per-point 退到 0 去凑——明确写死。
+	if tier == REPAIR_PORTABLE:
+		return 0
+	var target: int = repair_target(instance, tier)
+	var gap: int = target - durability(instance)
+	if gap <= 0:
+		return 0
+	var per: int = int(_repair.get("craftsmanPerPointCopper", 0))
+	if tier == REPAIR_FULL:
+		per = int(_repair.get("fullPerPointCopper", 0))
+		# 满修按强化等级加价：强化越高，回城满修越得付得起且越划算
+		per = roundi(float(per) * (1.0 \
+			+ float(enhancement(instance)) * float(_repair.get("fullEnhancementSurchargeRatio", 0.0))))
+	return maxi(0, gap) * per
+
+
+func can_repair(instance: Dictionary, tier: String, money: int) -> Dictionary:
+	if instance.is_empty():
+		return _fail(ERROR_NOT_FOUND, "没有这一件东西")
+	if not ALL_REPAIR_TIERS.has(tier):
+		return _fail(ERROR_INVALID_ARGUMENT, "没有这种修理：%s" % str(tier))
+	if not broken(instance) and repair_target(instance, tier) <= durability(instance):
+		return _fail(ERROR_PRECONDITION_FAILED, "「%s」目前不需这个档次的修理" % display_name(instance))
+	if tier == REPAIR_CRAFTSMAN or tier == REPAIR_FULL:
+		var cost: int = repair_cost(instance, tier)
+		if cost > 0 and money < cost:
+			return _fail(ERROR_PRECONDITION_FAILED, "钱不够：这次修理要 %d 铜，你只有 %d 铜" % [
+				cost, money
+			])
+	return {"ok": true, "errorCode": ERROR_NONE, "error": ""}
+
+
+## 就地修到 `tier` 的目标耐久。便携工具的数量由调用方扣（那是另一件东西），
+## 这里只改这一件——与 forge 同一条边界。返回 {ok, tier, before, after, cost}。
+func apply_repair(instance: Dictionary, tier: String) -> Dictionary:
+	if not ALL_REPAIR_TIERS.has(tier):
+		return _fail(ERROR_INVALID_ARGUMENT, "没有这种修理：%s" % str(tier))
+	var before: int = durability(instance)
+	var after: int = repair_target(instance, tier)
+	if after <= before:
+		return _fail(ERROR_PRECONDITION_FAILED, "这件目前不需要修")
+	instance["durability"] = after
+	return {
+		"ok": true, "errorCode": ERROR_NONE, "error": "",
+		"tier": tier, "before": before, "after": after,
+		"cost": repair_cost(instance, tier),
+	}
+
+
+func repair_tier_label(tier: String) -> String:
+	return str(REPAIR_LABELS.get(tier, tier))
 
 
 # --- 价格 ---

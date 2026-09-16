@@ -23,18 +23,7 @@ extends RefCounted
 const CAUSE_NATURAL: String = "natural"
 const CAUSE_COMBAT: String = "combat"
 const CAUSE_ACCIDENT: String = "accident"
-## 自己放下了这一生（退隐）。它不是"死"，走的是同一条结算与转生流程——不允许
-## 主动结束的话，玩家就只能靠快进几十年等一个寿终（D-59）。
-const CAUSE_RETIRE: String = "retire"
-const ALL_CAUSES: Array = [CAUSE_NATURAL, CAUSE_COMBAT, CAUSE_ACCIDENT, CAUSE_RETIRE]
-
-## 死因在界面上怎么写。世代记录里每一世都带着它。
-const CAUSE_LABELS: Dictionary = {
-	CAUSE_NATURAL: "寿终",
-	CAUSE_COMBAT: "战死",
-	CAUSE_ACCIDENT: "意外",
-	CAUSE_RETIRE: "退隐",
-}
+const ALL_CAUSES: Array = [CAUSE_NATURAL, CAUSE_COMBAT, CAUSE_ACCIDENT]
 
 ## 待办事项的类别，用于界面分类与后续映射到 M4 的委托
 const MATTER_FAMILY: String = "family"
@@ -350,17 +339,7 @@ func rebirth(
 
 ## 死亡结算（接口 I-23）：把这一世的成果折进灵魂记录，并留下一份生平存档。
 ## 返回 {soulId, retention, inheritedSkills, archiveId}。
-##
-## context 是本模块之外的、调用方才知道的两样东西（D-62）：
-##   - deeds / age / lifespan：这一世的功绩成就与寿数（由 deeds_from 组装）
-##   - 其余键原样进档案，将来加一项功绩不必再改这个签名
-func settle_death(
-	soul: SoulRecord,
-	avatar: PlayerAvatar,
-	cause: String,
-	month: int,
-	context: Dictionary = {}
-) -> Dictionary:
+func settle_death(soul: SoulRecord, avatar: PlayerAvatar, cause: String, month: int) -> Dictionary:
 	# 保留率用的是**将死这一世**的 SOU，不是上一世的——所以在这里直接读化身的属性，
 	# 而不是走 _soul_value（它读的是最近一份生命存档，此刻还没写入）。
 	var sou_value: int = clampi(avatar.get_attribute(PlayerAvatar.ATTR_SOUL), 0, 100)
@@ -390,11 +369,6 @@ func settle_death(
 		"avatarSnapshot": avatar.to_dict(),
 		"endedMonth": month,
 		"deathCause": cause,
-		# 功绩成就（世代记录按它列"这一生做过什么"）。缺 context 时写空表而不是不写：
-		# 读的人永远能拿到这个键，不必到处判 has。
-		"deeds": _dict_of(context.get("deeds", null)),
-		"age": int(context.get("age", 0)),
-		"lifespan": int(context.get("lifespan", 0)),
 		"worldImpact": {
 			"hostAvatarId": avatar.host_avatar_id,
 			"backgroundId": avatar.background_id,
@@ -407,132 +381,6 @@ func settle_death(
 		"inheritedSkills": carried,
 		"archiveId": archive_id,
 	}
-
-
-# --- 功绩成就（世代记录的数据来源）---
-
-## 把这一世的身家、经历、名声、对世界做过的事收成一份功绩表。
-##
-## 分两层：化身侧的从这里取（它只认 PlayersAvatar），世界侧的由调用方用 world_deeds
-## 算好放进 extra["world"]——本类不引用 WorldState 的集合，依赖方向保持单向。
-func deeds_from(avatar: PlayerAvatar, extra: Dictionary = {}) -> Dictionary:
-	if avatar == null:
-		return _dict_of(extra.get("world", null))
-	return {
-		"age": int(extra.get("age", 0)),
-		"lifespan": int(extra.get("lifespan", 0)),
-		"monthsLived": int(extra.get("monthsLived", 0)),
-		"money": avatar.money,
-		"debtCopper": avatar.debt_copper,
-		"itemCount": avatar.inventory.size(),
-		"equippedCount": avatar.equipment.size(),
-		"karma": avatar.karma,
-		"luck": avatar.luck,
-		"attributes": avatar.attributes.duplicate(),
-		"topSkills": _top_skills(avatar.skills),
-		"reputation": _reputation_rows(avatar.city_reputation),
-		"counters": _counters(avatar),
-		"visitedCities": avatar.visited_cities.duplicate(),
-		"relations": _relations(avatar),
-		"world": _dict_of(extra.get("world", null)),
-	}
-
-
-## 世界侧的那一份：这一世开过的航线、留下的标记、走过几座城。
-static func world_deeds(world: WorldState) -> Dictionary:
-	if world == null:
-		return {"routesOwned": 0, "routesTotal": 0, "flags": 0, "cities": 0}
-	var owned: int = 0
-	for route in world.trade_routes:
-		if route is TradeRoute and route.owner_id == TradeRoute.OWNER_PLAYER:
-			owned += 1
-	return {
-		"routesOwned": owned,
-		"routesTotal": world.trade_routes.size(),
-		"flags": world.world_flags.size(),
-		"cities": world.get_city_count(),
-	}
-
-
-## 这一世结束：化身带着的东西一样都不留（D-61）——背包、钱、声誉、手上接的委托。
-##
-## 世界侧的账**不动**：延迟后果、进行中的事件、玩家开过的航线都还留在世界上，
-## 那些是"世界记得的事"，不是"这个人带着的东西"。
-##
-## 放在这里而不是主场景：主场景在无头测试中不存在，而这一条是有后果的规则
-## （未办完的委托到底作不作废），必须能被钉住。
-func clear_avatar_life(world: WorldState) -> Dictionary:
-	if world == null:
-		return {"hadAvatar": false, "avatarId": "", "abandonedQuests": 0}
-	var avatar: PlayerAvatar = world.avatar
-	var abandoned: int = world.quests.size()
-	world.quests.clear()
-	world.avatar = null
-	return {
-		"hadAvatar": avatar != null,
-		"avatarId": "" if avatar == null else avatar.avatar_id,
-		"abandonedQuests": abandoned,
-	}
-
-
-## 熟练度最高的几项技能。同分按 skillId 升序——排序要确定，不然同一份存档
-## 每次打开看到的行序都不一样。
-func _top_skills(skills: Dictionary) -> Array:
-	var rows: Array = []
-	for skill_id in skills:
-		var level: int = int(skills[skill_id])
-		if level > 0:
-			rows.append({"skillId": str(skill_id), "level": level})
-	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if int(a["level"]) != int(b["level"]):
-			return int(a["level"]) > int(b["level"])
-		return str(a["skillId"]) < str(b["skillId"])
-	)
-	return rows.slice(0, maxi(1, int(_cfg.get("recordSkillCount", 5))))
-
-
-## 名声：只列非零的城，按绝对值从大到小（"最有名的/最臭名昭著的那几座城"
-## 才是这一栏想说的话），同值按 cityId 升序。
-func _reputation_rows(city_reputation: Dictionary) -> Array:
-	var rows: Array = []
-	for city_id in city_reputation:
-		var value: int = int(city_reputation[city_id])
-		if value != 0:
-			rows.append({"cityId": str(city_id), "value": value})
-	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		if absi(int(a["value"])) != absi(int(b["value"])):
-			return absi(int(a["value"])) > absi(int(b["value"]))
-		return str(a["cityId"]) < str(b["cityId"])
-	)
-	return rows.slice(0, maxi(1, int(_cfg.get("recordReputationCount", 4))))
-
-
-## 经历计数。零也照记：世代记录里写"打赢的仗 0"比整行消失更容易读。
-static func _counters(avatar: PlayerAvatar) -> Dictionary:
-	var out: Dictionary = {}
-	for key in PlayerAvatar.DEED_KEYS:
-		out[key] = avatar.deed(str(key))
-	return out
-
-
-## 这一世接下的关系（转生来的那一世才有宿主与他的亲属、仇敌）。
-static func _relations(avatar: PlayerAvatar) -> Dictionary:
-	var legacy: Dictionary = avatar.legacy
-	var kin: Array = _array_of(legacy.get("kin", null))
-	var enemies: Array = _array_of(legacy.get("enemies", null))
-	return {
-		"hostName": str(legacy.get("hostName", "")),
-		"kin": kin.size(),
-		"enemies": enemies.size(),
-	}
-
-
-static func _dict_of(value: Variant) -> Dictionary:
-	return value if value is Dictionary else {}
-
-
-static func _array_of(value: Variant) -> Array:
-	return value if value is Array else []
 
 
 ## 上一世的 SOU。《数值框架》11 节的保留率公式读的是「灵魂属性」，转生时

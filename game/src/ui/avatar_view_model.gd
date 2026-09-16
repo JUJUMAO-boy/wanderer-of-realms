@@ -150,6 +150,12 @@ static func build(
 	if total > 0:
 		selected = _slot_selection(equipment_rows[cursor]) if cursor < equipment_rows.size() \
 			else _bag_selection(inventory_rows[cursor - equipment_rows.size()])
+	# 便携修理（D-63/D-64）：身上带着修补工具、光标停在一件受伤装备上时，才能就地修。
+	# 挂在 selected 上而不是单独一个函数返回值——主场景只要读 selected，不必再数一遍光标。
+	if not selected.is_empty():
+		selected["portableRepair"] = _portable_repair_info(
+			avatar, item_templates, equipment, selected
+		)
 
 	return {
 		"displayName": avatar.display_name,
@@ -252,6 +258,9 @@ static func _plain_item_row(
 		"affixText": "",
 		"affixRows": [],
 		"durabilityText": "",
+		"durability": 0,
+		"durabilityMax": 0,
+		"broken": false,
 	}
 
 
@@ -272,6 +281,9 @@ static func instance_info(
 		"affixText": rules.affix_text(instance),
 		"affixRows": rules.affix_rows(instance),
 		"durabilityText": rules.durability_text(instance),
+		"durability": rules.durability(instance),
+		"durabilityMax": rules.durability_max(),
+		"broken": rules.broken(instance),
 	}
 
 
@@ -300,6 +312,9 @@ static func _slot_selection(row: Dictionary) -> Dictionary:
 		"label": str(row.get("label", "")),
 		"canAct": true,
 		"actionLabel": "脱下",
+		"durability": int(row.get("durability", 0)),
+		"durabilityMax": int(row.get("durabilityMax", 0)),
+		"broken": bool(row.get("broken", false)),
 		"actionLine": _append_note("回车脱下「%s」" % str(row.get("label", "")), row),
 	}
 
@@ -324,9 +339,49 @@ static func _bag_selection(row: Dictionary) -> Dictionary:
 		"slotLabel": str(row.get("slotLabel", "")),
 		"canAct": true,
 		"actionLabel": "穿上",
+		"durability": int(row.get("durability", 0)),
+		"durabilityMax": int(row.get("durabilityMax", 0)),
+		"broken": bool(row.get("broken", false)),
 		"actionLine": _append_note(
 			"回车穿上「%s」（%s）" % [label, str(row.get("slotLabel", ""))], row
 		),
+	}
+
+
+## 身上是否带着可用的修补工具（模板带 repairTool: portable）。工具不消耗，
+## 占一个背包格、反复可用——只要背着一件，就能修。
+static func has_portable_tool(avatar: PlayerAvatar, item_templates: Dictionary) -> bool:
+	for instance_id in avatar.inventory:
+		var instance: Dictionary = avatar.item_instances.get(instance_id, {})
+		var template: Dictionary = _template(item_templates, str(instance.get("templateId", "")))
+		if str(template.get("repairTool", "")) == "portable":
+			return true
+	return false
+
+
+## 光标停在的那一件能不能用修补工具就地修。
+## 要同时满足：是装备（有耐久）、耐久没满（受伤）、身上带着工具。
+## 损坏归零的也是"受伤"，照样能修——只见效范围是便携档（回五成、封顶九成）。
+static func _portable_repair_info(
+	avatar: PlayerAvatar, item_templates: Dictionary, equipment: Equipment, selected: Dictionary
+) -> Dictionary:
+	if equipment == null:
+		return {}
+	if not bool(selected.get("canAct", false)):
+		return {}
+	var durability_max: int = int(selected.get("durabilityMax", 0))
+	if durability_max <= 0:
+		return {}
+	if int(selected.get("durability", 0)) >= durability_max:
+		return {}
+	if not has_portable_tool(avatar, item_templates):
+		return {}
+	return {
+		"canRepair": true,
+		"actionLabel": "用修补工具修理",
+		"actionLine": "就地修「%s」：回至上限的 50%、封顶九成，工具不消耗也不花钱。按 R。" % \
+			str(selected.get("label", "")),
+		"durabilityLabel": str(selected.get("durabilityText", "")),
 	}
 
 
