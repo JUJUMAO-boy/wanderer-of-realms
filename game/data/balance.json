@@ -385,5 +385,32 @@
     "_comment": "世界大事件与历史纪年（M16，D-86~D-88）。纪年轴是随世界落盘的跨代史书：谁够格上史、史书保留多长，都在这。够格凭事件模板的 chronicleBp（>0 才算候选）不小于 minChronicleWeight 才沉淀，阈值过滤防止事件流里的小事刷屏稀释真正的大事。",
     "minChronicleWeight": 250,
     "maxEntries": 400
+  },
+  "npcInteraction": {
+    "_comment": "NPC 人格与好感（M18，D-94~D-99）。玩家↔NPC 好感 lib世界落盘、随世界不随灵魂：转生后上一世认识的人这一世还在，好感照旧。CHA 首次落地为「好感受影响」，见 D-97。",
+    "affMin": -100,
+    "affMax": 100,
+    "bandHostile": -50,
+    "bandCold": -15,
+    "bandFriendly": 15,
+    "bandClose": 50,
+    "talkCooldownMonths": 1,
+    "talkDelta": {"hostile": 0, "cold": 1, "neutral": 2, "friendly": 3, "close": 2},
+    "giftDelta": {"love": 12, "neutral": 3, "hate": -5},
+    "giftChaScaling": 2,
+    "hireMonths": 6,
+    "hirePricePLFactor": 20,
+    "hirePriceChaDiv": 30,
+    "hireMinAffinity": 15,
+    "hireableCategories": ["military", "gray", "commerce", "knowledge"],
+    "followerAttrBase": {"strength": 12, "dexterity": 12, "constitution": 12, "intelligence": 10, "perception": 10, "charisma": 10, "soul": 10},
+    "followerWeaponByCategory": {
+      "military": {"attack": 10, "range": 1},
+      "gray": {"attack": 8, "range": 1},
+      "commerce": {"attack": 6, "range": 1},
+      "knowledge": {"attack": 4, "range": 2}
+    },
+    "followerArmor": 3,
+    "followerSkill": "guard"
   }
 }

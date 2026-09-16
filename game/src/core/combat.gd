@@ -273,6 +273,13 @@ func unit_by_id(unit_id: String) -> Dictionary:
 	return {}
 
 
+## 当前单位是自动控制（敌人 / 随从）还是等玩家输入（英雄）？M18。
+## 主循环据此决定是把行动权交给 auto_action 还是停下等玩家。
+func is_auto(unit_id: String) -> bool:
+	var unit: Dictionary = unit_by_id(unit_id)
+	return not unit.is_empty() and str(unit.get("controlled", "manual")) == "auto"
+
+
 ## 从规格装配一个参战单位。HP/MP 缺省由属性与装备推算——派生值不落盘，
 ## 战场上的当前值（hp/ap/tu）才是这一场里唯一的真值。
 func _build_unit(spec: Dictionary) -> Dictionary:
@@ -316,6 +323,11 @@ func _build_unit(spec: Dictionary) -> Dictionary:
 		"cooldowns": {},
 		"threatLevel": int(spec.get("threatLevel", 1)),
 		"luck": int(spec.get("luck", 0)),
+		# M18 随从：controlled=auto 的单位到轮由 auto_action 驱动（敌人默认 auto、
+		# 玩家英雄默认 manual）。isHero 标记决定战败收口——只看英雄，随从阵亡不判负。
+		"controlled": str(spec.get("controlled",
+			"auto" if str(spec.get("side", SIDE_ENEMY)) == SIDE_ENEMY else "manual")),
+		"isHero": bool(spec.get("isHero", false)),
 		# 元素克制（M13）：element 是目标侧的亲和（affinity），用于判定四元素循环/光暗互克；
 		# creatureKind 是生物类别（undead/holy/living），用于魂系克制。缺省无克制（M13 前行为）。
 		"element": str(spec.get("element", "physical")),
@@ -723,6 +735,15 @@ func _do_downed_choice(actor: Dictionary, action: Dictionary) -> Dictionary:
 func _check_finished() -> void:
 	if finished:
 		return
+	# 战败收口只看英雄（isHero）单元：随从倒地/阵亡不判负（M18，贴合 Elona
+	# "同伴可死、不连带 game over"）。敌方一侧仍看全部在站敌方。
+	# 英雄标记从参战规格里取样（含倒地/阵亡者），否则退归旧逻辑"整队倒下判败"。
+	var hero_defined: bool = false
+	for unit in units:
+		if bool(unit.get("isHero", false)):
+			hero_defined = true
+			break
+	var hero_up: bool = false
 	var player_up: int = 0
 	var enemy_up: int = 0
 	for unit in units:
@@ -730,20 +751,34 @@ func _check_finished() -> void:
 			continue
 		if str(unit["side"]) == SIDE_PLAYER:
 			player_up += 1
+			if bool(unit.get("isHero", false)):
+				hero_up = true
 		else:
 			enemy_up += 1
-	if _pending_downed(SIDE_PLAYER) > 0:
-		player_up += 1
+	# 倒在地上、下场未定的敌方仍当作在站
 	if _pending_downed(SIDE_ENEMY) > 0:
 		enemy_up += 1
-	if player_up == 0 or enemy_up == 0:
-		finished = true
-		if enemy_up == 0 and player_up > 0:
-			winner = RESULT_PLAYER
-		elif player_up == 0 and enemy_up > 0:
+	if hero_defined:
+		# M18：只按英雄判胜负。英雄倒地即判负（不含其 pending 续命），随从不连带。
+		if not hero_up:
+			finished = true
 			winner = RESULT_ENEMY
-		else:
-			winner = RESULT_ONGOING
+		elif enemy_up == 0:
+			finished = true
+			winner = RESULT_PLAYER
+	else:
+		# 无英雄标记的老战斗：玩家整队倒下（含未定倒地者）才算败。
+		if _pending_downed(SIDE_PLAYER) > 0:
+			player_up += 1
+		if player_up == 0 or enemy_up == 0:
+			finished = true
+			if enemy_up == 0 and player_up > 0:
+				winner = RESULT_PLAYER
+			elif player_up == 0 and enemy_up > 0:
+				winner = RESULT_ENEMY
+			else:
+				winner = RESULT_ONGOING
+	if finished:
 		_push_log("战斗结束：%s" % ("玩家一方胜" if winner == RESULT_PLAYER else "敌方胜"))
 
 

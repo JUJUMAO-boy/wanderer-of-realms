@@ -93,6 +93,7 @@ const VIEW_TRADE: int = 8
 const VIEW_ENCOUNTER: int = 9
 const VIEW_CRAFTING: int = 10
 const VIEW_HISTORY: int = 11
+const VIEW_NPC: int = 12
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -110,6 +111,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_ENCOUNTER: "↑↓ 选做法    回车 执行    点做法行也行    （遭遇里没有回头路）",
 	VIEW_CRAFTING: "↑↓ 选配方 / 采集    回车 制作 / 采集    点行先选中、再点同一行执行    ESC 或 T 返回地图",
 	VIEW_HISTORY: "↑↓ 翻阅史书    ESC 或 T 返回地图",
+	VIEW_NPC: "↑↓ 选居民    ←→ 选动作    回车 交谈/送礼/雇佣    ◀▶ 送礼时改选物    1/2/3 快速交谈    ESC 或 T 返回城市",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -151,6 +153,12 @@ var _selected_city: int = 0
 var _trend_dimension: int = 0
 ## 详情栏建筑条里选中的那座（D-69~D-72）。按下回车对它投资。
 var _selected_building: int = 0
+var _selected_resident: int = 0      ## 居民面板里选中的第几位居民（M18）
+var _npc_action_cursor: int = -1     ## 底部动作行的光标；-1 = 未选中动作（M18）
+var _npc_choose_item: bool = false   ## 送礼选物子状态（M18）
+var _npc_item_cursor: int = 0        ## 送礼选物时的物品光标（M18）
+var _npc_city_id: String = ""        ## 正在看哪座城的居民（M18）
+var _npc_view: Dictionary = {}       ## NpcInteractionViewModel 的成品（M18）
 var _notable: Array = []
 var _last_deltas: Dictionary = {}
 var _panel: Dictionary = {}
@@ -523,6 +531,8 @@ func _refresh() -> void:
 			_refresh_crafting()
 		VIEW_HISTORY:
 			_refresh_chronicle()
+		VIEW_NPC:
+			_refresh_npc()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -2225,6 +2235,7 @@ func _player_unit_spec(avatar: PlayerAvatar) -> Dictionary:
 		"unitId": "unit-player",
 		"side": Combat.SIDE_PLAYER,
 		"name": avatar.display_name,
+		"isHero": true,
 		"attributes": attributes,
 		"skills": avatar.skills.duplicate(),
 		"weaponTemplateId": str(loadout["weapon"].get("templateId", "")),
@@ -2538,6 +2549,19 @@ func _submit_combat(action: Dictionary) -> void:
 	_drive_enemies()
 
 
+## 把当前在效的随从追加进本场战斗的单位表。没有随从契约就什么都不做。
+## 随从是 side=player、controlled=auto 的盟友单元，由 _drive_enemies 自动驱动。
+func _append_follower(units: Array) -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var hire: Dictionary = NpcInteractionSystem.current_hire(_world)
+	if hire.is_empty():
+		return
+	var spec: Dictionary = NpcInteractionSystem.follower_combat_spec(_world.avatar, _world, hire)
+	if not spec.is_empty():
+		units.append(spec)
+
+
 ## 把行动权交回玩家之前，替所有敌方单位行动完。
 ##
 ## 不逐帧停顿：整个界面本来就是键驱动的、没有动画，把一次攻击拆成几帧只会
@@ -2551,7 +2575,10 @@ func _drive_enemies() -> void:
 		if current.is_empty():
 			break
 		var unit: Dictionary = _combat.unit_by_id(current)
-		if unit.is_empty() or str(unit["side"]) == Combat.SIDE_PLAYER:
+		# 只自动驱动 controlled=auto 的单位（敌人与随从）；轮到这前锋是 manual 的
+		# 英雄就停下等玩家输入。随从是 side=player 但 controlled=auto，因此必须
+		# 用 is_auto 判定而不是按 side 截止（M18）。
+		if unit.is_empty() or not _combat.is_auto(current):
 			break
 		var result: Dictionary = _combat.auto_action(current)
 		if not bool(result.get("ok", false)):
@@ -2569,6 +2596,7 @@ func _drive_enemies() -> void:
 func _settle_combat() -> void:
 	if _combat == null or _world.avatar == null:
 		return
+	_settle_follower_casualty()
 	if not _quest_combat.is_empty():
 		# 委托战斗的收尾不走上面那条路：战果要变成委托交付（分支后果、世界标记、
 		# 城市维度变更），而不是把敌人的东西塞进背包了事。
@@ -2602,6 +2630,23 @@ func _settle_combat() -> void:
 	_status.text = "交手结束（%d 轮）：%s" % [
 		_combat.round, "你赢了" if _combat.winner == Combat.RESULT_PLAYER else "你输了"
 	]
+
+
+## 随从战殁解约：如果本场带在身边的随从真的阵亡（dead，不是倒地），就解除契约
+## 并记一条纪年。随从阵亡不判负（胜负只看英雄），但人回不来了。
+func _settle_follower_casualty() -> void:
+	for unit in _combat.units:
+		if str(unit.get("side", "")) != Combat.SIDE_PLAYER:
+			continue
+		if bool(unit.get("isHero", false)):
+			continue
+		if not bool(unit.get("dead", false)):
+			continue
+		var npc_id: String = str(unit.get("unitId", "")).trim_prefix("follower_")
+		if npc_id.is_empty() or not _world.active_hires.has(npc_id):
+			continue
+		var month: int = Clock.core().total_months() if Clock.core() != null else 0
+		NpcInteractionSystem.dismiss(_world, npc_id, "%s在战斗中阵亡，契约随人而终。" % str(unit.get("name", "随从")), month)
 
 
 ## 把这场战斗的磨损落到玩家佩戴的装备实例上（D-62）。规则只数了"打出一刀命中、
@@ -2829,6 +2874,7 @@ func _start_encounter_combat() -> void:
 		rng
 	)
 	var units: Array = [_player_unit_spec(avatar)]
+	_append_follower(units)
 	units.append_array(_encounter_system.units_of(_encounter, OPPONENT_SPAWNS))
 	var started: Dictionary = _combat.start({
 		"sessionId": "encounter-%s" % str(_encounter.get("encounterId", "")),
@@ -3106,6 +3152,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return CraftingPanel.hit_test(_crafting_view, PANEL_RECT, point)
 		VIEW_HISTORY:
 			return ChroniclePanel.hit_test(_chronicle_view, PANEL_RECT, point)
+		VIEW_NPC:
+			return NpcInteractionPanel.hit_test(_npc_view, PANEL_RECT, point)
 	return {}
 
 
@@ -3138,6 +3186,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_crafting_click(event.position)
 		VIEW_HISTORY:
 			_history_click(event.position)
+		VIEW_NPC:
+			_npc_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -3163,6 +3213,10 @@ func _city_click(point: Vector2) -> void:
 			# 商铺同理：选中哪座城就开哪座城的价目；人不在那儿就只看得见价
 			if str(hit.get("id", "")) == "shop":
 				_enter_trade(_selected_city_id())
+				return
+			# 居民与人物：进城看人。M18
+			if str(hit.get("id", "")) == "residents":
+				_enter_residents(_selected_city_id())
 				return
 			_switch_view(VIEW_MAP)
 		"city":
@@ -3405,6 +3459,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_crafting_input(key_event)
 		VIEW_HISTORY:
 			_history_input(key_event)
+		VIEW_NPC:
+			_npc_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -3495,6 +3551,8 @@ func _handle_city_input(key_event: InputEventKey) -> void:
 			_switch_view(VIEW_MAP)
 		KEY_C:
 			_enter_avatar()
+		KEY_N:
+			_enter_residents(_selected_city_id())
 		KEY_M:
 			_advance_ticks(_ticks_per_day() * _days_per_month())
 		KEY_Y:
@@ -3673,6 +3731,235 @@ func _crafting_input(key_event: InputEventKey) -> void:
 			_switch_view(VIEW_MAP)
 
 
+# --- NPC 居民与人物（M18）---
+
+func _enter_residents(city_id: String) -> void:
+	if _world == null or _world.avatar == null:
+		_status.text = "还没有化身，先完成开局创建。"
+		return
+	_npc_city_id = city_id
+	_selected_resident = 0
+	_npc_action_cursor = -1
+	_npc_choose_item = false
+	_npc_item_cursor = 0
+	_switch_view(VIEW_NPC)
+
+
+func _refresh_npc() -> void:
+	if _world == null or _world.avatar == null:
+		_npc_view = {}
+		return
+	var choosing: bool = _npc_choose_item
+	_npc_view = NpcInteractionViewModel.build(
+		NpcInteractionSystem, _world.avatar, _world, _npc_city_id,
+		_selected_resident, _npc_action_cursor
+	)
+	_selected_resident = int(_npc_view.get("residentCursor", 0))
+	var city: City = _world.get_city(_npc_city_id)
+	_npc_view["subject"] = city.display_name if city != null else _npc_city_id
+	_npc_view["choosingGift"] = choosing
+	_npc_view["giftCursor"] = _npc_item_cursor
+
+
+func _npc_move_cursor(delta: int) -> void:
+	var rows: Array = _npc_view.get("rows", [])
+	if rows.is_empty():
+		return
+	_selected_resident = clampi(_selected_resident + delta, 0, rows.size() - 1)
+	_npc_action_cursor = -1
+	_refresh()
+
+
+func _npc_current_month() -> int:
+	return Clock.core().total_months() if Clock.core() != null else 0
+
+
+func _npc_selected() -> SimNpc:
+	if _world == null:
+		return null
+	var row: Dictionary = _npc_view.get("selected", {})
+	if row.is_empty():
+		return null
+	return _world.get_npc(str(row.get("npcId", "")))
+
+
+func _npc_talk(intent: String) -> void:
+	var npc: SimNpc = _npc_selected()
+	if npc == null:
+		_status.text = "没有选中的居民。"
+		_refresh()
+		return
+	var result: Dictionary = NpcInteractionSystem.talk(_world.avatar, _world, npc, intent, _npc_current_month())
+	if not bool(result.get("ok", false)):
+		_status.text = "谈不成：%s" % str(result.get("reason", result.get("error", "")))
+	else:
+		_status.text = "%s（好感 %+d，现 %s）" % [
+			str(result.get("line", "")), int(result.get("affDelta", 0)),
+			str(result.get("bandLabel", "")),
+		]
+	_refresh()
+
+
+func _npc_gift_candidates() -> Array:
+	var out: Array = []
+	if _world == null or _world.avatar == null:
+		return out
+	var npc: SimNpc = _npc_selected()
+	for held in _world.avatar.inventory:
+		var inst: Dictionary = _world.avatar.item_instances.get(held, {})
+		var tpl: Dictionary = ContentLoader.get_item(str(inst.get("templateId", "")))
+		if tpl.is_empty():
+			continue
+		out.append({
+			"instanceId": str(held),
+			"templateId": str(tpl.get("templateId", "")),
+			"displayName": str(tpl.get("displayName", "")),
+			"category": str(tpl.get("category", "")),
+			"taste": _taste_label(npc, str(tpl.get("category", ""))),
+		})
+	return out
+
+
+func _taste_label(npc: SimNpc, category: String) -> String:
+	if npc == null:
+		return ""
+	var personality: Dictionary = ContentLoader.get_personality(npc.personality_id)
+	var taste: Dictionary = personality.get("giftTaste", {})
+	if (taste.get("love", []) as Array).has(category):
+		return "他会喜欢"
+	if (taste.get("hate", []) as Array).has(category):
+		return "他会嫌弃"
+	return "普通"
+
+
+func _npc_gift_confirm() -> void:
+	var candidates: Array = _npc_gift_candidates()
+	if candidates.is_empty():
+		_status.text = "你身上没有可送的东西。"
+		_npc_choose_item = false
+		_refresh()
+		return
+	_npc_item_cursor = clampi(_npc_item_cursor, 0, candidates.size() - 1)
+	var item: Dictionary = candidates[_npc_item_cursor]
+	var npc: SimNpc = _npc_selected()
+	var result: Dictionary = NpcInteractionSystem.gift(
+		_world.avatar, _world, npc, str(item.get("instanceId", "")), _npc_current_month())
+	if not bool(result.get("ok", false)):
+		_status.text = "送不成：%s" % str(result.get("reason", result.get("error", "")))
+	else:
+		_status.text = "%s（好感 %+d，现 %s）" % [
+			str(result.get("line", "")), int(result.get("affDelta", 0)),
+			str(result.get("bandLabel", "")),
+		]
+	_npc_choose_item = false
+	_refresh()
+
+
+func _npc_hire() -> void:
+	var npc: SimNpc = _npc_selected()
+	if npc == null:
+		_status.text = "没有选中的居民。"
+		_refresh()
+		return
+	var result: Dictionary = NpcInteractionSystem.hire(_world.avatar, _world, npc, _npc_current_month())
+	if not bool(result.get("ok", false)):
+		_status.text = "雇不成：%s" % str(result.get("reason", result.get("error", "")))
+	else:
+		_status.text = "%s已随行（%d月，%d铜）。他会在野外遭遇战里跟你并肩。" % [
+			npc.given_name, int(result.get("months", 0)), int(result.get("cost", 0)),
+		]
+	_refresh()
+
+
+func _npc_confirm_action() -> void:
+	if _npc_action_cursor < 0:
+		return
+	var actions: Array = _npc_view.get("actions", [])
+	if _npc_action_cursor >= actions.size():
+		return
+	var id: String = str(actions[_npc_action_cursor].get("id", ""))
+	if not bool(actions[_npc_action_cursor].get("can", true)):
+		_status.text = str(actions[_npc_action_cursor].get("reason", "现在做不了。"))
+		_refresh()
+		return
+	if id == NpcInteractionViewModel.ACTION_GIFT:
+		_npc_choose_item = true
+		_npc_item_cursor = 0
+		_refresh()
+	elif id == NpcInteractionViewModel.ACTION_HIRE:
+		_npc_action_cursor = -1
+		_npc_hire()
+	elif id == NpcInteractionViewModel.ACTION_TALK_AMBITION:
+		_npc_action_cursor = -1
+		_npc_talk(NpcInteractionSystem.INTENT_AMBITION)
+	elif id == NpcInteractionViewModel.ACTION_TALK_RUMOR:
+		_npc_action_cursor = -1
+		_npc_talk(NpcInteractionSystem.INTENT_RUMOR)
+	elif id == NpcInteractionViewModel.ACTION_TALK_FAITH:
+		_npc_action_cursor = -1
+		_npc_talk(NpcInteractionSystem.INTENT_FAITH)
+
+
+func _npc_input(key_event: InputEventKey) -> void:
+	var actions: Array = _npc_view.get("actions", [])
+	if _npc_choose_item:
+		var candidates: Array = _npc_gift_candidates()
+		match key_event.keycode:
+			KEY_LEFT, KEY_A:
+				_npc_item_cursor = clampi(_npc_item_cursor - 1, 0, maxi(0, candidates.size() - 1))
+				_refresh()
+			KEY_RIGHT, KEY_D:
+				_npc_item_cursor = clampi(_npc_item_cursor + 1, 0, maxi(0, candidates.size() - 1))
+				_refresh()
+			KEY_ENTER, KEY_KP_ENTER:
+				_npc_gift_confirm()
+			KEY_ESCAPE, KEY_T:
+				_npc_choose_item = false
+				_refresh()
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_npc_move_cursor(-1)
+		KEY_DOWN, KEY_S:
+			_npc_move_cursor(1)
+		KEY_LEFT, KEY_A:
+			if not actions.is_empty():
+				_npc_action_cursor = posmod(_npc_action_cursor - 1, actions.size())
+				_refresh()
+		KEY_RIGHT, KEY_D:
+			if not actions.is_empty():
+				_npc_action_cursor = posmod(maxi(0, _npc_action_cursor + 1), actions.size())
+				_refresh()
+		KEY_ENTER, KEY_KP_ENTER:
+			_npc_confirm_action()
+		KEY_1:
+			_npc_talk(NpcInteractionSystem.INTENT_AMBITION)
+		KEY_2:
+			_npc_talk(NpcInteractionSystem.INTENT_RUMOR)
+		KEY_3:
+			_npc_talk(NpcInteractionSystem.INTENT_FAITH)
+		KEY_ESCAPE, KEY_T:
+			_switch_view(VIEW_CITY)
+
+
+func _npc_click(point: Vector2) -> void:
+	var hit: Dictionary = NpcInteractionPanel.hit_test(_npc_view, PANEL_RECT, point)
+	match str(hit.get("kind", "")):
+		"button":
+			_switch_view(VIEW_CITY)
+		"row":
+			var index: int = int(hit.get("index", -1))
+			if index == _selected_resident:
+				_npc_action_cursor = 0
+			else:
+				_selected_resident = index
+				_npc_action_cursor = -1
+			_refresh()
+		"action":
+			_npc_action_cursor = int(hit.get("index", -1))
+			_npc_confirm_action()
+
+
 func _switch_view(view: int) -> void:
 	_view = view
 	# 悬停目标跟着视图走。不清掉的话，切过来的一瞬间新面板上会有一个
@@ -3806,6 +4093,8 @@ func _draw() -> void:
 			CraftingPanel.draw(self, _crafting_view, PANEL_RECT, _hover)
 		VIEW_HISTORY:
 			ChroniclePanel.draw(self, _chronicle_view, PANEL_RECT, _hover)
+		VIEW_NPC:
+			NpcInteractionPanel.draw(self, _npc_view, PANEL_RECT, _hover, _npc_gift_candidates())
 		_:
 			_draw_map()
 

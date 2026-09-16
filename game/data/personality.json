@@ -1,0 +1,83 @@
+{
+  "_comment": "《轮回之书》NPC 人格池与信仰池（M18）。人格决定 NPC 谈话的基调与送礼口味，生成时确定性指派；信仰提供一句开场。giftTaste 用物品 category（weapon/armor/consumable/tool/material）判定，通吃该类别所有具体 id，见 D-94。",
+  "personalities": [
+    {
+      "personalityId": "p_brusque", "displayName": "刻薄", "short": "刀子嘴",
+      "greeting": "……是你。",
+      "talkLines": {
+        "ambition": "这辈子没想过远，能把眼前这碗饭挣稳就谢天谢地了。",
+        "rumor": "听说十字路那边的盗匪又换了个头子，专挑落单的商人下手。",
+        "faith": "神？我只看银子落不落袋。"
+      },
+      "toneByAffinity": { "friendly": "你倒还没那么讨人嫌。", "hostile": "离远点，别碍事。" },
+      "giftTaste": { "love": ["tool"], "hate": ["material"] },
+      "affinityTalk": 2
+    },
+    {
+      "personalityId": "p_cheery", "displayName": "爽朗", "short": "嗓门大",
+      "greeting": "哟，稀客！今天又在城里发财啦？",
+      "talkLines": {
+        "ambition": "攒够了钱，我想在靠海的地方开家馆子，天天听人讲故事。",
+        "rumor": "铁匠铺的老师傅昨儿又喝高了，说最近铁锭老是缺货。",
+        "faith": "信不信神另说，但逢年过节我准去庙里上柱香，图个安心。"
+      },
+      "toneByAffinity": { "friendly": "咱俩这交情，说话就是带劲！", "hostile": "今天心情好，不跟你计较。" },
+      "giftTaste": { "love": ["consumable"], "hate": ["weapon"] },
+      "affinityTalk": 3
+    },
+    {
+      "personalityId": "p_gloomy", "displayName": "阴沉", "short": "话少",
+      "greeting": "……说了也没人懂。",
+      "talkLines": {
+        "ambition": "活着就好，别的都是空话。",
+        "rumor": "夜里城北那道门后头，总像有脚步声。没人敢去看。",
+        "faith": "这世道根本没人管我们。"
+      },
+      "toneByAffinity": { "friendly": "……你不一样，至少你肯听。", "hostile": "滚。", "neutral": "……" },
+      "giftTaste": { "love": ["material"], "hate": ["armor"] },
+      "affinityTalk": 1
+    },
+    {
+      "personalityId": "p_haughty", "displayName": "矜贵", "short": "眼高于顶",
+      "greeting": "本座记得你，还算个可造之才。",
+      "talkLines": {
+        "ambition": "等那帮蠢货看明白时，本座早已站在他们够不到的地方。",
+        "rumor": "银月塔那帮书呆子又在争一段断了的旧典，真是闲得慌。",
+        "faith": "叩拜？本座只信自己磨出来的手艺与头脑。"
+      },
+      "toneByAffinity": { "friendly": "你勉强够格与我谈两句。", "hostile": "退下，你逾矩了。" },
+      "giftTaste": { "love": ["weapon"], "hate": ["consumable"] },
+      "affinityTalk": 2
+    },
+    {
+      "personalityId": "p_kindly", "displayName": "宽厚", "short": "温声细语",
+      "greeting": "孩子，路上辛苦了吧？来坐会儿。",
+      "talkLines": {
+        "ambition": "不给别人添麻烦，能顺道拉人一把，便是最大的福。",
+        "rumor": "索恩港的米价又涨了，听说河上游闹旱，我怕有些人熬不过这个冬。",
+        "faith": "越是难的时候，越要相信会有人伸出手。"
+      },
+      "toneByAffinity": { "friendly": "你是个好孩子，我记着呢。", "hostile": "何必如此固执呢……" },
+      "giftTaste": { "love": ["consumable"], "hate": ["tool"] },
+      "affinityTalk": 3
+    },
+    {
+      "personalityId": "p_shrewd", "displayName": "精明", "short": "拨算盘",
+      "greeting": "有生意？还是来打听行情的？",
+      "talkLines": {
+        "ambition": "这年头，手里多攥一样柄，睡觉才踏实。",
+        "rumor": "我出价打听过了——铁锤堡那批货若有人吃得下，转手就是两倍利。",
+        "faith": "菩萨和财神我都拜，谁灵验听谁的。"
+      },
+      "toneByAffinity": { "friendly": "跟你谈买卖，爽快，我认。", "hostile": "没钱？那就别说废话。" },
+      "giftTaste": { "love": ["material"], "hate": ["armor"] },
+      "affinityTalk": 2
+    }
+  ],
+  "faiths": [
+    { "faithId": "f_trade", "displayName": "商神帕琉", "greeting": "愿商神照看你这宗买卖。" },
+    { "faithId": "f_war", "displayName": "战神欧克", "greeting": "愿战神的刀护你不受暗算。" },
+    { "faithId": "f_rain", "displayName": "雨女穆芮", "greeting": "愿穆芮的雨浇灭你心头火气。" },
+    { "faithId": "f_none", "displayName": "无信者", "greeting": "" }
+  ]
+}

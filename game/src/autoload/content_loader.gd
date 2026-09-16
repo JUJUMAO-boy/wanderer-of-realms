@@ -26,6 +26,7 @@ const AFFIX_FILE: String = "affixes.json"
 const MONSTER_FILE: String = "monsters.json"
 const RECIPE_FILE: String = "recipes.json"
 const HIDDEN_EVENT_FILE: String = "hidden_events.json"
+const PERSONALITY_FILE: String = "personality.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -99,6 +100,8 @@ var _monsters: Dictionary = {}
 var _recipes: Dictionary = {}
 var _gathers: Dictionary = {}
 var _hidden_events: Dictionary = {}
+var _personalities: Dictionary = {}
+var _faiths: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -108,14 +111,15 @@ func _ready() -> void:
 	var report: Dictionary = load_all()
 	if report.get("ok", false):
 		var loaded: Dictionary = report.get("loaded", {})
-		print("[ContentLoader] 配置装载完成：城市 %d 座，建筑 %d 个，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个，配方 %d 张，采集点 %d 处" % [
+		print("[ContentLoader] 配置装载完成：城市 %d 座，建筑 %d 个，数值段 %d 个，职业 %d 个，种族 %d 个，预置路线 %d 条，技能 %d 个，物品 %d 件，词缀 %d 条，生物 %d 种，天赋 %d 个，出身 %d 个，配方 %d 张，采集点 %d 处，人格 %d 种" % [
 			_city_configs.size(), _buildings.size(), _balance.size(), int(loaded.get("professions", 0)),
 			int(loaded.get("races", 0)), _trade_routes.size(),
 			int(loaded.get("skills", 0)), int(loaded.get("items", 0)),
 			int(loaded.get("affixes", 0)), int(loaded.get("monsters", 0)),
 			int(loaded.get("talents", 0)), int(loaded.get("backgrounds", 0)),
 			int(loaded.get("recipes", 0)), int(loaded.get("gathers", 0)),
-		])
+				int(loaded.get("personalities", 0)),
+			])
 	else:
 		for err in _errors:
 			push_error("[ContentLoader] " + err)
@@ -139,7 +143,9 @@ func load_all() -> Dictionary:
 	_events = {}
 	_affixes = {}
 	_monsters = {}
-	_hidden_events = {}
+	_hidden_events.clear()
+	_personalities = {}
+	_faiths = {}
 	_loaded = false
 
 	# 先读 balance：城市校验要用到世界网格尺寸与六维范围
@@ -244,6 +250,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("隐藏属性事件配置为空或读取失败")
 
+	var personality_root: Dictionary = _read_json(PERSONALITY_FILE, "NPC 人格配置")
+	if not personality_root.is_empty():
+		_validate_personalities(personality_root)
+		_personalities = personality_root
+	else:
+		_errors.append("NPC 人格配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -265,6 +278,8 @@ func load_all() -> Dictionary:
 			"recipes": _recipes.get("recipes", []).size(),
 			"gathers": _gathers.get("gathers", []).size(),
 			"hiddenEvents": _hidden_events.get("events", []).size(),
+			"personalities": _personalities.get("personalities", []).size(),
+			"faiths": _personalities.get("faiths", []).size(),
 		},
 		"errors": _errors.duplicate(),
 		"warnings": _warnings.duplicate(),
@@ -327,6 +342,13 @@ func get_city_building_ids(city_id: String) -> Array:
 
 func get_profession_config() -> Dictionary:
 	return _professions
+
+
+func get_profession(profession_id: String) -> Dictionary:
+	for entry in _professions.get("professions", []):
+		if str(entry.get("professionId", "")) == profession_id:
+			return entry
+	return {}
 
 
 func get_name_pool_config() -> Dictionary:
@@ -761,6 +783,107 @@ func get_hidden_event_template(template_id: String) -> Dictionary:
 		if str(entry.get("templateId", "")) == template_id:
 			return entry
 	return {}
+
+
+## NPC 人格与信仰配置（M18，D-94~D-99）。人格决定谈话基调与送礼口味，
+## 信仰提供开场一句。生成器指派、交互层读取，见 NpcInteractionSystem。
+func get_personality_config() -> Dictionary:
+	return _personalities
+
+
+func get_personalities() -> Array:
+	return _personalities.get("personalities", [])
+
+
+func get_personality(personality_id: String) -> Dictionary:
+	for entry in get_personalities():
+		if str(entry.get("personalityId", "")) == personality_id:
+			return entry
+	return {}
+
+
+func get_faiths() -> Array:
+	return _personalities.get("faiths", [])
+
+
+func get_faith(faith_id: String) -> Dictionary:
+	for entry in get_faiths():
+		if str(entry.get("faithId", "")) == faith_id:
+			return entry
+	return {}
+
+
+## 人格池校验（M18）。查的都是会"静默失效"的错：人格 id 重复、谈话文案缺项、
+## 送礼口味引用了不存在的物品类别（category 写错 → 永远是"中立"）、语气档位名
+## 与好感档位对不上。信仰更简单，只查 id 唯一。
+func _validate_personalities(root: Dictionary) -> void:
+	var p_list: Variant = root.get("personalities", null)
+	if not (p_list is Array) or (p_list as Array).is_empty():
+		_errors.append("NPC 人格配置缺少非空的 personalities 数组")
+		return
+	var seen_p: Dictionary = {}
+	for i in range((p_list as Array).size()):
+		var path: String = "personalities[%d]" % i
+		var entry: Variant = (p_list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("人格 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var pid: String = str(config.get("personalityId", ""))
+		if pid.is_empty():
+			_errors.append("人格缺少字段：%s.personalityId" % path)
+		elif seen_p.has(pid):
+			_errors.append("人格 personalityId 重复：%s" % pid)
+		else:
+			seen_p[pid] = true
+			path = "personalities[%s]" % pid
+		if str(config.get("displayName", "")).is_empty():
+			_errors.append("人格缺少字段：%s.displayName" % path)
+		var lines: Variant = config.get("talkLines", null)
+		if not (lines is Dictionary):
+			_errors.append("人格缺少 talkLines：%s" % path)
+		else:
+			for intent in ["ambition", "rumor", "faith"]:
+				if str((lines as Dictionary).get(intent, "")).is_empty():
+					_errors.append("人格缺少谈话文案：%s.talkLines.%s" % [path, intent])
+		var tone: Variant = config.get("toneByAffinity", null)
+		if not (tone is Dictionary):
+			_errors.append("人格缺少 toneByAffinity：%s" % path)
+		else:
+			for band in ["friendly", "hostile"]:
+				if not (tone as Dictionary).has(band):
+					_errors.append("人格缺少语气档位：%s.toneByAffinity.%s" % [path, band])
+		var gift: Variant = config.get("giftTaste", null)
+		if not (gift is Dictionary):
+			_errors.append("人格缺少 giftTaste：%s" % path)
+		else:
+			for polarity in ["love", "hate"]:
+				var cats: Variant = (gift as Dictionary).get(polarity, null)
+				if not (cats is Array):
+					_errors.append("人格缺少送礼口味：%s.giftTaste.%s" % [path, polarity])
+					continue
+				for cat in cats:
+					if not ITEM_CATEGORIES.has(str(cat)):
+						_errors.append("人格送礼口味引用了非法物品类别：%s.giftTaste.%s = %s（应为 %s 之一）" % [
+							path, polarity, str(cat), ", ".join(PackedStringArray(ITEM_CATEGORIES))
+						])
+
+	var f_list: Variant = root.get("faiths", null)
+	if (f_list is Array) and not (f_list as Array).is_empty():
+		var seen_f: Dictionary = {}
+		for i in range((f_list as Array).size()):
+			var path: String = "faiths[%d]" % i
+			var entry: Variant = (f_list as Array)[i]
+			if not (entry is Dictionary):
+				_errors.append("信仰 %s 必须是对象" % path)
+				continue
+			var fid: String = str((entry as Dictionary).get("faithId", ""))
+			if fid.is_empty():
+				_errors.append("信仰缺少字段：%s.faithId" % path)
+			elif seen_f.has(fid):
+				_errors.append("信仰 faithId 重复：%s" % fid)
+			else:
+				seen_f[fid] = true
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。

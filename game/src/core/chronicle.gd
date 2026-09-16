@@ -13,6 +13,8 @@ extends RefCounted
 const KIND_CITY_EVENT: String = "cityEvent"
 const KIND_TIER: String = "tier"
 const KIND_SOUL: String = "soul"
+const KIND_HIRE: String = "hire"     ## NPC雇佣为随从（M18）
+const KIND_FALLEN: String = "fallen" ## 随从战殁/解约（M18）
 
 const DEFAULT_MIN_WEIGHT: int = 250
 const DEFAULT_MAX_ENTRIES: int = 400
@@ -131,6 +133,40 @@ func record(world: WorldState, entry: Dictionary) -> Dictionary:
 	while world.chronicle.size() > _max_entries:
 		world.chronicle.pop_front()
 	return stored
+
+
+## 玩家雇佣某 NPC 为随从的纪年条目（M18）。month 取签约当月。
+func hire_entry(world: WorldState, npc: SimNpc, cost: int, months: int, month: int) -> Dictionary:
+	var city: City = null if world == null else world.get_city(npc.city_id)
+	var city_label: String = city.display_name if city != null else npc.city_id
+	return {
+		"kind": KIND_HIRE,
+		"title": "%s雇用了%s（%d月随从）" % [str(world.avatar.display_name if world != null and world.avatar != null else "玩家"), npc.given_name, months],
+		"cityId": npc.city_id,
+		"cityLabel": city_label,
+		"detail": "以 %d 铜币签下契约，随从将随行作战直至契约期满或被解约。" % cost,
+		"attribution": "雇佣",
+		"month": month,
+		"year": _year_label(month),
+		"weight": _min_weight,
+	}
+
+
+## 随从战殁或解约的纪年条目（M18）。month 取该事发生的当月。
+func fallen_entry(world: WorldState, npc: SimNpc, reason: String, month: int) -> Dictionary:
+	var city: City = null if world == null else world.get_city(npc.city_id)
+	var city_label: String = city.display_name if city != null else npc.city_id
+	return {
+		"kind": KIND_FALLEN,
+		"title": "随从%s离队" % npc.given_name,
+		"cityId": npc.city_id,
+		"cityLabel": city_label,
+		"detail": reason,
+		"attribution": "雇佣",
+		"month": month,
+		"year": _year_label(month),
+		"weight": _min_weight,
+	}
 
 
 ## 纪年条目的中文年标。与主场景 _event_month_label 同一套口径，保证事件流与

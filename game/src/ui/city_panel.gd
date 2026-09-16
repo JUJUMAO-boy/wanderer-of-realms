@@ -94,6 +94,7 @@ static func buttons(rect: Rect2) -> Array:
 			{"id": "shop", "label": "商铺"},
 			{"id": "event", "label": "城中大事"},
 			{"id": "quest", "label": "委托板"},
+			{"id": "residents", "label": "居民与人物"},
 			{"id": "smuggling", "label": "走私航线"},
 			{"id": "back", "label": "返回地图"},
 		]

@@ -183,6 +183,15 @@ func run_all() -> int:
 	_test_hidden_branch_apply()
 	_test_hidden_view_model()
 	_test_hidden_mark()
+	print("=== NPC 人格与交互（M18）===")
+	_test_npc_personality_faith()
+	_test_npc_affinity_band()
+	_test_npc_round_trip()
+	_test_npc_talk()
+	_test_npc_gift()
+	_test_npc_hire()
+	_test_npc_follower_combat()
+	_test_npc_view_model()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7093,3 +7102,302 @@ func _cleanup_test_slot() -> void:
 			dir.list_dir_end()
 		DirAccess.remove_absolute(base + sub)
 	DirAccess.remove_absolute(base)
+
+
+# --- 里程碑 18：NPC 人格与好感交互 ---
+
+## 候选物品的模板：取给定 category 的第一个模板 id（人格 giftTaste 用它通吃一类）。
+func _template_of_category(category: String) -> String:
+	for item in ContentLoader.get_items():
+		if str(item.get("category", "")) == category:
+			return str(item.get("templateId", ""))
+	return ""
+
+
+## 在现成世界里找一名可雇的人（非具名、无职位、职业类别可雇）。找不到返回 null。
+func _find_hireable_npc(world: WorldState) -> SimNpc:
+	var cats: Array = ContentLoader.get_balance_section("npcInteraction").get("hireableCategories", [])
+	for city_id in world.get_city_ids():
+		for npc in world.get_city_npcs(str(city_id)):
+			if npc.is_named or not npc.position_id.is_empty():
+				continue
+			var p: Dictionary = ContentLoader.get_profession(npc.profession_id)
+			if (cats as Array).has(str(p.get("category", ""))):
+				return npc
+	return null
+
+
+## 人格/信仰池的完整性与确定性指派：任意居民都被问到话、收到礼。
+func _test_npc_personality_faith() -> void:
+	_eq(ContentLoader.get_personalities().size(), 6, "人格池共 6 种")
+	_eq(ContentLoader.get_faiths().size(), 4, "信仰池共 4 种")
+	var intent_ok: bool = true
+	var taste_ok: bool = true
+	for p in ContentLoader.get_personalities():
+		var talk: Dictionary = p.get("talkLines", {})
+		for intent in [NpcInteractionSystem.INTENT_AMBITION, NpcInteractionSystem.INTENT_RUMOR,
+				NpcInteractionSystem.INTENT_FAITH]:
+			if str(talk.get(intent, "")).is_empty():
+				intent_ok = false
+		var taste: Dictionary = p.get("giftTaste", {})
+		if (taste.get("love", []) as Array).is_empty() or (taste.get("hate", []) as Array).is_empty():
+			taste_ok = false
+	_check(intent_ok, "每人格三句谈资（志向/传闻/信仰）齐备")
+	_check(taste_ok, "每人格有爱憎两类送礼口味")
+	# 生成的居民必定有人格与信仰（确定性指派，保证能聊能送）
+	var built: Dictionary = _new_sim()
+	var npc: SimNpc = built["world"].get_city_npcs("aedran")[0]
+	_check(not npc.personality_id.is_empty(), "居民被指派了人格")
+	_check(not npc.faith_id.is_empty(), "居民被指派了信仰")
+	_check(not str(ContentLoader.get_personality(npc.personality_id).get("displayName", "")).is_empty(),
+		"人格 id 能查回中文名")
+
+
+## 好感读写的钳制与五档边界切分。
+func _test_npc_affinity_band() -> void:
+	_eq(NpcInteractionSystem.band(-100), NpcInteractionSystem.BAND_HOSTILE, "-100 敌对")
+	_eq(NpcInteractionSystem.band(-51), NpcInteractionSystem.BAND_HOSTILE, "-51 敌对")
+	_eq(NpcInteractionSystem.band(-50), NpcInteractionSystem.BAND_COLD, "-50 冷淡")
+	_eq(NpcInteractionSystem.band(-16), NpcInteractionSystem.BAND_COLD, "-16 冷淡")
+	_eq(NpcInteractionSystem.band(-15), NpcInteractionSystem.BAND_NEUTRAL, "-15 中立")
+	_eq(NpcInteractionSystem.band(0), NpcInteractionSystem.BAND_NEUTRAL, "0 中立")
+	_eq(NpcInteractionSystem.band(14), NpcInteractionSystem.BAND_NEUTRAL, "14 中立")
+	_eq(NpcInteractionSystem.band(15), NpcInteractionSystem.BAND_FRIENDLY, "15 友善")
+	_eq(NpcInteractionSystem.band(49), NpcInteractionSystem.BAND_FRIENDLY, "49 友善")
+	_eq(NpcInteractionSystem.band(50), NpcInteractionSystem.BAND_CLOSE, "50 亲密")
+	_eq(NpcInteractionSystem.band_label(NpcInteractionSystem.BAND_HOSTILE), "敌对", "档位有中文标签")
+	# 钳制：越界好感被按到 [affMin, affMax]
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, 5000)
+	_eq(NpcInteractionSystem.affinity(world, npc.npc_id), NpcInteractionSystem.aff_max(), "好感上钳到上限")
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, -5000)
+	_eq(NpcInteractionSystem.affinity(world, npc.npc_id), NpcInteractionSystem.aff_min(), "好感下钳到下限")
+
+
+## 好感 / 谈资冷却 / 随从契约随世界落盘往返。
+func _test_npc_round_trip() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, 60)
+	world.npc_talk_cooldowns[npc.npc_id] = {NpcInteractionSystem.INTENT_FAITH: 3}
+	world.active_hires[npc.npc_id] = {"npcId": npc.npc_id, "monthsLeft": 4, "contractSeq": 1}
+	world.hire_seq = 1
+	var decoded: Variant = JSON.parse_string(JSON.stringify(world.to_dict()))
+	_check(decoded is Dictionary, "世界状态可过 JSON")
+	var fresh: WorldState = _new_world()["world"]
+	fresh.apply_dict(decoded)
+	_eq(int(fresh.player_relations.get(npc.npc_id, 0)), 60, "好感往返一致")
+	var cds: Dictionary = fresh.npc_talk_cooldowns.get(npc.npc_id, {})
+	_eq(int(cds.get(NpcInteractionSystem.INTENT_FAITH, -1)), 3, "谈资冷却往返一致")
+	var hire: Dictionary = fresh.active_hires.get(npc.npc_id, {})
+	_eq(int(hire.get("monthsLeft", 0)), 4, "随从契约往返一致")
+	_eq(int(fresh.hire_seq), 1, "雇约游标往返一致")
+
+
+## 交谈：人格主句 + 档位润色 + 冷却；无此人/无人格有明确错误。
+func _test_npc_talk() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	# month=-1 跳过冷却（测试用）
+	var t: Dictionary = NpcInteractionSystem.talk(null, world, npc, NpcInteractionSystem.INTENT_AMBITION, -1)
+	_check(bool(t.get("ok", false)), "能聊起志向：" + str(t.get("error", "")))
+	_check(not str(t.get("line", "")).is_empty(), "有一句台词")
+	_eq(str(t.get("band", "")), NpcInteractionSystem.BAND_NEUTRAL, "素未谋面默认中立档")
+	_eq(int(t.get("affDelta", 0)), 2, "中立档谈一次 +2 好感")
+	# 冷却：同月再谈被拒
+	var ok1: Dictionary = NpcInteractionSystem.talk(null, world, npc, NpcInteractionSystem.INTENT_RUMOR, 0)
+	_check(bool(ok1.get("ok", false)), "同月头一次谈传闻可以")
+	var cold: Dictionary = NpcInteractionSystem.talk(null, world, npc, NpcInteractionSystem.INTENT_RUMOR, 0)
+	_eq(str(cold.get("error", "")), "COOLDOWN", "冷却期内同月再谈被拒")
+	# 敌对档口气场
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, -60)
+	var h: Dictionary = NpcInteractionSystem.talk(null, world, npc, NpcInteractionSystem.INTENT_FAITH, -1)
+	_eq(str(h.get("band", "")), NpcInteractionSystem.BAND_HOSTILE, "好感 -60 落到敌对档")
+	# 无此人
+	var gone: Dictionary = NpcInteractionSystem.talk(null, world, null, NpcInteractionSystem.INTENT_AMBITION, -1)
+	_eq(str(gone.get("error", "")), "NOT_FOUND", "查无此人不可谈")
+
+
+## 送礼：人格口味判定 + 物品扣除 + CHA 缩放。
+func _test_npc_gift() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	var personality: Dictionary = ContentLoader.get_personality(npc.personality_id)
+	var love: String = _template_of_category(str(personality.get("giftTaste", {}).get("love", [])[0]))
+	var hate: String = _template_of_category(str(personality.get("giftTaste", {}).get("hate", [])[0]))
+	var avatar := PlayerAvatar.new()
+	avatar.set_attribute(PlayerAvatar.ATTR_CHARISMA, 0)
+	_give(avatar, love, "g-a")
+	# 爱好的礼：cha 0 时正好 love 档
+	var n1: Dictionary = NpcInteractionSystem.gift(avatar, world, npc, "g-a", -1)
+	_check(bool(n1.get("ok", false)), "送合口味的礼被收下：" + str(n1.get("error", "")))
+	_eq(int(n1.get("affDelta", 0)),
+		int(ContentLoader.get_balance_section("npcInteraction").get("giftDelta", {}).get("love", 12)),
+		"喜欢的礼按 love 档加好感")
+	_check(not avatar.inventory.has("g-a"), "礼送出后从背包扣除")
+	# 讨厌的礼
+	_give(avatar, hate, "g-b")
+	var n2: Dictionary = NpcInteractionSystem.gift(avatar, world, npc, "g-b", -1)
+	_eq(int(n2.get("affDelta", 0)),
+		int(ContentLoader.get_balance_section("npcInteraction").get("giftDelta", {}).get("hate", -5)),
+		"嫌弃的礼按 hate 档减好感")
+	# 不存在的物品
+	var n3: Dictionary = NpcInteractionSystem.gift(avatar, world, npc, "nope", -1)
+	_eq(str(n3.get("error", "")), "NO_ITEM", "手里没这件礼就送不出")
+	# CHA 缩放：同样爱的礼，魅力高送得更讨喜
+	_give(avatar, love, "g-c")
+	avatar.set_attribute(PlayerAvatar.ATTR_CHARISMA, 10)
+	var n4: Dictionary = NpcInteractionSystem.gift(avatar, world, npc, "g-c", -1)
+	_eq(int(n4.get("affDelta", 0)), 12 + 5, "魅力 10 把 love 从 +12 提到 +17")
+
+
+## 雇佣：资格 / 门槛 / 价格 / 扣钱 / 单名 / 忘迁 / 解约写纪年。
+func _test_npc_hire() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.money = 1_000_000
+	avatar.set_attribute(PlayerAvatar.ATTR_CHARISMA, 5)
+	# 好感不够
+	var low := SimNpc.new()
+	low.npc_id = "hr-2"
+	low.given_name = "路人甲"
+	low.profession_id = "guard"
+	var r1: Dictionary = NpcInteractionSystem.hire(avatar, world, low, 1)
+	_eq(str(r1.get("error", "")), "NOT_FRIENDLY", "好感不足雇不了")
+	# 具名锚点不肯受雇
+	var named := SimNpc.new()
+	named.npc_id = "hr-3"
+	named.given_name = "宿将"
+	named.profession_id = "guard"
+	named.is_named = true
+	NpcInteractionSystem.set_affinity(world, "hr-3", 60)
+	var r2: Dictionary = NpcInteractionSystem.hire(avatar, world, named, 1)
+	_eq(str(r2.get("error", "")), "NOT_HIREABLE", "具名人物不愿受雇")
+	# 用现成世界里的可雇真人走通全流程
+	var hireable: SimNpc = _find_hireable_npc(world)
+	_check(hireable != null, "城里能找出可雇的居民")
+	if hireable == null:
+		return
+	NpcInteractionSystem.set_affinity(world, hireable.npc_id, 40)
+	var before_chron: int = world.chronicle.size()
+	var money_before: int = avatar.money
+	var r3: Dictionary = NpcInteractionSystem.hire(avatar, world, hireable, 1)
+	_check(bool(r3.get("ok", false)), "好感达标签下随从：" + str(r3.get("error", "")))
+	_eq(int(r3.get("months", 0)), 6, "契约 6 个月")
+	_check(world.active_hires.has(hireable.npc_id), "随从进了在效名单")
+	_check(avatar.money < money_before, "签契当场扣钱")
+	_check(world.hire_seq == 1, "雇约游标 +1")
+	_check(world.chronicle.size() == before_chron + 1, "签契记入纪年")
+	# 已是随从不再雇
+	var r4: Dictionary = NpcInteractionSystem.hire(avatar, world, hireable, 1)
+	_eq(str(r4.get("error", "")), "ALREADY_HIRED", "已是随从不再雇")
+	# 已带一名，再雇别人被拒
+	NpcInteractionSystem.set_affinity(world, low.npc_id, 40)
+	var r5: Dictionary = NpcInteractionSystem.hire(avatar, world, low, 1)
+	_eq(str(r5.get("error", "")), "FULL", "已带一名随从不能再雇")
+	# 解约：解除在效名单并记纪年
+	var chron_after_hire: int = world.chronicle.size()
+	var r7: Dictionary = NpcInteractionSystem.dismiss(world, hireable.npc_id, "战殁", 2)
+	_check(bool(r7.get("ok", false)), "解约成功")
+	_check(not world.active_hires.has(hireable.npc_id), "解约后不在名单")
+	_check(world.chronicle.size() == chron_after_hire + 1, "解约（随从阵亡）记入纪年")
+	# 解约后，钱不够（此刻不再有在效契约，才能验到 POOR 分支）
+	var h6 := SimNpc.new()
+	h6.npc_id = "hr-4"
+	h6.given_name = "苦力"
+	h6.profession_id = "guard"
+	var broke_avatar := PlayerAvatar.new()
+	broke_avatar.money = 0
+	broke_avatar.set_attribute(PlayerAvatar.ATTR_CHARISMA, 5)
+	NpcInteractionSystem.set_affinity(world, "hr-4", 40)
+	var r6: Dictionary = NpcInteractionSystem.hire(broke_avatar, world, h6, 1)
+	_eq(str(r6.get("error", "")), "POOR", "钱不够签不下")
+
+
+## 随从战斗规格：合法我方自动单元；好感越高越强；随从战殁不判负、英雄倒地即败。
+func _test_npc_follower_combat() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var hire: Dictionary = {"npcId": "fol-1", "name": "铁肩", "category": "military"}
+	var spec: Dictionary = NpcInteractionSystem.follower_combat_spec(null, world, hire)
+	_eq(str(spec.get("unitId", "")), "follower_fol-1", "随从单位 id 带 follower 前缀")
+	_eq(str(spec.get("side", "")), Combat.SIDE_PLAYER, "随从是我方单位")
+	_eq(str(spec.get("controlled", "")), "auto", "随从由 AI 驱动")
+	_eq(spec.get("isHero", null), false, "随从不是英雄（战殁不判负）")
+	_check(spec.get("skills", {}).has("guard"), "随从带守卫技能")
+	_eq(int(spec.get("weaponAttack", 0)), 10, "军事随从近战攻击 10")
+	_check(int(spec.get("attributes", {}).get("strength", 0)) >= 12, "随从有力量底子")
+	_check(NpcInteractionSystem.follower_combat_spec(null, world, {}).is_empty(), "没有契约就没有随从武力")
+	# 好感越高随从越强
+	var aff0: int = int(NpcInteractionSystem.follower_combat_spec(null, world, hire)
+		.get("attributes", {}).get("strength", 0))
+	NpcInteractionSystem.set_affinity(world, "fol-1", 200)
+	var affs: int = int(NpcInteractionSystem.follower_combat_spec(null, world, hire)
+		.get("attributes", {}).get("strength", 0))
+	_check(affs > aff0, "好感越高随从越强")
+	# 战斗里随从自动、英雄手动；英雄倒地即判负
+	var combat: Combat = _new_combat(7)
+	var enc: Dictionary = {
+		"sessionId": "m18-follow",
+		"units": [
+			{"unitId": "hero", "side": Combat.SIDE_PLAYER, "name": "主角", "isHero": true,
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_CONSTITUTION, 60),
+			 "skills": {"guard": 20}, "weaponAttack": 20, "weaponRange": 1, "armor": 5,
+			 "controlled": "manual", "position": [0, 0]},
+			{"unitId": "fol", "side": Combat.SIDE_PLAYER, "name": "随从", "isHero": false,
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_CONSTITUTION, 40),
+			 "skills": {"guard": 40}, "weaponAttack": 10, "weaponRange": 1, "armor": 3,
+			 "controlled": "auto", "position": [1, 0]},
+			{"unitId": "foe", "side": Combat.SIDE_ENEMY, "name": "狗头人", "threatLevel": 2,
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_CONSTITUTION, 30),
+			 "skills": {"guard": 10}, "weaponAttack": 8, "weaponRange": 1, "armor": 2,
+			 "position": [5, 0]},
+		],
+	}
+	combat.start(enc)
+	_check(combat.is_auto("fol"), "随从在战斗里自动驱动")
+	_check(not combat.is_auto("hero"), "英雄由玩家手动操控")
+	var hero_unit: Dictionary = combat.unit_by_id("hero")
+	hero_unit["downed"] = true
+	hero_unit["dead"] = false
+	combat._check_finished()
+	_check(combat.finished and combat.winner == Combat.RESULT_ENEMY, "英雄倒地即判负，随从生死不连带")
+
+
+## 视图模型：名单、动作可用性与雇佣门槛的形状恒定。
+func _test_npc_view_model() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.money = 1_000_000
+	var view: Dictionary = NpcInteractionViewModel.build(NpcInteractionSystem, avatar, world, "aedran", 0, 0)
+	_check(view.has("rows"), "名单成形")
+	_check(view.has("hasSelected"), "有选中态")
+	_check(not view.get("rows", []).is_empty(), "城里有人可交互")
+	_eq(int(view.get("residentCursor", -1)), 0, "光标停在第一位居民")
+	var actions: Array = view.get("actions", [])
+	_eq(actions.size(), 5, "五个底部动作")
+	var gift_action: Dictionary = {}
+	var hire_action: Dictionary = {}
+	for a in actions:
+		var id: String = str(a.get("id", ""))
+		if id == NpcInteractionViewModel.ACTION_GIFT:
+			gift_action = a
+		elif id == NpcInteractionViewModel.ACTION_HIRE:
+			hire_action = a
+	_check(bool(view.get("hasSelected", false)), "选中了一位居民")
+	_check(gift_action.has("can") and gift_action.has("reason"), "送礼动作带可用性判断")
+	_check(hire_action.has("can") and hire_action.has("reason"), "雇佣动作带可用性判断")
+	_eq(hire_action.get("can", null) is bool, true, "雇佣可用性是布尔")
+	# 光标所指动作高亮
+	var sel: Dictionary = NpcInteractionViewModel.build(
+		NpcInteractionSystem, avatar, world, "aedran", 0, 0)
+	var rows: Array = sel.get("rows", [])
+	if not rows.is_empty():
+		_check(bool(rows[0].get("selected", false)), "光标行被标记为选中")

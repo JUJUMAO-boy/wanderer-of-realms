@@ -74,11 +74,12 @@ var _legendary_player_income: int = 800
 
 
 func _init(p_world: WorldState, balance: Dictionary, profession_cfg: Dictionary,
-		name_cfg: Dictionary) -> void:
+		name_cfg: Dictionary, personality_cfg: Dictionary = {}) -> void:
 	world = p_world
 	evolution = CityEvolution.new(balance.get("cityEvolution", {}))
 	economy = Economy.new(balance)
-	generator = NpcGenerator.new(profession_cfg, name_cfg, balance.get("npc", {}))
+	generator = NpcGenerator.new(profession_cfg, name_cfg, balance.get("npc", {}),
+		personality_cfg)
 	quests = QuestSystem.create(p_world)
 	events = EventSystem.create(p_world)
 	chronicle = Chronicle.create()
@@ -99,7 +100,8 @@ static func create(p_world: WorldState) -> WorldSim:
 		p_world,
 		ContentLoader.get_balance(),
 		ContentLoader.get_profession_config(),
-		ContentLoader.get_name_pool_config()
+		ContentLoader.get_name_pool_config(),
+		ContentLoader.get_personality_config()
 	)
 	sim.load_buildings(ContentLoader.get_building_configs())
 	return sim
@@ -283,6 +285,21 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 		if moved >= MIGRATION_EVENT_THRESHOLD:
 			notable.append(event(str(city_id), month, EVENT_MIGRATION,
 				"%s 有 %d 名居民迁往他乡" % [_city_label(str(city_id)), moved]))
+
+	# 随从契约月结（M18）：每个月契约少一月，期满自动解除并记纪年。
+	var expired_hires: Array = []
+	for hire_id in world.active_hires.keys():
+		var hire: Dictionary = world.active_hires[str(hire_id)]
+		hire["monthsLeft"] = maxi(0, int(hire["monthsLeft"]) - 1)
+		if int(hire["monthsLeft"]) <= 0:
+			expired_hires.append(str(hire_id))
+	for hire_id in expired_hires:
+		var npc: SimNpc = world.get_npc(hire_id)
+		var name: String = npc.given_name if npc != null else str(world.active_hires[hire_id].get("name", "随从"))
+		if npc != null:
+			chronicle.record(world, chronicle.fallen_entry(world, npc, "随从%s的契约期满，好聚好散。" % npc.given_name, month))
+		world.active_hires.erase(hire_id)
+		notable.append(event("", month, EVENT_NPC, "随从%s解约离队" % name))
 
 	if detail:
 		_record_history()

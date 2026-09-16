@@ -30,6 +30,8 @@ var profession_id: String = ""
 var is_named: bool = false       ## 具名 NPC：世界观第七章名录里的角色，锚定在出生城
 var position_id: String = ""     ## 职位（守卫队长、大祭司等），死亡后需有人接替
 var family_id: String = ""       ## 家庭分组，亲属关系由它推导
+var personality_id: String = ""  ## 人格（M18）：决定谈话基调与送礼口味，见 personality.json
+var faith_id: String = ""        ## 信仰（M18）：提供一句开场，见 personality.json
 
 
 func display_name() -> String:
@@ -61,6 +63,8 @@ func to_dict() -> Dictionary:
 		"isNamed": is_named,
 		"positionId": position_id,
 		"familyId": family_id,
+		"personalityId": personality_id,
+		"faithId": faith_id,
 	}
 
 
@@ -78,4 +82,6 @@ static func from_dict(data: Dictionary) -> SimNpc:
 	n.is_named = bool(data.get("isNamed", false))
 	n.position_id = str(data.get("positionId", ""))
 	n.family_id = str(data.get("familyId", ""))
+	n.personality_id = str(data.get("personalityId", ""))
+	n.faith_id = str(data.get("faithId", ""))
 	return n

@@ -71,6 +71,16 @@ var building_investments: Dictionary = {}
 var chronicle: Array = []
 var chronicle_seq: int = 0
 
+## NPC 人格与好感（M18）。玩家↔NPC 好感随世界落盘、不随灵魂：转生后上一世
+## 认识的人这一世还在，好感照旧——这是"认得熟人"的根基。
+## player_relations: npcId -> int（-100~100，经规则层钳制）
+## npc_talk_cooldowns: npcId -> {intent: lastMonth}，交谈冷却
+## active_hires: npcId -> {npcId, name, professionId, category, monthsLeft, contractSeq}
+var player_relations: Dictionary = {}
+var npc_talk_cooldowns: Dictionary = {}
+var active_hires: Dictionary = {}
+var hire_seq: int = 0
+
 
 static func create(world_seed_value: int) -> WorldState:
 	var w := WorldState.new()
@@ -192,6 +202,13 @@ func purge_npcs(npc_ids: Array) -> void:
 			relations.erase(key)
 		else:
 			relations[key] = kept
+
+	# M18：一并清掉该 NPC 的玩家好感/交谈冷却/雇佣记录，避免尸体留存
+	for npc_id in doomed:
+		player_relations.erase(str(npc_id))
+		npc_talk_cooldowns.erase(str(npc_id))
+		if active_hires.has(str(npc_id)):
+			active_hires.erase(str(npc_id))
 
 
 # --- 关系 ---
@@ -464,6 +481,12 @@ func to_dict() -> Dictionary:
 		if entry is Dictionary:
 			chronicle_out.append((entry as Dictionary).duplicate(true))
 
+	var hire_out: Dictionary = {}
+	var hire_keys: Array = active_hires.keys()
+	hire_keys.sort()
+	for key in hire_keys:
+		hire_out[str(key)] = active_hires[key].duplicate()
+
 	return {
 		"worldSeed": world_seed,
 		"rngState": rng.get_state() if rng != null else 0,
@@ -482,6 +505,10 @@ func to_dict() -> Dictionary:
 		"buildingInvestments": buildings_out,
 		"chronicle": chronicle_out,
 		"chronicleSeq": chronicle_seq,
+		"playerRelations": player_relations.duplicate(true),
+		"npcTalkCooldowns": npc_talk_cooldowns.duplicate(true),
+		"activeHires": hire_out,
+		"hireSeq": hire_seq,
 		"playerAvatar": avatar.to_dict() if avatar != null else {},
 	}
 
@@ -595,3 +622,30 @@ func apply_dict(data: Dictionary) -> void:
 
 	var avatar_data: Dictionary = data.get("playerAvatar", {})
 	avatar = PlayerAvatar.from_dict(avatar_data) if not avatar_data.is_empty() else null
+
+	player_relations.clear()
+	var relation_in_p: Dictionary = data.get("playerRelations", {})
+	for key in relation_in_p:
+		player_relations[str(key)] = int(relation_in_p[key])
+
+	npc_talk_cooldowns.clear()
+	var cd_in: Dictionary = data.get("npcTalkCooldowns", {})
+	for key in cd_in:
+		var cd: Dictionary = {}
+		for intent in cd_in[key]:
+			cd[str(intent)] = int(cd_in[key][intent])
+		npc_talk_cooldowns[str(key)] = cd
+
+	active_hires.clear()
+	hire_seq = int(data.get("hireSeq", 0))
+	var hires_in: Dictionary = data.get("activeHires", {})
+	for key in hires_in:
+		var rec: Dictionary = hires_in[key]
+		active_hires[str(key)] = {
+			"npcId": str(rec.get("npcId", "")),
+			"name": str(rec.get("name", "")),
+			"professionId": str(rec.get("professionId", "")),
+			"category": str(rec.get("category", "")),
+			"monthsLeft": int(rec.get("monthsLeft", 0)),
+			"contractSeq": int(rec.get("contractSeq", 0)),
+		}

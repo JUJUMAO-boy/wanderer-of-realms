@@ -33,10 +33,24 @@ var _races: Array = []
 var _race_index: Dictionary = {}
 var _tendency: Dictionary = {}
 var _tendency_mult: int = 6000
+## 人格/信仰候选池（M18）。生成时确定性指派，不存在就跳过（兼容旧配置）。
+var _personality_ids: Array = []
+var _faith_ids: Array = []
 
 
-func _init(profession_cfg: Dictionary, name_cfg: Dictionary, npc_cfg: Dictionary) -> void:
+func _init(profession_cfg: Dictionary, name_cfg: Dictionary, npc_cfg: Dictionary,
+		personality_cfg: Dictionary = {}) -> void:
 	_cfg = npc_cfg
+	for entry in personality_cfg.get("personalities", []):
+		var pid: String = str(entry.get("personalityId", ""))
+		if not pid.is_empty():
+			_personality_ids.append(pid)
+	_personality_ids.sort()
+	for entry in personality_cfg.get("faiths", []):
+		var fid: String = str(entry.get("faithId", ""))
+		if not fid.is_empty():
+			_faith_ids.append(fid)
+	_faith_ids.sort()
 	_specialty_mult = _permille(profession_cfg, "specialtyWeightMultiplier", 4.0)
 	_specialty = profession_cfg.get("citySpecialty", {})
 
@@ -160,6 +174,8 @@ func spawn_batch(city: City, count: int, first_seq: int, rng: DeterministicRNG) 
 			npc.age = _draw_age(rng, npc.lifespan)
 			npc.profession_id = _pick_profession(table, rng) if npc.age >= ADULT_AGE else ""
 			npc.family_id = family_id
+			npc.personality_id = _pick_or_empty(_personality_ids, rng)
+			npc.faith_id = _pick_or_empty(_faith_ids, rng)
 			batch.append(npc)
 	return {"npcs": batch, "nextSeq": seq}
 
@@ -317,6 +333,13 @@ func _pick_from(pool: Variant, rng: DeterministicRNG) -> String:
 	if list.is_empty():
 		return "无名"
 	return str(list[rng.next_int(list.size())])
+
+
+## 从候选池确定性抽一个（空池返回空串）。人格/信仰用。
+func _pick_or_empty(pool: Array, rng: DeterministicRNG) -> String:
+	if pool.is_empty():
+		return ""
+	return str(pool[rng.next_int(pool.size())])
 
 
 func _draw_age(rng: DeterministicRNG, lifespan: int) -> int:
