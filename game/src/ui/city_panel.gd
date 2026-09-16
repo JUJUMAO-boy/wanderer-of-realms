@@ -83,8 +83,7 @@ static func draw(
 
 # --- 布局（draw 与 hit_test 共用）---
 
-## 顶部右侧的入口按钮。城市面板上的功能入口排左边，「返回地图」留在最右——它是各
-## 视图共有的锚点，位置不随本面板多出几个入口而漂移。
+## 顶部右侧的入口按钮。「返回地图」归左侧导航管（M20 阶段一），这里不再重复。
 static func buttons(rect: Rect2) -> Array:
 	return UiTheme.button_row(
 		UiTheme.draw_font(),
@@ -96,7 +95,6 @@ static func buttons(rect: Rect2) -> Array:
 			{"id": "quest", "label": "委托板"},
 			{"id": "residents", "label": "居民与人物"},
 			{"id": "smuggling", "label": "走私航线"},
-			{"id": "back", "label": "返回地图"},
 		]
 	)
 

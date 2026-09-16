@@ -2500,16 +2500,16 @@ func _test_city_and_avatar_panel_hit_test() -> void:
 	}
 
 	var back: Dictionary = UiTheme.find_button(CityPanel.buttons(PANEL_RECT), "back")
-	_check(not back.is_empty(), "城市面板有「返回地图」按钮")
-	_eq(str(CityPanel.hit_test(panel, PANEL_RECT, _center(back["rect"])).get("id", "")),
-		"back", "城市面板的返回按钮点得中")
+	_check(back.is_empty(), "城市面板已移除「返回地图」按钮，改由左侧导航接管")
 	# 走私航线的入口就挂在城市面板上：玩家看一座城的账，顺手就能决定要不要在这开一条
 	var entry: Dictionary = UiTheme.find_button(CityPanel.buttons(PANEL_RECT), "smuggling")
 	_check(not entry.is_empty(), "城市面板有「走私航线」按钮")
 	_eq(str(CityPanel.hit_test(panel, PANEL_RECT, _center(entry["rect"])).get("id", "")),
 		"smuggling", "走私航线按钮点得中")
-	# 两个按钮不能重叠，否则点在「走私航线」上会命中「返回地图」
-	_check(not (back["rect"] as Rect2).intersects(entry["rect"] as Rect2), "两个按钮不重叠")
+	# 走私航线与相邻按钮不能重叠，否则点上会击错
+	var shop: Dictionary = UiTheme.find_button(CityPanel.buttons(PANEL_RECT), "shop")
+	_check(not shop.is_empty(), "城市面板有「商铺」按钮")
+	_check(not (entry["rect"] as Rect2).intersects(shop["rect"] as Rect2), "走私航线与商铺不重叠")
 	var sweep: Dictionary = _sweep_hits("city", panel, PANEL_RECT)
 	_check(sweep.has("button"), "城市面板的按钮在命中范围内")
 	_check(sweep.has("city"), "城市列表行可点")

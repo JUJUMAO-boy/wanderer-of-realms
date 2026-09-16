@@ -764,7 +764,7 @@ func _smuggling_input(key_event: InputEventKey) -> void:
 ## 点行即执行：光标也一并挪过去，免得"执行了第 3 行、高亮还在第 1 行"。
 ## 不可建的那几行照样收——理由由 WorldSim 给出，状态行说出来比什么都不做强。
 func _smuggling_click(point: Vector2) -> void:
-	var hit: Dictionary = SmugglingPanel.hit_test(_smuggling_view, PANEL_RECT, point)
+	var hit: Dictionary = SmugglingPanel.hit_test(_smuggling_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			_switch_view(VIEW_MAP)
@@ -983,7 +983,7 @@ func _quest_outcome_text(result: Dictionary) -> String:
 
 
 func _quest_click(point: Vector2) -> void:
-	var hit: Dictionary = QuestPanel.hit_test(_quest_view, PANEL_RECT, point)
+	var hit: Dictionary = QuestPanel.hit_test(_quest_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			if str(hit.get("id", "")) == "cancel":
@@ -1345,7 +1345,7 @@ func _event_outcome_text(result: Dictionary) -> String:
 ## 点一行先挪光标与展开详情，再点同一行才进抉择——与委托板同一条理由：
 ## 鼠标扫过列表就把整座城的命运押上去，值得多一次确认。
 func _event_click(point: Vector2) -> void:
-	var hit: Dictionary = EventPanel.hit_test(_event_view, PANEL_RECT, point)
+	var hit: Dictionary = EventPanel.hit_test(_event_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			if str(hit.get("id", "")) == "cancel":
@@ -1422,13 +1422,13 @@ func _history_move_cursor(delta: int) -> void:
 
 
 func _history_page(delta: int) -> void:
-	var visible: int = maxi(1, int(ChroniclePanel.list_rect(PANEL_RECT).size.y / ChroniclePanel.ROW_HEIGHT))
+	var visible: int = maxi(1, int(ChroniclePanel.list_rect(_content_rect()).size.y / ChroniclePanel.ROW_HEIGHT))
 	_history_move_cursor(delta * visible)
 
 
 ## 点一行先把史书翻到那条，点同一行也只翻不执行——史书是只读的。
 func _history_click(point: Vector2) -> void:
-	var hit: Dictionary = ChroniclePanel.hit_test(_chronicle_view, PANEL_RECT, point)
+	var hit: Dictionary = ChroniclePanel.hit_test(_chronicle_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			_switch_view(VIEW_MAP)
@@ -1588,7 +1588,7 @@ func _trade_confirm() -> void:
 ## 点一行先挪光标，再点同一行才成交——与委托板、城中大事同一条理由：
 ## 鼠标扫过列表就把钱花出去，值得多一次确认。
 func _trade_click(point: Vector2) -> void:
-	var hit: Dictionary = TradePanel.hit_test(_trade_view, PANEL_RECT, point)
+	var hit: Dictionary = TradePanel.hit_test(_trade_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			match str(hit.get("id", "")):
@@ -3016,7 +3016,7 @@ func _hidden_input(key_event: InputEventKey) -> void:
 
 
 func _hidden_click(point: Vector2) -> void:
-	var hit: Dictionary = EventPanel.hit_test(_hidden_view, PANEL_RECT, point)
+	var hit: Dictionary = EventPanel.hit_test(_hidden_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			if str(hit.get("id", "")) == "cancel":
@@ -3154,32 +3154,32 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 		VIEW_CREATION:
 			return CreationPanel.hit_test(_creation_session.view, PANEL_RECT, point)
 		VIEW_CITY:
-			return CityPanel.hit_test(_panel, PANEL_RECT, point)
+			return CityPanel.hit_test(_panel, _content_rect(), point)
 		VIEW_AVATAR:
-			return AvatarPanel.hit_test(_avatar_view, PANEL_RECT, point)
+			return AvatarPanel.hit_test(_avatar_view, _content_rect(), point)
 		VIEW_COMBAT:
 			return CombatPanel.hit_test(_combat_view, PANEL_RECT, point)
 		VIEW_SMUGGLING:
-			return SmugglingPanel.hit_test(_smuggling_view, PANEL_RECT, point)
+			return SmugglingPanel.hit_test(_smuggling_view, _content_rect(), point)
 		VIEW_QUEST:
-			return QuestPanel.hit_test(_quest_view, PANEL_RECT, point)
+			return QuestPanel.hit_test(_quest_view, _content_rect(), point)
 		VIEW_EVENT:
 			return EventPanel.hit_test(
 				_hidden_view if not _hidden_event.is_empty() else _event_view,
-				PANEL_RECT, point
+				_content_rect(), point
 			)
 		VIEW_TRADE:
-			return TradePanel.hit_test(_trade_view, PANEL_RECT, point)
+			return TradePanel.hit_test(_trade_view, _content_rect(), point)
 		VIEW_ENCOUNTER:
 			return EncounterPanel.hit_test(_encounter_view, PANEL_RECT, point)
 		VIEW_CRAFTING:
-			return CraftingPanel.hit_test(_crafting_view, PANEL_RECT, point)
+			return CraftingPanel.hit_test(_crafting_view, _content_rect(), point)
 		VIEW_HISTORY:
-			return ChroniclePanel.hit_test(_chronicle_view, PANEL_RECT, point)
+			return ChroniclePanel.hit_test(_chronicle_view, _content_rect(), point)
 		VIEW_NPC:
-			return NpcInteractionPanel.hit_test(_npc_view, PANEL_RECT, point)
+			return NpcInteractionPanel.hit_test(_npc_view, _content_rect(), point)
 		VIEW_CITY_SPACE:
-			return CitySpacePanel.hit_test(_city_space_view, PANEL_RECT, point)
+			return CitySpacePanel.hit_test(_city_space_view, _content_rect(), point)
 	return {}
 
 
@@ -3236,7 +3236,7 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 # --- 鼠标：城市面板 ---
 
 func _city_click(point: Vector2) -> void:
-	var hit: Dictionary = CityPanel.hit_test(_panel, PANEL_RECT, point)
+	var hit: Dictionary = CityPanel.hit_test(_panel, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			# 从这个城直接进走私界面，省得回地图再按 X
@@ -3277,7 +3277,7 @@ func _city_click(point: Vector2) -> void:
 ## 角色面板上点一下。装备槽与背包行都"先挪光标、再动手"——与委托板、商铺同一条
 ## 理由：鼠标扫过列表就把身上的行头换掉，值得多一次确认。
 func _avatar_click(point: Vector2) -> void:
-	var hit: Dictionary = AvatarPanel.hit_test(_avatar_view, PANEL_RECT, point)
+	var hit: Dictionary = AvatarPanel.hit_test(_avatar_view, _content_rect(), point)
 	var kind: String = str(hit.get("kind", ""))
 	if kind == "button":
 		_switch_view(VIEW_MAP)
@@ -3578,7 +3578,7 @@ func _refresh_city_space() -> void:
 		var npc: SimNpc = _world.get_npc(str(n["id"]))
 		npc_labels[str(n["id"])] = npc.display_name() if npc != null else str(n["id"])
 	_city_space_view = CitySpaceViewModel.build(layout, _city_space["player"],
-		building_labels, npc_labels, PANEL_RECT)
+		building_labels, npc_labels, _content_rect())
 
 
 ## 空格/回车：站在建筑旁就开它的功能视图，站在居民旁就看居民，否则提示。
@@ -3660,7 +3660,7 @@ func _city_space_input(key_event: InputEventKey) -> void:
 func _city_space_click(point: Vector2) -> void:
 	if _world == null or _city_space.is_empty():
 		return
-	var hit: Dictionary = CitySpacePanel.hit_test(_city_space_view, PANEL_RECT, point)
+	var hit: Dictionary = CitySpacePanel.hit_test(_city_space_view, _content_rect(), point)
 	if hit.is_empty():
 		return
 	match str(hit.get("kind", "")):
@@ -4028,7 +4028,7 @@ func _crafting_confirm() -> void:
 
 
 func _crafting_click(point: Vector2) -> void:
-	var hit: Dictionary = CraftingPanel.hit_test(_crafting_view, PANEL_RECT, point)
+	var hit: Dictionary = CraftingPanel.hit_test(_crafting_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			_switch_view(VIEW_MAP)
@@ -4265,7 +4265,7 @@ func _npc_input(key_event: InputEventKey) -> void:
 
 
 func _npc_click(point: Vector2) -> void:
-	var hit: Dictionary = NpcInteractionPanel.hit_test(_npc_view, PANEL_RECT, point)
+	var hit: Dictionary = NpcInteractionPanel.hit_test(_npc_view, _content_rect(), point)
 	match str(hit.get("kind", "")):
 		"button":
 			_switch_view(VIEW_CITY)
@@ -4393,33 +4393,33 @@ func _draw() -> void:
 		return
 	match _view:
 		VIEW_CITY:
-			CityPanel.draw(self, _panel, PANEL_RECT, _hover)
+			CityPanel.draw(self, _panel, _content_rect(), _hover)
 		VIEW_CREATION:
 			CreationPanel.draw(self, _creation_session.view, PANEL_RECT, _hover)
 		VIEW_AVATAR:
-			AvatarPanel.draw(self, _avatar_view, PANEL_RECT, _hover)
+			AvatarPanel.draw(self, _avatar_view, _content_rect(), _hover)
 		VIEW_COMBAT:
 			CombatPanel.draw(self, _combat_view, PANEL_RECT, _hover)
 		VIEW_SMUGGLING:
-			SmugglingPanel.draw(self, _smuggling_view, PANEL_RECT, _hover)
+			SmugglingPanel.draw(self, _smuggling_view, _content_rect(), _hover)
 		VIEW_QUEST:
-			QuestPanel.draw(self, _quest_view, PANEL_RECT, _hover)
+			QuestPanel.draw(self, _quest_view, _content_rect(), _hover)
 		VIEW_EVENT:
 			EventPanel.draw(self,
 				_hidden_view if not _hidden_event.is_empty() else _event_view,
-				PANEL_RECT, _hover)
+				_content_rect(), _hover)
 		VIEW_TRADE:
-			TradePanel.draw(self, _trade_view, PANEL_RECT, _hover)
+			TradePanel.draw(self, _trade_view, _content_rect(), _hover)
 		VIEW_ENCOUNTER:
 			EncounterPanel.draw(self, _encounter_view, PANEL_RECT, _hover)
 		VIEW_CRAFTING:
-			CraftingPanel.draw(self, _crafting_view, PANEL_RECT, _hover)
+			CraftingPanel.draw(self, _crafting_view, _content_rect(), _hover)
 		VIEW_HISTORY:
-			ChroniclePanel.draw(self, _chronicle_view, PANEL_RECT, _hover)
+			ChroniclePanel.draw(self, _chronicle_view, _content_rect(), _hover)
 		VIEW_NPC:
-			NpcInteractionPanel.draw(self, _npc_view, PANEL_RECT, _hover, _npc_gift_candidates())
+			NpcInteractionPanel.draw(self, _npc_view, _content_rect(), _hover, _npc_gift_candidates())
 		VIEW_CITY_SPACE:
-			CitySpacePanel.draw(self, _city_space_view, PANEL_RECT, _hover)
+			CitySpacePanel.draw(self, _city_space_view, _content_rect(), _hover)
 		_:
 			_draw_map()
 	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。
@@ -4431,6 +4431,16 @@ func _draw() -> void:
 ## 导航侧栏占的左区：从地图原点起、宽 150、向下到面板底沿。
 func _nav_rect() -> Rect2:
 	return Rect2(16.0, 48.0, 150.0, PANEL_RECT.size.y)
+
+
+## 二级面板的实际内容区。左侧导航占了 150px，二级面板就往右让出导航 + 一条
+## 槽距，否则城市列表这类最左栏会被导航压住。地图/战斗/开局等非二级视图
+## 还是原样铺满 PANEL_RECT。绘制与命中测试统一走这个，两边才不会错位。
+func _content_rect() -> Rect2:
+	if not _is_secondary_view(_view):
+		return PANEL_RECT
+	var shift: float = _nav_rect().size.x + 12.0
+	return Rect2(PANEL_RECT.position + Vector2(shift, 0.0), PANEL_RECT.size)
 
 
 ## 哪些视图是"地图之下的二级面板"，需要叠左侧导航。战斗/遭遇/开局创建是
