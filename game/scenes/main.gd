@@ -94,6 +94,7 @@ const VIEW_ENCOUNTER: int = 9
 const VIEW_CRAFTING: int = 10
 const VIEW_HISTORY: int = 11
 const VIEW_NPC: int = 12
+const VIEW_CITY_SPACE: int = 13
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -112,6 +113,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_CRAFTING: "↑↓ 选配方 / 采集    回车 制作 / 采集    点行先选中、再点同一行执行    ESC 或 T 返回地图",
 	VIEW_HISTORY: "↑↓ 翻阅史书    ESC 或 T 返回地图",
 	VIEW_NPC: "↑↓ 选居民    ←→ 选动作    回车 交谈/送礼/雇佣    ◀▶ 送礼时改选物    1/2/3 快速交谈    ESC 或 T 返回城市",
+	VIEW_CITY_SPACE: "方向键/WASD 走动    走到建筑/居民旁按回车 互动    点城门或 ESC/T 离开    城内 T 看城市总览",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -159,6 +161,11 @@ var _npc_choose_item: bool = false   ## 送礼选物子状态（M18）
 var _npc_item_cursor: int = 0        ## 送礼选物时的物品光标（M18）
 var _npc_city_id: String = ""        ## 正在看哪座城的居民（M18）
 var _npc_view: Dictionary = {}       ## NpcInteractionViewModel 的成品（M18）
+
+# 城内空间（M19）。纯视觉态、不进存档（与遭遇同一条处境）：进城即断，出城即清。
+# 布局可复现，玩家点位只活在当前会话里。
+var _city_space: Dictionary = {}     ## { city_id, layout, player:Vector2i }
+var _city_space_view: Dictionary = {} ## CitySpaceViewModel 的成品
 var _notable: Array = []
 var _last_deltas: Dictionary = {}
 var _panel: Dictionary = {}
@@ -533,6 +540,8 @@ func _refresh() -> void:
 			_refresh_chronicle()
 		VIEW_NPC:
 			_refresh_npc()
+		VIEW_CITY_SPACE:
+			_refresh_city_space()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -3154,11 +3163,19 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return ChroniclePanel.hit_test(_chronicle_view, PANEL_RECT, point)
 		VIEW_NPC:
 			return NpcInteractionPanel.hit_test(_npc_view, PANEL_RECT, point)
+		VIEW_CITY_SPACE:
+			return CitySpacePanel.hit_test(_city_space_view, PANEL_RECT, point)
 	return {}
 
 
 func _handle_mouse_button(event: InputEventMouseButton) -> void:
-	if event.button_index != MOUSE_BUTTON_LEFT or not event.pressed:
+	if not event.pressed:
+		return
+	# 地图视图支持右击：点在城池上就直接走进去（M19）。左键的一切照旧。
+	if event.button_index == MOUSE_BUTTON_RIGHT and _view == VIEW_MAP:
+		_map_right_click(event.position)
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	match _view:
 		VIEW_CREATION:
@@ -3188,6 +3205,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_history_click(event.position)
 		VIEW_NPC:
 			_npc_click(event.position)
+		VIEW_CITY_SPACE:
+			_city_space_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -3351,7 +3370,7 @@ func _map_click(point: Vector2) -> void:
 		if city == null:
 			return
 		if _world.avatar.pos_x == city.coord_x and _world.avatar.pos_y == city.coord_y:
-			_open_city_panel(city_id)
+			_enter_city_space(city_id)
 			return
 		# 走到城所在的格，而不是点到的那一格：大方块的边缘会被算进邻格，
 		# 目标是"进城"，落点就该是城的坐标
@@ -3363,10 +3382,21 @@ func _map_click(point: Vector2) -> void:
 	_walk_to(tile)
 
 
-func _open_city_panel(city_id: String) -> void:
-	var ids: Array = Array(_world.get_city_ids())
-	_selected_city = maxi(0, ids.find(city_id))
-	_switch_view(VIEW_CITY)
+## 地图上的右击：点在城池上就进它的城内空间（M19），与"走到城再点一次"同一条
+## 规则，省一步。点空地还是走过去的普通左键行为。
+func _map_right_click(point: Vector2) -> void:
+	if _world.avatar == null:
+		return
+	var city_id: String = _city_at_point(point)
+	if city_id.is_empty():
+		return
+	var city: City = _world.get_city(city_id)
+	if city == null:
+		return
+	if _world.avatar.pos_x == city.coord_x and _world.avatar.pos_y == city.coord_y:
+		_enter_city_space(city_id)
+	else:
+		_walk_to(Vector2i(city.coord_x, city.coord_y))
 
 
 func _city_at_point(point: Vector2) -> String:
@@ -3418,6 +3448,210 @@ func _walk_to(tile: Vector2i) -> void:
 	_refresh()
 
 
+# --- 城内空间（M19）---
+
+## 进入一座城的城内空间。只做会话态（不落盘）：布局可复现，玩家点位只在当前会话。
+func _enter_city_space(city_id: String) -> void:
+	if _world == null or _world.avatar == null:
+		_status.text = "还没有化身，先完成开局创建。"
+		_refresh()
+		return
+	var ids: Array = Array(_world.get_city_ids())
+	if not ids.has(city_id):
+		return
+	var building_ids: Array = ContentLoader.get_city_building_ids(city_id)
+	var npc_ids: Array = []
+	for npc in _world.get_city_npcs(city_id):
+		npc_ids.append(npc.npc_id)
+	_city_space = {
+		"city_id": city_id,
+		"layout": CitySpace.layout(city_id, building_ids, npc_ids),
+		"player": CitySpace.SPAWN,
+	}
+	_selected_city = maxi(0, ids.find(city_id))
+	_switch_view(VIEW_CITY_SPACE)
+	_status.text = "进入%s。城内随你走：走到建筑/居民旁按回车互动，走到城门离开。" % city_id
+
+
+func _leave_city_space() -> void:
+	_city_space = {}
+	_switch_view(VIEW_MAP)
+
+
+func _refresh_city_space() -> void:
+	if _world == null or _city_space.is_empty():
+		_city_space_view = {}
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var building_labels: Dictionary = {}
+	for slot in layout.get("buildings", []):
+		var cfg: Dictionary = ContentLoader.get_building_config(str(slot["id"]))
+		building_labels[str(slot["id"])] = str(cfg.get("displayName", str(slot["id"])))
+	var npc_labels: Dictionary = {}
+	for n in layout.get("npcs", []):
+		var npc: SimNpc = _world.get_npc(str(n["id"]))
+		npc_labels[str(n["id"])] = npc.display_name() if npc != null else str(n["id"])
+	_city_space_view = CitySpaceViewModel.build(layout, _city_space["player"],
+		building_labels, npc_labels, PANEL_RECT)
+
+
+## 空格/回车：站在建筑旁就开它的功能视图，站在居民旁就看居民，否则提示。
+func _city_space_interact() -> void:
+	if _world == null or _city_space.is_empty():
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var pos: Vector2i = _city_space["player"]
+	var near_b: Dictionary = CitySpace.near_building(layout, pos)
+	if not near_b.is_empty():
+		_city_space_open_kind(str(near_b.get("kind", "")))
+		return
+	var npc_id: String = CitySpace.near_npc(layout, pos)
+	if not npc_id.is_empty():
+		_enter_residents(str(_city_space["city_id"]))
+		return
+	_status.text = "旁边没有可互动的建筑或居民。"
+	_refresh()
+
+
+## 按建筑功能分流到既有视图。投资类回城市总览去投（M12 的投资就在那里）。
+func _city_space_open_kind(kind: String) -> void:
+	var city_id: String = str(_city_space.get("city_id", ""))
+	match kind:
+		CitySpace.KIND_SHOP:
+			_enter_trade(city_id)
+		CitySpace.KIND_EVENT:
+			_enter_event(city_id)
+		CitySpace.KIND_QUEST:
+			_enter_quest(city_id)
+		CitySpace.KIND_RESIDENTS:
+			_enter_residents(city_id)
+		CitySpace.KIND_SMUGGLING:
+			_enter_smuggling(city_id)
+		_:
+			_selected_city = maxi(0, Array(_world.get_city_ids()).find(city_id))
+			_switch_view(VIEW_CITY)
+
+
+func _city_space_step(dx: int, dy: int) -> void:
+	if _world == null or _city_space.is_empty():
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var result: Dictionary = CitySpace.step(layout, _city_space["player"], dx, dy)
+	if not bool(result["ok"]):
+		_status.text = "这里走不过去。"
+		_refresh()
+		return
+	_city_space["player"] = result["next"]
+	if bool(result["at_gate"]):
+		_leave_city_space()
+		return
+	_refresh()
+
+
+func _city_space_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_LEFT, KEY_A:
+			_city_space_step(-1, 0)
+		KEY_RIGHT, KEY_D:
+			_city_space_step(1, 0)
+		KEY_UP, KEY_W:
+			_city_space_step(0, -1)
+		KEY_DOWN, KEY_S:
+			_city_space_step(0, 1)
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_city_space_interact()
+		KEY_T:
+			_switch_view(VIEW_CITY)
+		KEY_ESCAPE:
+			_leave_city_space()
+		KEY_F5:
+			_save()
+		KEY_F9:
+			_load()
+
+
+## 城内点击：点空地走过去，点建筑走近后自动进入，点城门离开。
+func _city_space_click(point: Vector2) -> void:
+	if _world == null or _city_space.is_empty():
+		return
+	var hit: Dictionary = CitySpacePanel.hit_test(_city_space_view, PANEL_RECT, point)
+	if hit.is_empty():
+		return
+	match str(hit.get("kind", "")):
+		"gate":
+			_leave_city_space()
+		"building":
+			_city_space_approach_building(int(hit.get("index", -1)))
+		"cell":
+			_city_space_walk_to(hit.get("grid", Vector2i()))
+
+
+## 逐格走向某目标格。撞建筑停下（与地图 _walk_to 同款兜底）。
+func _city_space_walk_to(target: Vector2i) -> void:
+	if _city_space.is_empty():
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var pos: Vector2i = _city_space["player"]
+	var steps: int = 0
+	var limit: int = CitySpace.WIDTH * CitySpace.HEIGHT
+	while steps < limit and (pos.x != target.x or pos.y != target.y):
+		steps += 1
+		var next: Vector2i = pos
+		var dx: int = signi(target.x - pos.x)
+		var dy: int = signi(target.y - pos.y)
+		if dx != 0:
+			var rx: Dictionary = CitySpace.step(layout, pos, dx, 0)
+			if bool(rx["ok"]):
+				next = rx["next"]
+		if next == pos and dy != 0:
+			var ry: Dictionary = CitySpace.step(layout, pos, 0, dy)
+			if bool(ry["ok"]):
+				next = ry["next"]
+		if next == pos:
+			break
+		pos = next
+	_city_space["player"] = pos
+	_refresh()
+
+
+## 走向一座建筑，贴到它邻格后自动进它的功能视图。
+func _city_space_approach_building(index: int) -> void:
+	if _city_space.is_empty():
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var buildings: Array = layout.get("buildings", [])
+	if index < 0 or index >= buildings.size():
+		return
+	var target_kind: String = str(buildings[index]["kind"])
+	var pos: Vector2i = _city_space["player"]
+	var steps: int = 0
+	var limit: int = CitySpace.WIDTH * CitySpace.HEIGHT
+	while steps < limit:
+		var near_b: Dictionary = CitySpace.near_building(layout, pos)
+		if not near_b.is_empty() and str(near_b.get("kind", "")) == target_kind:
+			break
+		steps += 1
+		var b: Dictionary = buildings[index]
+		var cx: int = b["x"] + int(b["w"]) / 2
+		var cy: int = b["y"] + int(b["h"]) / 2
+		var next: Vector2i = pos
+		var dx: int = signi(cx - pos.x)
+		var dy: int = signi(cy - pos.y)
+		if dx != 0:
+			var rx: Dictionary = CitySpace.step(layout, pos, dx, 0)
+			if bool(rx["ok"]):
+				next = rx["next"]
+		if next == pos and dy != 0:
+			var ry: Dictionary = CitySpace.step(layout, pos, 0, dy)
+			if bool(ry["ok"]):
+				next = ry["next"]
+		if next == pos:
+			break
+		pos = next
+		_city_space["player"] = pos
+	_city_space_open_kind(target_kind)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if _world == null:
 		return
@@ -3461,6 +3695,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_history_input(key_event)
 		VIEW_NPC:
 			_npc_input(key_event)
+		VIEW_CITY_SPACE:
+			_city_space_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -4095,6 +4331,8 @@ func _draw() -> void:
 			ChroniclePanel.draw(self, _chronicle_view, PANEL_RECT, _hover)
 		VIEW_NPC:
 			NpcInteractionPanel.draw(self, _npc_view, PANEL_RECT, _hover, _npc_gift_candidates())
+		VIEW_CITY_SPACE:
+			CitySpacePanel.draw(self, _city_space_view, PANEL_RECT, _hover)
 		_:
 			_draw_map()
 

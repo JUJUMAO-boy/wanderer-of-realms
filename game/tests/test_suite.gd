@@ -192,6 +192,14 @@ func run_all() -> int:
 	_test_npc_hire()
 	_test_npc_follower_combat()
 	_test_npc_view_model()
+	print("=== 城内空间（M19）===")
+	_test_city_space_determinism()
+	_test_city_space_placement()
+	_test_city_space_collision()
+	_test_city_space_gate()
+	_test_city_space_near_building()
+	_test_city_space_near_npc()
+	_test_city_space_view_model()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7401,3 +7409,131 @@ func _test_npc_view_model() -> void:
 	var rows: Array = sel.get("rows", [])
 	if not rows.is_empty():
 		_check(bool(rows[0].get("selected", false)), "光标行被标记为选中")
+
+
+# --- 城内空间（M19）---
+
+## 布局确定性：同城两次逐位相等；不同城排布不同。
+func _cs_positions(layout: Dictionary) -> Array:
+	var out: Array = []
+	for b in layout.get("buildings", []):
+		out.append("%d,%d:%s" % [int(b["x"]), int(b["y"]), str(b["kind"])])
+	return out
+
+
+func _test_city_space_determinism() -> void:
+	var ids: Array = ["b1", "b2", "b3", "b4", "b5"]
+	var a1: Dictionary = CitySpace.layout("aedran", ids, ["n1", "n2"])
+	var a2: Dictionary = CitySpace.layout("aedran", ids, ["n1", "n2"])
+	_eq(_cs_positions(a1), _cs_positions(a2), "同城两次布局逐位相等")
+	var other: Dictionary = CitySpace.layout("port_thorne", ids, ["n1", "n2"])
+	_check(not (_cs_positions(a1) == _cs_positions(other)), "不同城排布不同")
+
+
+## 落位合法：都在界内、建筑不重叠、NPC 不压建筑。
+func _test_city_space_placement() -> void:
+	var b_ids: Array = ContentLoader.get_city_building_ids("aedran")
+	var npc_ids: Array = []
+	var world: WorldState = _new_sim()["world"]
+	for npc in world.get_city_npcs("aedran"):
+		npc_ids.append(npc.npc_id)
+	var l: Dictionary = CitySpace.layout("aedran", b_ids, npc_ids)
+	_eq(int(l["w"]), CitySpace.WIDTH, "城内宽 24 格")
+	_eq(int(l["h"]), CitySpace.HEIGHT, "城内高 18 格")
+	_eq(int(l["buildings"].size()), int(b_ids.size()), "建筑数与那座城的建筑一致")
+	for slot in l["buildings"]:
+		_check(int(slot["x"]) >= 0 and int(slot["y"]) >= 0
+			and int(slot["x"]) + int(slot["w"]) <= int(l["w"])
+			and int(slot["y"]) + int(slot["h"]) <= int(l["h"]), "建筑在界内")
+	# 建筑与建筑不重叠
+	var seen: Dictionary = {}
+	var overlap: bool = false
+	for slot in l["buildings"]:
+		for fx in range(int(slot["w"])):
+			for fy in range(int(slot["h"])):
+				var key: String = "%d,%d" % [int(slot["x"]) + fx, int(slot["y"]) + fy]
+				if seen.has(key):
+					overlap = true
+				seen[key] = true
+	_check(not overlap, "建筑互不重叠")
+	# NPC 不压建筑
+	var npc_on_building: bool = false
+	for n in l["npcs"]:
+		if bool(l["blocked"].get("%d,%d" % [int(n["x"]), int(n["y"])], false)):
+			npc_on_building = true
+	_check(not npc_on_building, "居民不站在建筑上")
+	var gate: Vector2i = l["gate"]
+	_check(gate.x >= 0 and gate.y >= 0 and gate.x < int(l["w"]) and gate.y < int(l["h"]), "城门在界内")
+	var spawn: Vector2i = l["spawn"]
+	_check(spawn.x >= 0 and spawn.y >= 0 and spawn.x < int(l["w"]) and spawn.y < int(l["h"]), "出生点在界内")
+	_check(CitySpace.walkable(l, spawn.x, spawn.y), "出生点可站")
+
+
+## 碰撞：建筑格不可走，撞建筑原地。
+func _test_city_space_collision() -> void:
+	var ids: Array = ["b1", "b2", "b3", "b4", "b5"]
+	var l: Dictionary = CitySpace.layout("aedran", ids, [])
+	var b: Dictionary = l["buildings"][0]
+	var at: Vector2i = Vector2i(int(b["x"]) - 1, int(b["y"]))
+	_check(not CitySpace.walkable(l, int(b["x"]), int(b["y"])), "建筑格不可走")
+	_check(CitySpace.walkable(l, at.x, at.y), "建筑旁的走道可走")
+	var into: Dictionary = CitySpace.step(l, at, 1, 0)
+	_check(not bool(into["ok"]) and into["next"] == at, "朝建筑走被挡在原地")
+	var out: Dictionary = CitySpace.step(l, at, -1, 0)
+	_check(bool(out["ok"]), "朝空地走能走")
+
+
+## 城门：踩到城门判定离开。
+func _test_city_space_gate() -> void:
+	var ids: Array = ["b1", "b2", "b3", "b4", "b5"]
+	var l: Dictionary = CitySpace.layout("aedran", ids, [])
+	var g: Vector2i = l["gate"]
+	_check(CitySpace.walkable(l, g.x, g.y), "城门格可走")
+	var spawn: Vector2i = l["spawn"]
+	_eq(int(spawn.y), int(g.y) - 1, "出生点就在城门前一格")
+	var r: Dictionary = CitySpace.step(l, spawn, 0, 1)
+	_check(bool(r["at_gate"]), "从出生点向前一步踩到城门判定离开")
+
+
+## 建筑邻近：站着识别到邻格建筑与功能类别；隔一格认不出。
+func _test_city_space_near_building() -> void:
+	var ids: Array = ["b1", "b2", "b3", "b4", "b5"]
+	var l: Dictionary = CitySpace.layout("aedran", ids, [])
+	var b: Dictionary = l["buildings"][0]
+	var nxt: Vector2i = Vector2i(maxi(0, int(b["x"]) - 1), int(b["y"]))
+	var near: Dictionary = CitySpace.near_building(l, nxt)
+	_eq(str(near.get("building_id", "")), str(b["id"]), "邻格认出是哪座建筑")
+	_eq(str(near.get("kind", "")), str(b["kind"]), "邻格带出建筑功能类别")
+	var far: Vector2i = Vector2i(maxi(0, int(b["x"]) - 2), int(b["y"]))
+	_check(CitySpace.near_building(l, far).is_empty(), "隔一格就认不出来")
+
+
+## NPC 邻近：站着邻近识别到居民 id。
+func _test_city_space_near_npc() -> void:
+	var world: WorldState = _new_sim()["world"]
+	var npc_ids: Array = []
+	for npc in world.get_city_npcs("aedran"):
+		npc_ids.append(npc.npc_id)
+	_check(npc_ids.size() >= 1, "城里有居民可摆")
+	var l: Dictionary = CitySpace.layout("aedran", ["b1"], npc_ids)
+	var n: Dictionary = l["npcs"][0]
+	var pos: Vector2i = Vector2i(maxi(0, int(n["x"]) - 1), int(n["y"]))
+	_eq(CitySpace.near_npc(l, pos), str(n["id"]), "邻近识别到居民")
+
+
+## 视图模型：坐标换算与清单形状恒定。
+func _test_city_space_view_model() -> void:
+	var ids: Array = ["b1", "b2", "b3", "b4", "b5"]
+	var l: Dictionary = CitySpace.layout("aedran", ids, ["n1", "n2"])
+	var rect := Rect2(0.0, 0.0, 1248.0, 568.0)
+	var view: Dictionary = CitySpaceViewModel.build(l, l["spawn"],
+		{"b1": "大堂", "b2": "铺", "b3": "堂", "b4": "厅", "b5": "院"}, {"n1": "甲", "n2": "乙"}, rect)
+	var expected_origin: Vector2 = rect.position + (rect.size
+		- Vector2(CitySpaceViewModel.CITY_TILE * CitySpace.WIDTH, CitySpaceViewModel.CITY_TILE * CitySpace.HEIGHT)) * 0.5
+	_eq(view["origin"], expected_origin, "面板原点居中算出")
+	_eq(int(view["buildings"].size()), 5, "五栋建筑进清单")
+	_eq(int(view["npcs"].size()), 2, "两位居民进清单")
+	var spawn: Vector2i = l["spawn"]
+	_eq(view["playerRect"], CitySpaceViewModel.cell_rect(view["origin"], spawn.x, spawn.y), "玩家矩形对齐出生点")
+	_check(not view["gate"]["rect"].size.is_zero_approx(), "城门有矩形")
+	_check(view["buildings"][0].has("label") and view["buildings"][0].has("kind"), "建筑带标签与功能")
