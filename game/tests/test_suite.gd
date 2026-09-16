@@ -154,6 +154,11 @@ func run_all() -> int:
 	_test_enchant_in_place()
 	_test_gather_action()
 	_test_shop_sells_base_materials_only()
+	print("=== 里程碑 15 制作台完整面板 ===")
+	_test_crafting_view_model()
+	_test_crafting_enchant_target()
+	_test_crafting_panel_hit_test()
+	_test_crafting_flow()
 	print("=== 世界遭遇 ===")
 	_test_encounter_tier()
 	_test_encounter_chance()
@@ -6273,6 +6278,161 @@ func _stock_has(stock: Array, template_id: String) -> bool:
 	return false
 
 
+## 制作台视图模型：配方行与采集行连成一根可导航列表，selected 指向光标行，
+## 附魔行带 hasTarget / targetName / affected，装备产物按熟练写档位标签。
+func _test_crafting_view_model() -> void:
+	var craft: Crafting = Crafting.create()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-craft-vm"
+	avatar.skills["forge"] = 85
+	var lookups: Dictionary = {"itemTemplates": _item_template_table()}
+	var view: Dictionary = CraftingViewModel.build(craft, avatar, lookups, 0)
+
+	var rows: Array = view.get("rows", [])
+	_check(rows.size() >= 12, "配方行 + 采集行连成一根列表（%d 行 ≥ 12）" % rows.size())
+	_check((view.get("gather", []) as Array).size() == 3, "采集行单独归组也有 3 行")
+	_eq(int(view.get("cursor", -1)), 0, "光标停在首行")
+	# selected = 光标行本身
+	_eq(view["selected"].get("selected", false), true, "首行被标为 selected")
+	_check(bool(view["selected"].has("kind")), "selected 是完整行（带 kind）")
+	# 分隔计数助手：配方数 + 采集数 = 总行数
+	_eq(rows.size() - (view["gather"] as Array).size(),
+		ContentLoader.get_recipes().size(), "总行数 = 配方数 + 采集数")
+
+	# 装备产物档位随熟练（forge 85 → legendary）
+	var sword: Dictionary = {}
+	for row in rows:
+		if str(row.get("recipeId", "")) == "craft_longsword":
+			sword = row
+			break
+	_check(not sword.is_empty(), "找到长剑配方行")
+	_check(str(sword.get("outputText", "")).contains("传奇"), "长剑参数里写传奇档")
+	_eq(str(view.get("craftRarityLabel", "")), "传奇", "craftRarityLabel 随 forge 85 → 传奇")
+	_check(bool(sword.get("gate", false)), "forge 85 越过长剑门槛 20")
+	# 材料行有 need / have / short
+	_check((sword.get("materials", []) as Array).size() >= 1, "长剑有材料清单")
+	_check(bool((sword["materials"] as Array)[0].has("short")), "材料行带缺料标记")
+
+	# 采集行是 gather 形态
+	var mine: Dictionary = {}
+	for row in rows:
+		if str(row.get("kind", "")) == CraftingViewModel.KIND_GATHER \
+			and str(row.get("spotId", "")) == "mine":
+			mine = row
+			break
+	_check(not mine.is_empty(), "找到采集行（矿脉）")
+	_eq(str(mine.get("skillLabel", "")), "采矿", "采集行技能标签")
+
+
+## 附魔自动挑背包里第一件能附的目标（appliesTo 匹配）。纯函数只读扫描。
+func _test_crafting_enchant_target() -> void:
+	var craft: Crafting = Crafting.create()
+	var lookups: Dictionary = {"itemTemplates": _item_template_table()}
+	var recipes: Dictionary = {}
+	for r in ContentLoader.get_recipes():
+		recipes[str(r.get("recipeId", ""))] = r
+	var recipe: Dictionary = recipes.get("enchant_sharpness", {})
+
+	# 背包里武器 + 防具都有：取第一件匹配武器（锋利只认 weapon）
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-enc-tgt"
+	var rule: ItemInstance = ItemInstance.create_from_config()
+	var mail: Dictionary = rule.new_instance("armor_leather_common", "t-m-mail")
+	avatar.item_instances["t-mail"] = mail
+	avatar.inventory.append("t-mail")
+	var blade: Dictionary = rule.new_instance("weapon_longsword_common", "t-m-blade")
+	avatar.item_instances["t-blade"] = blade
+	avatar.inventory.append("t-blade")
+	var target: Dictionary = CraftingViewModel.find_enchant_target(avatar, recipe, lookups["itemTemplates"])
+	_check(bool(target["found"]), "找到可附魔目标")
+	_eq(str(target.get("instanceId", "")), "t-blade", "取到匹配类别的武器实例")
+	_eq(str(target.get("affected", "")), "attack", "affected 列出词条作用字段")
+
+	# 背包里只有防具：武器类配方找不到目标
+	var only_mail := PlayerAvatar.new()
+	only_mail.avatar_id = "avatar-enc-only-mail"
+	only_mail.item_instances["m"] = mail
+	only_mail.inventory.append("m")
+	var none: Dictionary = CraftingViewModel.find_enchant_target(only_mail, recipe, lookups["itemTemplates"])
+	_eq(bool(none["found"]), false, "只有防具时武器附魔找不到目标")
+
+
+## 制作台面板命中：返回地图按钮 + 左右列行命中、面板外忽略。
+func _test_crafting_panel_hit_test() -> void:
+	var craft: Crafting = Crafting.create()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-craft-hit"
+	var lookups: Dictionary = {"itemTemplates": _item_template_table()}
+	var view: Dictionary = CraftingViewModel.build(craft, avatar, lookups, 0)
+
+	var buttons: Array = CraftingPanel.buttons(view, PANEL_RECT)
+	_eq(buttons.size(), 1, "制作台右上只有返回地图一个按钮")
+	var back: Dictionary = UiTheme.find_button(buttons, "back")
+	_check(not back.is_empty(), "返回地图按钮在")
+	_eq(str(CraftingPanel.hit_test(view, PANEL_RECT, _center(back["rect"])).get("id", "")),
+		"back", "返回按钮点得中")
+	var hit_back: Dictionary = CraftingPanel.hit_test(view, PANEL_RECT, _center(back["rect"]))
+	_eq(str(hit_back.get("kind", "")), "button", "返回按钮命中类型是 button")
+
+	_check(int(_hit_for("crafting", view, PANEL_RECT, "row", 0).get("index", -1)) == 0,
+		"第一行报出自己的行号")
+	_check(CraftingPanel.hit_test(view, PANEL_RECT, Vector2(4.0, 4.0)).is_empty(),
+		"面板外点击不算命中")
+	var sweep: Dictionary = _sweep_hits("crafting", view, PANEL_RECT)
+	_check(sweep.has("button"), "按钮在命中范围内")
+	_check(sweep.has("row"), "配分/采集行可点")
+
+
+## 全链路执行：从制作台视图里取配方行回车 → 扣料产出、熟练 +1；
+## 附魔行自动挑第一件匹配目标写词条；无目标时 views 拒做。
+func _test_crafting_flow() -> void:
+	var craft: Crafting = Crafting.create()
+	var lookups: Dictionary = {"itemTemplates": _item_template_table()}
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-craft-flow"
+	avatar.skills["forge"] = 0
+	_grant_items(avatar, "material_iron_ore", 3)
+	# 制造：冶铁锭
+	var res: Dictionary = craft.craft(avatar, "craft_iron_ingot")
+	_check(bool(res["ok"]), "制作台制造成功：" + str(res.get("error", "")))
+	_eq(_inventory_count(avatar, "material_iron_ingot"), 1, "产物入包")
+	_eq(int(avatar.skills.get("forge", 0)), 1, "制造成功熟练 +1")
+	# 附魔：自动挑目标 + 就地写词条
+	avatar.skills["enchant"] = 40
+	var rule: ItemInstance = ItemInstance.create_from_config()
+	var blade: Dictionary = rule.new_instance("weapon_longsword_common", "f-blade")
+	avatar.item_instances["f-blade"] = blade
+	avatar.inventory.append("f-blade")
+	_grant_items(avatar, "material_enchant_dust", 4)
+	var recipe: Dictionary = {}
+	for r in ContentLoader.get_recipes():
+		if str(r.get("recipeId", "")) == "enchant_sharpness":
+			recipe = r
+			break
+	var target: Dictionary = CraftingViewModel.find_enchant_target(avatar, recipe, lookups["itemTemplates"])
+	_check(bool(target["found"]), "包里那件武器被挑为目标")
+	var enc: Dictionary = craft.craft(avatar, "enchant_sharpness", str(target["instanceId"]))
+	_check(bool(enc["ok"]), "附魔执行成功：" + str(enc.get("error", "")))
+	var mods: Array = avatar.item_instances["f-blade"].get("modifiers", [])
+	_eq(mods.size(), 1, "长剑得一条词缀")
+	_eq(int(avatar.skills.get("enchant", 0)), 41, "附魔熟练 40 → 41")
+	# views 侧：背包里没有可附魔目标时，配方行 enabled = false
+	var no_tgt := PlayerAvatar.new()
+	no_tgt.avatar_id = "avatar-enc-no-tgt"
+	no_tgt.skills["enchant"] = 40
+	_grant_items(no_tgt, "material_enchant_dust", 2)
+	var view: Dictionary = CraftingViewModel.build(craft, no_tgt, lookups, 0)
+	var ench_row: Dictionary = {}
+	for row in view["rows"]:
+		if str(row.get("recipeId", "")) == "enchant_sharpness":
+			ench_row = row
+			break
+	_check(not ench_row.is_empty(), "找到附魔·锋利行")
+	_eq(bool(ench_row.get("enabled", true)), false, "无目标时附魔行置灰")
+	_check(str(ench_row.get("reason", "")).contains("没有可附魔的目标"),
+		"置灰原因写明缺目标")
+
+
 func _new_creator() -> CharacterCreation:
 	return CharacterCreation.new(
 		ContentLoader.get_balance_section("characterCreation"),
@@ -6392,6 +6552,8 @@ func _panel_hit(panel: String, view: Dictionary, rect: Rect2, point: Vector2) ->
 			return TradePanel.hit_test(view, rect, point)
 		"encounter":
 			return EncounterPanel.hit_test(view, rect, point)
+		"crafting":
+			return CraftingPanel.hit_test(view, rect, point)
 	return {}
 
 

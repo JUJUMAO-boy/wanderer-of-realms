@@ -91,6 +91,7 @@ const VIEW_QUEST: int = 6
 const VIEW_EVENT: int = 7
 const VIEW_TRADE: int = 8
 const VIEW_ENCOUNTER: int = 9
+const VIEW_CRAFTING: int = 10
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -106,6 +107,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_EVENT: "←→ 换城市    ↑↓ 选一件    回车 处置    ESC 或 T 返回地图",
 	VIEW_TRADE: "←→ 换城市    ↑↓ 选货    回车 成交 / 敲一炉    Tab 换买卖    X 换渠道    F 铁匠铺    ESC 或 T 返回地图",
 	VIEW_ENCOUNTER: "↑↓ 选做法    回车 执行    点做法行也行    （遭遇里没有回头路）",
+	VIEW_CRAFTING: "↑↓ 选配方 / 采集    回车 制作 / 采集    点行先选中、再点同一行执行    ESC 或 T 返回地图",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -208,6 +210,12 @@ var _gathering: Gathering = null
 ## 在采集点列表里轮转的游标。野外按 F 依次采矿脉/林地/药草丛，好把三类基础料都补齐。
 var _gather_seq: int = 0
 
+# 制作台（M15）。规则层 Crafting 持配方便捷，视图用 CraftingViewModel 产出
+# 配方/采集行与选中明细；光标只记"在列表哪一行"。制作与采集都就地改化身。
+var _crafting: Crafting = null
+var _crafting_view: Dictionary = {}
+var _crafting_cursor: int = 0
+
 # 战斗（M5）
 var _combat: Combat = null
 var _combat_seq: int = 0
@@ -257,6 +265,7 @@ func _ready() -> void:
 	_build_lookup_tables()
 	_gear = Equipment.create(_table("itemTemplates"))
 	_gathering = Gathering.create()
+	_crafting = Crafting.create()
 	_creator = CharacterCreation.new(
 		ContentLoader.get_balance_section("characterCreation"),
 		ContentLoader.get_playable_races(),
@@ -491,6 +500,8 @@ func _refresh() -> void:
 			_refresh_trade()
 		VIEW_ENCOUNTER:
 			_refresh_encounter()
+		VIEW_CRAFTING:
+			_refresh_crafting()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -2857,6 +2868,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return TradePanel.hit_test(_trade_view, PANEL_RECT, point)
 		VIEW_ENCOUNTER:
 			return EncounterPanel.hit_test(_encounter_view, PANEL_RECT, point)
+		VIEW_CRAFTING:
+			return CraftingPanel.hit_test(_crafting_view, PANEL_RECT, point)
 	return {}
 
 
@@ -2882,6 +2895,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_trade_click(event.position)
 		VIEW_ENCOUNTER:
 			_encounter_click(event.position)
+		VIEW_CRAFTING:
+			_crafting_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -3142,6 +3157,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_trade_input(key_event)
 		VIEW_ENCOUNTER:
 			_encounter_input(key_event)
+		VIEW_CRAFTING:
+			_crafting_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -3183,6 +3200,8 @@ func _handle_map_input(key_event: InputEventKey) -> void:
 			_enter_event()
 		KEY_R:
 			_enter_trade()
+		KEY_V:
+			_enter_crafting()
 		KEY_F:
 			_gather_action()
 		KEY_F5:
@@ -3312,6 +3331,100 @@ func _gather_action() -> void:
 	_refresh()
 
 
+# --- 制作台（M15）---
+
+## 进入制作台。制作不需要挑城市——采到的材料带着走，在哪儿都做得成。
+func _enter_crafting() -> void:
+	if _world == null or _world.avatar == null:
+		_status.text = "还没有化身，先完成开局创建。"
+		return
+	_crafting_cursor = 0
+	_switch_view(VIEW_CRAFTING)
+	_status.text = "制作台：采得的材料在这里变成用得上的货——熟练越高，做出的装备也越好。"
+
+
+func _refresh_crafting() -> void:
+	if _world == null or _world.avatar == null:
+		_crafting_view = {}
+		return
+	_crafting_view = CraftingViewModel.build(
+		_crafting, _world.avatar, _lookups, _crafting_cursor
+	)
+	_crafting_cursor = int(_crafting_view.get("cursor", 0))
+
+
+func _crafting_move_cursor(delta: int) -> void:
+	var rows: Array = _crafting_view.get("rows", [])
+	if rows.is_empty():
+		return
+	_crafting_cursor = clampi(_crafting_cursor + delta, 0, rows.size() - 1)
+	_refresh()
+
+
+## 制作台回车：做选中那一行。配方行走 Crafting.craft（附魔自动挑第一件匹配目标），
+## 采集行走 _gather_action 的同一套逻辑（采到的料当场入包）。
+func _crafting_confirm() -> void:
+	var row: Dictionary = _crafting_view.get("selected", {})
+	if row.is_empty():
+		return
+	if str(row.get("kind", "")) == CraftingViewModel.KIND_GATHER:
+		_gather_action()
+		return
+	var recipe_id: String = str(row.get("recipeId", ""))
+	var target_id: String = ""
+	if str(row.get("kind", "")) == "enchant":
+		var target: Dictionary = CraftingViewModel.find_enchant_target(
+			_world.avatar, _crafting.recipe(recipe_id), _table("itemTemplates"))
+		if not bool(target.get("found", false)):
+			_status.text = "背包里没有可附魔的目标——先拿一件能附的装备。"
+			return
+		target_id = str(target.get("instanceId", ""))
+	var result: Dictionary = _crafting.craft(_world.avatar, recipe_id, target_id)
+	if not bool(result.get("ok", false)):
+		_status.text = "做不成：%s" % str(result.get("error", ""))
+	else:
+		var skill: String = str(result.get("skill", ""))
+		if str(row.get("kind", "")) == "enchant":
+			var tgt: Dictionary = result.get("target", {})
+			_status.text = "附魔完成：%s已附上「%s」。%s熟练 +1。" % [
+				str(tgt.get("templateId", "")), str(row.get("displayName", "")), skill,
+			]
+		else:
+			var produced: Array = result.get("produced", [])
+			var parts: Array = []
+			for p in produced:
+				parts.append("%s ×%d" % [str(p.get("displayName", "")), 1])
+			var line: String = "、".join(PackedStringArray(parts))
+			_status.text = "做成：%s。%s熟练 +1。" % [line, skill]
+	_refresh()
+
+
+func _crafting_click(point: Vector2) -> void:
+	var hit: Dictionary = CraftingPanel.hit_test(_crafting_view, PANEL_RECT, point)
+	match str(hit.get("kind", "")):
+		"button":
+			_switch_view(VIEW_MAP)
+		"row":
+			var index: int = int(hit.get("index", -1))
+			if index == _crafting_cursor:
+				_crafting_confirm()
+				return
+			_crafting_cursor = index
+			_refresh()
+
+
+func _crafting_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_crafting_move_cursor(-1)
+		KEY_DOWN, KEY_S:
+			_crafting_move_cursor(1)
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_crafting_confirm()
+		KEY_ESCAPE, KEY_T:
+			_switch_view(VIEW_MAP)
+
+
 func _switch_view(view: int) -> void:
 	_view = view
 	# 悬停目标跟着视图走。不清掉的话，切过来的一瞬间新面板上会有一个
@@ -3432,6 +3545,8 @@ func _draw() -> void:
 			TradePanel.draw(self, _trade_view, PANEL_RECT, _hover)
 		VIEW_ENCOUNTER:
 			EncounterPanel.draw(self, _encounter_view, PANEL_RECT, _hover)
+		VIEW_CRAFTING:
+			CraftingPanel.draw(self, _crafting_view, PANEL_RECT, _hover)
 		_:
 			_draw_map()
 
