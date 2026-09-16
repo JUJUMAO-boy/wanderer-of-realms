@@ -1044,6 +1044,7 @@ func _resolve_quest_combat() -> void:
 	var quest_id: String = str(_quest_combat.get("questId", ""))
 	_quest_combat = {}
 	var won: bool = _combat.winner == Combat.RESULT_PLAYER
+	_sync_combat_skills_to_avatar()
 	var branch_id: String = QuestSystem.COMBAT_PREFIX + _combat_outcome_key(won)
 	var result: Dictionary = _sim.quests.complete(quest_id, branch_id, Clock.total_months())
 	if not bool(result.get("ok", false)):
@@ -1743,6 +1744,7 @@ func _resolve_event_combat() -> void:
 	var event_id: String = str(_event_combat.get("eventId", ""))
 	_event_combat = {}
 	var won: bool = _combat.winner == Combat.RESULT_PLAYER
+	_sync_combat_skills_to_avatar()
 	var result: Dictionary = _sim.events.resolve_combat(event_id, won, Clock.total_months())
 	if not bool(result.get("ok", false)):
 		_status.text = "这件事没能了结：%s" % str(result.get("error", ""))
@@ -2133,6 +2135,22 @@ func _player_unit_spec(avatar: PlayerAvatar) -> Dictionary:
 		# 超重惩罚在战斗里生效（AP/移动/命中/TU），由负重推导（D-66）
 		"encumbrance": _encumbrance(avatar),
 	}
+
+
+## 战斗结束把玩家单位已成长的熟练度回写化身，让「用进」练出的熟练度落盘
+## （avatar.skills 走 to_dict/from_dict 存档）。玩家单位是从 avatar.skills 拷一份
+## 出来的（上面 _player_unit_spec），战里 Combat 只在快照上给它 +1，
+## 不写回读档就全丢了（M13）。
+func _sync_combat_skills_to_avatar() -> void:
+	if _combat == null or _world == null or _world.avatar == null:
+		return
+	var unit: Dictionary = _combat.unit_by_id("unit-player")
+	if unit.is_empty():
+		return
+	for skill_id in unit.get("skills", {}):
+		_world.avatar.skills[skill_id] = clampi(
+			int(unit["skills"][skill_id]), 0, 100
+		)
 
 
 ## 玩家的负重现状（D-66）：当前负重 + 上限 + 超重惩罚。面板显示与战斗单位
@@ -2735,6 +2753,7 @@ func _start_encounter_combat() -> void:
 func _resolve_encounter_combat() -> void:
 	var spec: Dictionary = _encounter
 	var won: bool = _combat.winner == Combat.RESULT_PLAYER
+	_sync_combat_skills_to_avatar()
 	var outcome: String = EncounterSystem.OUTCOME_WON if won else EncounterSystem.OUTCOME_LOST
 	_encounter_combat = false
 	_encounter = {}

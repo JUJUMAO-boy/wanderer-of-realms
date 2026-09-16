@@ -137,6 +137,14 @@ func run_all() -> int:
 	_test_building_invest()
 	_test_building_settlement()
 	_test_building_round_trip()
+	print("=== 里程碑 13 法术与技能系统 ===")
+	_test_skill_content()
+	_test_skill_mastery_gate()
+	_test_skill_mp()
+	_test_skill_growth()
+	_test_element_counter_formula()
+	_test_element_wiring()
+	_test_mastery_passive_formula()
 	print("=== 世界遭遇 ===")
 	_test_encounter_tier()
 	_test_encounter_chance()
@@ -5818,9 +5826,204 @@ func _duel_encounter(hero_dex: int, foe_dex: int, foe_hp: int = 100000) -> Dicti
 				"attributes": _attributes_with(PlayerAvatar.ATTR_DEXTERITY, foe_dex),
 				"weaponTemplateId": "weapon_longsword_common",
 				"position": [1, 0], "threatLevel": 1, "hp": foe_hp, "maxHp": foe_hp,
-			},
-		],
+		},
+	],
+}
+
+
+## M13 施法对局：hero 在 (0,0)、假人在 (1,0)，二人都在施法距离内。
+## hero_mp >= 0 时显式写 mp，否则用 derived 的满蓝。foe_extra 用来设 element/creatureKind。
+func _spell_encounter(hero_skills: Dictionary, hero_mp: int = -1, foe_extra: Dictionary = {}) -> Dictionary:
+	var hero: Dictionary = {
+		"unitId": "hero", "side": Combat.SIDE_PLAYER, "name": "试作法师",
+		"attributes": _attributes_with(PlayerAvatar.ATTR_DEXTERITY, 40),
+		"skills": hero_skills,
+		"weaponTemplateId": "weapon_longsword_common",
+		"position": [0, 0], "threatLevel": 1, "hp": 100000, "maxHp": 100000,
 	}
+	if hero_mp >= 0:
+		hero["mp"] = hero_mp
+	var foe: Dictionary = {
+		"unitId": "foe", "side": Combat.SIDE_ENEMY, "name": "试作假人",
+		"attributes": _attributes_with(PlayerAvatar.ATTR_DEXTERITY, 1),
+		"weaponTemplateId": "weapon_longsword_common",
+		"position": [1, 0], "threatLevel": 1, "hp": 100000, "maxHp": 100000,
+	}
+	for key in foe_extra:
+		foe[key] = foe_extra[key]
+	return {"sessionId": "test-spell", "units": [hero, foe]}
+
+
+## 数据装载：七系法术各 5，法术耗蓝、非法术不耗蓝，熟练门槛在 0..100。
+func _test_skill_content() -> void:
+	var skills: Array = ContentLoader.get_skills()
+	_check(skills.size() > 60, "技能库补齐七系法术（装载 %d 条）" % skills.size())
+	var spells: int = 0
+	var series: Dictionary = {}
+	var bad_mp: int = 0
+	var bad_req: int = 0
+	for s in skills:
+		var cat: String = str(s.get("category", ""))
+		if cat == "spell":
+			spells += 1
+			var tree: String = str(s.get("tree", ""))
+			series[tree] = int(series.get(tree, 0)) + 1
+			if int(s.get("mpCost", 0)) <= 0:
+				bad_mp += 1
+		elif int(s.get("mpCost", 0)) != 0:
+			bad_mp += 1
+		var req: int = int(s.get("requiredSkillLevel", 0))
+		if req < 0 or req > 100:
+			bad_req += 1
+	_eq(spells, 35, "法术共 35 条（七系各 5）")
+	for tree in ["fire", "water", "wind", "earth", "holy", "dark", "soul"]:
+		_eq(int(series.get(tree, 0)), 5, "「%s」系 5 条主线法术" % tree)
+	_eq(bad_mp, 0, "法术 mpCost>0、非法术 mpCost==0")
+	_eq(bad_req, 0, "所有技能 requiredSkillLevel 在 0..100")
+
+
+## 熟练度门槛：没练到阶位要求就放不出技能，被前置条件拒绝且不扣蓝不涨熟练。
+func _test_skill_mastery_gate() -> void:
+	var combat: Combat = _new_combat(7001)
+	_check(bool(combat.start(_spell_encounter({"fire_cataclysm": 0}, 100))["ok"]), "技的门槛战斗开始成功")
+	_eq(combat.current_unit_id(), "hero", "hero 先手")
+	var res: Dictionary = combat.submit_action({
+		"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe", "skillId": "fire_cataclysm",
+	})
+	_eq(str(res.get("error", "")), "PRECONDITION_FAILED", "熟练度不足被作为前置条件拒绝")
+	_check(_has_text([res.get("reason", "")], "熟练度不足"), "拒绝原因含「熟练度不足」")
+	_eq(int(combat.unit_by_id("hero")["skills"].get("fire_cataclysm", 0)), 0, "被拒后熟练度不变")
+	_eq(int(combat.unit_by_id("hero")["mp"]), 90, "被拒不扣蓝（回蓝后仍满蓝）")
+
+
+## 施法耗蓝与每轮回蓝：蓝不足拒放，满蓝施法扣蓝、熟练度「用进」成长、造成伤害。
+func _test_skill_mp() -> void:
+	# 前半：蓝不足被拒。满蓝 90 内 hero_mp=2，开局回蓝 +2 → 4，仍差 1。
+	var low: Combat = _new_combat(7101)
+	_check(bool(low.start(_spell_encounter({"fire_fireball": 5}, 2))["ok"]), "低蓝战斗开始成功")
+	_eq(int(low.unit_by_id("hero")["mp"]), 4, "开局回蓝 +2：2 → 4")
+	var low_go: Dictionary = low.submit_action({
+		"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe", "skillId": "fire_fireball",
+	})
+	_eq(str(low_go.get("error", "")), "PRECONDITION_FAILED", "蓝不足被前置条件拒绝")
+	_check(_has_text([low_go.get("reason", "")], "魔力不足"), "拒绝原因含「魔力不足」")
+	_eq(int(low.unit_by_id("hero")["mp"]), 4, "被拒不扣蓝")
+	_eq(int(low.unit_by_id("hero")["skills"].get("fire_fireball", 0)), 5, "被拒熟练度不涨")
+	# 后半：满蓝施法。满蓝 90，火球术耗 5。
+	var ok: Combat = _new_combat(7102)
+	var ok_specs: Dictionary = _spell_encounter({"fire_fireball": 5}, -1)
+	_check(bool(ok.start(ok_specs)["ok"]), "满蓝战斗开始成功")
+	var foe_max: int = int(ok.unit_by_id("foe")["hp"])
+	ok.submit_action({
+		"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe", "skillId": "fire_fireball",
+	})
+	_eq(int(ok.unit_by_id("hero")["mp"]), 85, "施法扣 5 蓝（满蓝 90 → 85）")
+	_eq(int(ok.unit_by_id("hero")["skills"]["fire_fireball"]), 6, "熟练度 5 → 6")
+	# 命中率约 95%，补几发保证至少一发命中，木桩最终掉血。
+	var guard: int = 0
+	while int(ok.unit_by_id("foe")["hp"]) >= foe_max and guard < 20:
+		guard += 1
+		var actor_id: String = ok.current_unit_id()
+		if actor_id.is_empty():
+			break
+		if actor_id != "hero" or int(ok.unit_by_id("hero")["ap"]) < 2:
+			ok.submit_action({"actionType": Combat.ACTION_END_TURN, "actorId": actor_id})
+			continue
+		ok.submit_action({
+			"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe", "skillId": "fire_fireball",
+		})
+	_check(int(ok.unit_by_id("foe")["hp"]) < foe_max, "火球术对木桩造成伤害")
+
+
+## 熟练度「用进」成长封顶在 100。
+func _test_skill_growth() -> void:
+	var combat: Combat = _new_combat(7203)
+	_check(bool(combat.start(_spell_encounter({"fire_fireball": 99}, -1))["ok"]), "成长战斗开始成功")
+	combat.submit_action({
+		"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe", "skillId": "fire_fireball",
+	})
+	_eq(int(combat.unit_by_id("hero")["skills"]["fire_fireball"]), 100, "熟练度 99 → 100 封顶")
+
+
+## 元素克制公式（纯公式，DerivedStats 级）：四元素循环 + 光暗互克 + 魂系按生物类别。
+func _test_element_counter_formula() -> void:
+	var d: DerivedStats = _new_derived()
+	# 水>火>风>土>水：克制 ×1.5（1500）
+	_eq(d.element_counter_milli("water", "fire"), 1500, "水克火")
+	_eq(d.element_counter_milli("fire", "wind"), 1500, "火克风")
+	_eq(d.element_counter_milli("wind", "earth"), 1500, "风克土")
+	_eq(d.element_counter_milli("earth", "water"), 1500, "土克水")
+	# 反序即被克：×0.75（750）
+	_eq(d.element_counter_milli("fire", "water"), 750, "火被水克")
+	_eq(d.element_counter_milli("water", "earth"), 750, "水被土克")
+	_eq(d.element_counter_milli("earth", "wind"), 750, "土被风克")
+	_eq(d.element_counter_milli("wind", "fire"), 750, "风被火克")
+	# 无元素目标 / 循环外组合 → 无克制 1000
+	_eq(d.element_counter_milli("water", "physical"), 1000, "无元素目标无克制")
+	_eq(d.element_counter_milli("water", "wind"), 1000, "水对风无克制")
+	_eq(d.element_counter_milli("earth", "fire"), 1000, "土对火无克制")
+	# 光<->暗互克 ×1.5
+	_eq(d.element_counter_milli("holy", "dark"), 1500, "光克暗")
+	_eq(d.element_counter_milli("dark", "holy"), 1500, "暗克光")
+	_eq(d.element_counter_milli("holy", "fire"), 1000, "光对火无克制")
+	# 魂系按生物类别
+	_eq(d.element_counter_milli("soul", "", "undead"), 1500, "魂克亡灵")
+	_eq(d.element_counter_milli("soul", "", "holy"), 500, "魂被神圣抑（×0.5）")
+	_eq(d.element_counter_milli("soul", "", "living"), 1000, "魂对生者无额外")
+	_eq(d.element_counter_milli("soul", "", "beast"), 1000, "未知类别按生者处理")
+
+
+## 元素克制接线进战斗：同一水箭术打火系木桩比打中性木桩掉血更多。
+func _test_element_wiring() -> void:
+	var fire_dmg: int = _agg_spell_damage(7005, "fire")
+	var neut_dmg: int = _agg_spell_damage(7006, "physical")
+	_check(fire_dmg > neut_dmg, "水克制火：火系木桩掉血更多（%d > %d）" % [fire_dmg, neut_dmg])
+
+
+## 每发命中的法术平均伤害（打若干发并跨轮回蓝续力，除以命中数归一化），
+## 用来做克制下相对大小的干净比较——两场战斗命中数不同，不能直接比总伤。
+func _agg_spell_damage(seed_val: int, foe_element: String) -> int:
+	var combat: Combat = _new_combat(seed_val)
+	combat.start(_spell_encounter({"water_water_arrow": 10}, -1, {"element": foe_element}))
+	var foe_max: int = int(combat.unit_by_id("foe")["hp"])
+	var hits: int = 0
+	var guard: int = 0
+	while guard < 8:
+		guard += 1
+		var before: int = int(combat.unit_by_id("foe")["hp"])
+		var actor_id: String = combat.current_unit_id()
+		if actor_id.is_empty():
+			break
+		if actor_id != "hero" or int(combat.unit_by_id("hero")["ap"]) < 2:
+			combat.submit_action({"actionType": Combat.ACTION_END_TURN, "actorId": actor_id})
+			continue
+		combat.submit_action({
+			"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe", "skillId": "water_water_arrow",
+		})
+		if int(combat.unit_by_id("foe")["hp"]) < before:
+			hits += 1
+	if hits == 0:
+		return 0
+	return (foe_max - int(combat.unit_by_id("foe")["hp"])) / hits
+
+
+## 专长被动（纯公式）：剑/斧/弓专精与火系亲和的伤乘区与命中加成，未学无加成。
+func _test_mastery_passive_formula() -> void:
+	var d: DerivedStats = _new_derived()
+	# 伤害乘区
+	_eq(d.passive_damage_factor_milli({"passive_sword_mastery": 4}, {"tree": "sword"}), 1100, "已学剑术专精 ×1.1")
+	_eq(d.passive_damage_factor_milli({}, {"tree": "sword"}), 1000, "未学剑术专精无加成")
+	_eq(d.passive_damage_factor_milli({"passive_axe_mastery": 1}, {"tree": "axe"}), 1100, "已学斧术专精 ×1.1")
+	_eq(d.passive_damage_factor_milli({"passive_bow_mastery": 2}, {"tree": "bow"}), 1100, "已学弓术专精 ×1.1")
+	_eq(d.passive_damage_factor_milli(
+		{"passive_fire_affinity": 1}, {"category": "spell", "tree": "fire", "damageType": "fire"}),
+		1100, "火系亲和加成火系法术")
+	_eq(d.passive_damage_factor_milli(
+		{}, {"category": "spell", "tree": "fire", "damageType": "fire"}),
+		1000, "未学火系亲和无加成")
+	# 命中加成
+	_eq(d.passive_hit_bonus_bp({"passive_bow_mastery": 1}, {"tree": "bow"}), 500, "弓术专精命中 +5%")
+	_eq(d.passive_hit_bonus_bp({}, {"tree": "bow"}), 0, "未学弓无命中加成")
 
 
 func _new_creator() -> CharacterCreation:

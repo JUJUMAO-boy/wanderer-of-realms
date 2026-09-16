@@ -316,6 +316,10 @@ func _build_unit(spec: Dictionary) -> Dictionary:
 		"cooldowns": {},
 		"threatLevel": int(spec.get("threatLevel", 1)),
 		"luck": int(spec.get("luck", 0)),
+		# 元素克制（M13）：element 是目标侧的亲和（affinity），用于判定四元素循环/光暗互克；
+		# creatureKind 是生物类别（undead/holy/living），用于魂系克制。缺省无克制（M13 前行为）。
+		"element": str(spec.get("element", "physical")),
+		"creatureKind": str(spec.get("creatureKind", "living")),
 	}
 
 
@@ -381,6 +385,9 @@ func _find_next() -> void:
 				# 超重扣本轮行动点，但至少留 1 点能动作（渐进惩罚、不硬封锁，D-66）
 				var ap_penalty: int = _enc_int(unit.get("encumbrance", {}), "apPenalty")
 				unit["ap"] = maxi(1, _derived.action_points(unit["attributes"]) - ap_penalty)
+				# 每轮开场回蓝，钳到上限（M13）。MP/回蓝都只活在战斗临时态里，不落盘。
+				var regen: int = _cfg("mpRegenPerRound", 2)
+				unit["mp"] = mini(int(unit["maxMp"]), int(unit["mp"]) + regen)
 				return
 		turn_index += 1
 		scanned += 1
@@ -472,6 +479,21 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	if not is_basic and cooldown > 0:
 		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "技能还在冷却：剩 %d 轮" % cooldown}
 
+	# 熟练度门槛（M13）：阶位法术/武器技/技艺要求对应的熟练度（skills.json requiredSkillLevel），
+	# 没练到就放不出来。普通攻击不算技能，跳过。skill_level 在这里提前算好，后面伤害/成长都用它。
+	var skill_level: int = int(actor["skills"].get(skill_id, 0)) if not is_basic else 0
+	if not is_basic and skill_level < int(skill.get("requiredSkillLevel", 0)):
+		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "熟练度不足：需 %d，现有 %d" % [
+			int(skill.get("requiredSkillLevel", 0)), skill_level
+		]}
+
+	# 法术耗蓝（M13）：施法是 spell 类别才扣 MP。蓝不够直接拒，不进入动作队列。
+	var mp_cost: int = int(skill.get("mpCost", 0))
+	if mp_cost > int(actor["mp"]):
+		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "魔力不足：需 %d，剩余 %d" % [
+			mp_cost, int(actor["mp"])
+		]}
+
 	var attack_range: int = int(actor["weapon"].get("attackRange", 1))
 	if not is_basic and int(skill.get("attackRange", 0)) > 0:
 		attack_range = int(skill["attackRange"])
@@ -484,8 +506,15 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	_spend(actor, ap_cost)
 	if not is_basic and int(skill.get("cooldown", 0)) > 0:
 		actor["cooldowns"][skill_id] = int(skill.get("cooldown", 0))
+	if mp_cost > 0:
+		actor["mp"] = maxi(0, int(actor["mp"]) - mp_cost)
 
-	var skill_level: int = int(actor["skills"].get(skill_id, 0)) if not is_basic else 0
+	# 熟练度「用进」成长（M13）：成功发动 spell/weapon/technique 即涨一点，钳到 100 封顶。
+	# passive 不能在战斗里被"发动"、普攻不算技能，都不长。用进不废退（用户决策，本里程碑无衰减）。
+	if not is_basic and str(skill.get("category", "")) != "passive":
+		var gain: int = _cfg("skillGainPerCast", 1)
+		actor["skills"][skill_id] = mini(100, int(actor["skills"].get(skill_id, 0)) + gain)
+
 	var label: String = "普通攻击" if is_basic else str(skill.get("displayName", skill_id))
 
 	var hit_bp: int = _derived.hit_chance_bp(
@@ -494,6 +523,9 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	)
 	if not is_basic:
 		hit_bp += int(skill.get("hitBonus", 0)) * 100
+		var passive_hit: int = _derived.passive_hit_bonus_bp(actor["skills"], skill)
+		if passive_hit > 0:
+			hit_bp += passive_hit
 	# 超重拖累身手：闪避不开、瞄不准，直接扣命中（渐进惩罚，D-66）
 	hit_bp -= _enc_int(actor.get("encumbrance", {}), "hitPenaltyBp")
 	# 越级惩罚在派生值的钳制之后扣：它要能把命中率压到常规下限（5%）以下，
@@ -581,20 +613,35 @@ func _compute_damage(
 	var is_spell: bool = category == "spell" or (
 		damage_type != "physical" and damage_type != "none"
 	)
+	var damage: int
 	if is_spell:
-		return _derived.magic_damage(
-			actor["attributes"], int(skill.get("baseDamage", 0)), skill_level,
-			int(target["magicResist"]), damage_type, 1000, is_crit
+		# 元素克制（M13）：按攻击元素的查表结果替换原先硬编码的 1000。target 的元素亲和
+		# 与生物类别决定克制/被克/无克制；普通武器攻击走 physical，不经过这一档（无克制）。
+		var element_milli: int = _derived.element_counter_milli(
+			damage_type,
+			str(target.get("element", "physical")),
+			str(target.get("creatureKind", "living"))
 		)
-	var multiplier: float = float(skill.get("multiplier", 0.0))
-	if multiplier <= 0.0:
-		multiplier = 1.0
-	return _derived.physical_damage(
-		actor["attributes"], int(actor["weapon"].get("attack", 0)), skill_level,
-		multiplier, int(target["armor"]),
-		float(skill.get("armorPierce", 0.0)) + float(actor["weapon"].get("armorPierce", 0.0)),
-		aim_part, is_crit
-	)
+		damage = _derived.magic_damage(
+			actor["attributes"], int(skill.get("baseDamage", 0)), skill_level,
+			int(target["magicResist"]), damage_type, element_milli, is_crit
+		)
+	else:
+		var multiplier: float = float(skill.get("multiplier", 0.0))
+		if multiplier <= 0.0:
+			multiplier = 1.0
+		damage = _derived.physical_damage(
+			actor["attributes"], int(actor["weapon"].get("attack", 0)), skill_level,
+			multiplier, int(target["armor"]),
+			float(skill.get("armorPierce", 0.0)) + float(actor["weapon"].get("armorPierce", 0.0)),
+			aim_part, is_crit
+		)
+	# 专长被动（M13）：已学的剑/斧/弓专精、火系亲和在各自树上额外乘一大格。命中那半
+	# 在 _do_attack 里已按弓术专精加过，这里只管伤害乘区。
+	var passive_factor: int = _derived.passive_damage_factor_milli(actor["skills"], skill)
+	if passive_factor != 1000:
+		damage = roundi(float(damage) * float(passive_factor) / 1000.0)
+	return damage
 
 
 ## 命中头部/四肢时给对方留下伤势（6.4 节）。

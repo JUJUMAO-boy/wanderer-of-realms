@@ -39,7 +39,7 @@ const SKILL_CATEGORIES: Array = ["weapon", "spell", "technique", "passive"]
 ## 技能阶位（《技能库》1.3 节）
 const SKILL_TIERS: Array = ["novice", "skilled", "expert", "master", "grandmaster", "passive"]
 ## 伤害类型（《数值框架》6.5 节元素克制表）
-const DAMAGE_TYPES: Array = ["physical", "fire", "water", "holy", "dark", "soul", "none"]
+const DAMAGE_TYPES: Array = ["physical", "fire", "water", "wind", "earth", "holy", "dark", "soul", "none"]
 
 ## 物品分类与稀有度（《数值框架》8 节）
 const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool"]
@@ -852,6 +852,10 @@ func _validate_balance() -> void:
 		"lootChanceMinBp", "lootChanceMaxBp", "luckPerRarityStep",
 		"levelGapThreshold", "levelGapHitPenaltyBp",
 		"levelGapDamageRatio", "levelGapDamageFloorRatio",
+		# M13：元素克制因子、MP 回蓝、熟练度成长步长、专长被动乘区
+		"elementCounterFactorMilli", "elementCounteredFactorMilli",
+		"holyDarkFactorMilli", "soulVsUndeadMilli", "soulVsHolyMilli", "soulVsLivingMilli",
+		"mpRegenPerRound", "skillGainPerCast", "masteryFactorMilli", "masteryHitBonusBp",
 	],
 }
 	for section in required_sections:
@@ -860,10 +864,20 @@ func _validate_balance() -> void:
 			continue
 		var block: Dictionary = _balance[section]
 		for key in required_sections[section]:
-			if not block.has(key):
-				_errors.append("数值配置缺少字段：%s.%s" % [section, key])
-			elif not (block[key] is float or block[key] is int):
-				_errors.append("数值配置字段必须是数字：%s.%s" % [section, key])
+				if not block.has(key):
+					_errors.append("数值配置缺少字段：%s.%s" % [section, key])
+				elif not (block[key] is float or block[key] is int):
+					_errors.append("数值配置字段必须是数字：%s.%s" % [section, key])
+
+	# 元素克制循环链（《数值框架》6.5：水>火>风>土>水）。必须包含四个元素一个不差，
+	# 否则 DerivedStats 的元素查表会漏判某一格的克制/被克关系（M13）。
+	var cycle: Array = _array_of(_balance.get("combat", {}).get("elementCycle", null))
+	if cycle.size() != 4:
+		_errors.append("数值配置 combat.elementCycle 必须恰好四元素：水/火/风/土，实际 %d 项" % cycle.size())
+	else:
+		for elem in ["water", "fire", "wind", "earth"]:
+			if not cycle.has(elem):
+				_errors.append("数值配置 combat.elementCycle 缺少元素：%s" % elem)
 
 	# 时间刻度的取值必须为正，否则 ClockCore 会退化
 	var time_block: Dictionary = _balance.get("time", {})
@@ -1776,6 +1790,23 @@ func _validate_skills(root: Dictionary) -> void:
 
 		if int(skill.get("cooldown", 0)) < 0:
 			_errors.append("技能配置 cooldown 不能为负：%s.cooldown" % path)
+
+		# M13：法术耗蓝。mpCost 是本里程碑引入的可选字段，缺省视为 0；但法术必须
+		# 耗蓝（否则"接入 MP 资源"落空），非法术技能不许耗蓝。
+		var mp_cost: int = int(skill.get("mpCost", 0))
+		if mp_cost < 0:
+			_errors.append("技能配置 mpCost 不能为负：%s.mpCost = %d" % [path, mp_cost])
+		elif category == "spell" and mp_cost < 1:
+			_errors.append("技能配置法术必须消耗 MP：%s.mpCost = %d" % [path, mp_cost])
+		elif category != "spell" and mp_cost != 0:
+			_errors.append("技能配置非法术技能的 mpCost 必须为 0：%s.mpCost = %d" % [path, mp_cost])
+
+		# 阶位门槛一律落在 0..100 熟练度区间内（入门 0 / 宗师 81），写界外说明数据配置错了。
+		var req_level: int = int(skill.get("requiredSkillLevel", 0))
+		if req_level < 0 or req_level > 100:
+			_errors.append("技能配置 requiredSkillLevel 必须落在 0..100：%s.requiredSkillLevel = %d" % [
+				path, req_level
+			])
 
 		# 武器技能必须有倍率，否则挥出去等于空挥。法术不查这一条：
 		# 治疗与增益类法术本来就没有伤害，baseDamage 为 0 是正常的。

@@ -256,6 +256,70 @@ func magic_damage(
 		AIM_TORSO, is_crit, equip_crit_bonus_bp, float(element_milli) / 1000.0)
 
 
+## 元素克制倍率（千分比，1000 = 无克制）。《数值框架》6.5 节：
+##   水>火>风>土>水 四元素循环：克制 ×elementCounterFactorMilli，被克 ×elementCounteredFactorMilli
+##   光<->暗互克 ×holyDarkFactorMilli；魂系按 target_kind ×soulVsUndead/Holy/Living
+## target_element 缺省 "physical"（无元素亲和 → 无克制 1000），target_kind 缺省 "living"。
+## 之所以是独立函数而不是写死乘区，是因为克制关系需要目标侧信息（元素亲和 / 生物类别）
+## 才能判定，放这里既保持"公式全在 DerivedStats"的边界，也方便测试各档倍率。
+func element_counter_milli(
+	attack_type: String,
+	target_element: String = "physical",
+	target_kind: String = "living"
+) -> int:
+	var cycle: Array = _c.get("elementCycle", ["water", "fire", "wind", "earth"])
+	var idx: int = cycle.find(attack_type)
+	if idx != -1:
+		# 前一位是我克制它（attack 克制 cycle[idx-1]），后一位是它克制我
+		var countered_by: String = str(cycle[(idx + cycle.size() - 1) % cycle.size()])
+		if target_element == countered_by:
+			return _geti(_c, "elementCounteredFactorMilli", 750)
+		var counters: String = str(cycle[(idx + 1) % cycle.size()])
+		if target_element == counters:
+			return _geti(_c, "elementCounterFactorMilli", 1500)
+		return 1000
+	if attack_type == "holy":
+		return _geti(_c, "holyDarkFactorMilli", 1500) if target_element == "dark" else 1000
+	if attack_type == "dark":
+		return _geti(_c, "holyDarkFactorMilli", 1500) if target_element == "holy" else 1000
+	if attack_type == "soul":
+		match target_kind:
+			"undead": return _geti(_c, "soulVsUndeadMilli", 1500)
+			"holy": return _geti(_c, "soulVsHolyMilli", 500)
+			_: return _geti(_c, "soulVsLivingMilli", 1000)
+	return 1000
+
+
+## 专长被动伤害乘区（千分比）。《技能库》4.5.1 剑/斧/弓专精与 4.5.2 火系亲和都是
+## "已学（熟练度 > 0）即生效"的 +10%。按技能树/命分类别匹配，未学返回 1000（无加成）。
+func passive_damage_factor_milli(skills: Dictionary, skill: Dictionary) -> int:
+	var tree: String = str(skill.get("tree", ""))
+	var mapping: Dictionary = {
+		"sword": "passive_sword_mastery",
+		"axe": "passive_axe_mastery",
+		"bow": "passive_bow_mastery",
+	}
+	if mapping.has(tree) and _learned(skills, str(mapping[tree])):
+		return _geti(_c, "masteryFactorMilli", 1100)
+	if str(skill.get("category", "")) == "spell" \
+		and str(skill.get("damageType", "")) == "fire" \
+		and _learned(skills, "passive_fire_affinity"):
+		return _geti(_c, "masteryFactorMilli", 1100)
+	return 1000
+
+
+## 专长被动的命中加成（基点）。弓术专精 "+10% 伤害、+5% 命中"里命中那半落到这里；
+## 其余专长没有命中项。未学返回 0。
+func passive_hit_bonus_bp(skills: Dictionary, skill: Dictionary) -> int:
+	if str(skill.get("tree", "")) == "bow" and _learned(skills, "passive_bow_mastery"):
+		return _geti(_c, "masteryHitBonusBp", 500)
+	return 0
+
+
+func _learned(skills: Dictionary, id: String) -> bool:
+	return int(skills.get(id, 0)) > 0
+
+
 func _finish_damage(
 	base: float,
 	skill_level: int,

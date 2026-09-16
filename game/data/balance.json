@@ -338,7 +338,20 @@
     "levelGapThreshold": 5,
     "levelGapHitPenaltyBp": 300,
     "levelGapDamageRatio": 0.08,
-    "levelGapDamageFloorRatio": 0.25
+    "levelGapDamageFloorRatio": 0.25,
+    "_comment_elements": "元素克制（《数值框架》6.5）：水>火>风>土>水四元素循环，克制 ×1500‰ / 被克 ×750‰；光<->暗互克各 ×1500‰；魂系对亡灵/神圣/生者 ×1500/×500/×1000‰。魔伤公式里的 element_milli 由本源数据查表得出（M13）。",
+    "elementCycle": ["water", "fire", "wind", "earth"],
+    "elementCounterFactorMilli": 1500,
+    "elementCounteredFactorMilli": 750,
+    "holyDarkFactorMilli": 1500,
+    "soulVsUndeadMilli": 1500,
+    "soulVsHolyMilli": 500,
+    "soulVsLivingMilli": 1000,
+    "_comment_mp_skill": "MP 耗蓝（M13）：每轮回蓝 mpRegenPerRound（钳到 maxMp）；熟练度『用进』成长步长 skillGainPerCast（仅 spell/weapon/technique 发动时 +，passive/普攻不长）；专长被动乘区 masteryFactorMilli、命中加成 masteryHitBonusBp。",
+    "mpRegenPerRound": 2,
+    "skillGainPerCast": 1,
+    "masteryFactorMilli": 1100,
+    "masteryHitBonusBp": 500
   },
   "hiddenAttributes": {
     "_comment": "《数值框架》第 3 章",

@@ -201,13 +201,27 @@ static func _main_menu(combat: Combat, actor: Dictionary, skill_names: Dictionar
 			if str(skill.get("category", "")) == "passive":
 				continue
 			var ap_cost: int = int(skill.get("apCost", 2))
-			var usable: bool = ap_cost <= int(actor["ap"]) \
-				and int(actor["cooldowns"].get(str(skill_id), 0)) <= 0
+			var skill_level: int = int(actor["skills"].get(str(skill_id), 0))
+			var req: int = int(skill.get("requiredSkillLevel", 0))
+			var mp_cost: int = int(skill.get("mpCost", 0))
+			# 展示三层不可用原因（M13：熟练度门槛、魔力不足、AP/冷却）并置灰。
+			var usable: bool = true
+			var away: Array = []
+			if skill_level < req:
+				usable = false
+				away.append("需 %d 熟练（现 %d）" % [req, skill_level])
+			elif mp_cost > int(actor["mp"]):
+				usable = false
+				away.append("蓝不足（需 %d，现 %d）" % [mp_cost, int(actor["mp"])])
+			if ap_cost > int(actor["ap"]) or int(actor["cooldowns"].get(str(skill_id), 0)) > 0:
+				usable = false
+				away.append("暂不可用")
+			var suffix: String = "" if away.is_empty() else (" —— " + "、".join(PackedStringArray(away)))
+			var mp_text: String = ("，%d MP" % mp_cost) if mp_cost > 0 else ""
 			out.append({
-				"label": "%s（%s，%d AP）%s" % [
+				"label": "%s（%s%s，%d AP）%s" % [
 					str(skill_names.get(str(skill_id), str(skill_id))),
-					str(skill.get("effectText", "")), ap_cost,
-					"" if usable else " —— 暂不可用",
+					str(skill.get("effectText", "")), mp_text, ap_cost, suffix,
 				],
 				"enabled": usable,
 				"action": {"kind": "skill", "skillId": str(skill_id),
