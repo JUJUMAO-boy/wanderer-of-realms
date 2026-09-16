@@ -9,6 +9,8 @@
       "scriptRef": "EV-02",
       "cityId": "port_thorne",
       "summary": "深海巨兽被血腥引来，封堵了港口航线，整座贸易城濒临瘫痪。",
+      "chronicleBp": 400,
+      "_comment_chronicleBp": "纪年权重（M16）：≥ balance.chronicle.minChronicleWeight（250）的事件才有资格沉淀进世界史书。海怪封港是索恩港的头等大事，取 400。不给这条字段的事件默认 0，够不着门槛，进不了史书。",
       "trigger": {
         "dimension": "wealth",
         "atLeast": 75,

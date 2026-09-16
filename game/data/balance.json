@@ -375,5 +375,10 @@
     "investCostBase": 5000,
     "investCostPerLevel": 2500,
     "playerReturnPerLevel": 300
+  },
+  "chronicle": {
+    "_comment": "世界大事件与历史纪年（M16，D-86~D-88）。纪年轴是随世界落盘的跨代史书：谁够格上史、史书保留多长，都在这。够格凭事件模板的 chronicleBp（>0 才算候选）不小于 minChronicleWeight 才沉淀，阈值过滤防止事件流里的小事刷屏稀释真正的大事。",
+    "minChronicleWeight": 250,
+    "maxEntries": 400
   }
 }

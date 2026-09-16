@@ -52,6 +52,8 @@ var economy: Economy
 var generator: NpcGenerator
 var quests: QuestSystem
 var events: EventSystem
+## 世界纪年（M16）：把达标城市事件与城市升/降阶沉淀成跨代落盘的历史条目。
+var chronicle: Chronicle
 
 var _dim_min: int = 0
 var _dim_max: int = 100
@@ -79,6 +81,7 @@ func _init(p_world: WorldState, balance: Dictionary, profession_cfg: Dictionary,
 	generator = NpcGenerator.new(profession_cfg, name_cfg, balance.get("npc", {}))
 	quests = QuestSystem.create(p_world)
 	events = EventSystem.create(p_world)
+	chronicle = Chronicle.create()
 	_trade = balance.get("trade", {})
 	_npc_cfg = balance.get("npc", {})
 	var dim: Dictionary = balance.get("cityDimension", {})
@@ -216,6 +219,13 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 	for notice in drained["notices"]:
 		notable.append(event(str(notice["cityId"]), month, EVENT_CITY_EVENT, str(notice["text"])))
 
+	# 世界纪年（M16）：本月触发的城市事件里够格的（模板 chronicleBp ≥ 阈值）沉淀成
+	# 一条纪年。事件流留的是单城窗口，史书要的是跨代还能翻的大事——阈值过滤防刷屏。
+	for ce in city_events:
+		var ce_cfg: Dictionary = ContentLoader.get_event_template(ce.template_id)
+		if chronicle.is_notable(ce_cfg):
+			chronicle.record(world, chronicle.event_entry(world, ce))
+
 	var applied: int = _apply_pending_changes(month, deltas, detail)
 
 	for city_id in world.get_city_ids():
@@ -257,6 +267,12 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 					city.display_name, city.get_tier_label(),
 					str(City.TIER_LABELS[int(tier_before[str(city_id)])]),
 				]))
+
+	# 世界纪年（M16）：城市跨档（升阶或降阶）是史书重头戏，逐条沉淀。
+	for tchange in tier_changes:
+		chronicle.record(world, chronicle.tier_entry(
+			world, str(tchange["cityId"]), str(tchange["fromLabel"]),
+			str(tchange["label"]), month))
 
 	for city_id in world.get_city_ids():
 		_sync_city_npcs(str(city_id), false)

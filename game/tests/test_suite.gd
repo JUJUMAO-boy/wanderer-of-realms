@@ -159,6 +159,12 @@ func run_all() -> int:
 	_test_crafting_enchant_target()
 	_test_crafting_panel_hit_test()
 	_test_crafting_flow()
+	print("=== 世界纪年与历史纪年（M16）===")
+	_test_chronicle_rules()
+	_test_chronicle_event_hook()
+	_test_chronicle_round_trip()
+	_test_chronicle_view_model()
+	_test_chronicle_panel_hit_test()
 	print("=== 世界遭遇 ===")
 	_test_encounter_tier()
 	_test_encounter_chance()
@@ -6737,6 +6743,134 @@ func _cleanup_npc_slot() -> void:
 
 func _time_scale(key: String, fallback: int) -> int:
 	return int(ContentLoader.get_balance_section("time").get(key, fallback))
+
+
+# --- 里程碑 16：世界纪年与历史纪年 ---
+
+## 规则层：阈值过滤、条目换算与 record 的追加/钳制。
+func _test_chronicle_rules() -> void:
+	var chronicle := Chronicle.create()
+	_eq(int(chronicle.rules().get("minChronicleWeight", 0)), 250, "阈值来自 balance.chronicle")
+
+	var config: Dictionary = ContentLoader.get_event_template("ev_02_kraken_blockade")
+	_check(not config.is_empty(), "海怪封港模板在事件表里")
+	_eq(chronicle.chronicle_weight(config), 400, "模板的 chronicleBp 被读出")
+	_check(chronicle.is_notable(config), "chronicleBp 400 ≥ 阈值 250，够格进史书")
+	var plain: Dictionary = {"templateId": "no_bp"}
+	_eq(chronicle.chronicle_weight(plain), 0, "没有 chronicleBp 的模板权重为 0")
+	_check(not chronicle.is_notable(plain), "权重 0 进不了史书")
+
+	var world: WorldState = _new_world()["world"]
+	# 条目换算：事件 / 跨档 / 转生三类标题口径
+	var ev: CityEvent = CityEvent.make("ev-x", "ev_02_kraken_blockade", "port_thorne", 13, true, {})
+	var ev_entry: Dictionary = chronicle.event_entry(world, ev)
+	_eq(str(ev_entry["kind"]), Chronicle.KIND_CITY_EVENT, "事件条目标记为城市事件")
+	_eq(str(ev_entry["title"]), "索恩港的行动：海怪封港", "事件标题带城市与剧本名")
+	_check(str(ev_entry["year"]).contains("第2年"), "月份 13 折算成第 2 年")
+
+	var tier_entry: Dictionary = chronicle.tier_entry(world, "aedran", "村落", "乡镇", 25)
+	_eq(str(tier_entry["kind"]), Chronicle.KIND_TIER, "跨档条目标记为 tier")
+	_check(str(tier_entry["title"]).contains("从「村落」变为「乡镇」"), "跨档标题带两档标签")
+
+	var soul_entry: Dictionary = chronicle.soul_entry(3, "云深", 37)
+	_eq(str(soul_entry["kind"]), Chronicle.KIND_SOUL, "转生条目标记为 soul")
+	_eq(str(soul_entry["title"]), "第3世云深落幕", "转生标题带世代与姓名")
+
+	# record：自增 id + 超上限丢最老
+	var a: Dictionary = chronicle.record(world, chronicle.soul_entry(1, "甲", 1))
+	var b: Dictionary = chronicle.record(world, chronicle.tier_entry(world, "aedran", "村落", "乡镇", 2))
+	_eq(int(a["id"]), 1, "第一条 id 为 1")
+	_eq(int(b["id"]), 2, "第二条 id 为 2")
+	_eq(world.chronicle.size(), 2, "条目进了世界纪年")
+	var cap: Chronicle = Chronicle.new(10, 3, 12)  # min 10, max 3
+	for i in range(5):
+		cap.record(world, chronicle.soul_entry(i + 1, "来回", i + 1))
+	_eq(world.chronicle.size(), 3, "超过 maxEntries 被钳住")
+	_eq(int(world.chronicle_seq), 7, "id 游标只增不减（2 条后人乘 5 条）")
+
+
+## 月度结算挂钩：达标事件自动沉淀成纪年条目。
+func _test_chronicle_event_hook() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	_check(world.chronicle.is_empty(), "开局史书是空的")
+	sim.settle_month(1)
+	_check(not world.chronicle.is_empty(), "触发海怪封港后史书有了内容")
+	if world.chronicle.is_empty():
+		return
+	var top: Dictionary = world.chronicle[world.chronicle.size() - 1]
+	_eq(str(top.get("kind", "")), Chronicle.KIND_CITY_EVENT, "沉淀的是城市事件条目")
+	_check(str(top.get("title", "")).contains("海怪封港"), "记的是海怪封港")
+	_eq(str(top.get("cityId", "")), "port_thorne", "标的城市是索恩港")
+
+
+## 纪年随世界存档往返。
+func _test_chronicle_round_trip() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	sim.settle_month(1)
+	_check(not world.chronicle.is_empty(), "史书有内容可存")
+	var decoded: Variant = JSON.parse_string(JSON.stringify(world.to_dict()))
+	_check(decoded is Dictionary, "世界状态可过 JSON")
+	var fresh: WorldState = _new_world()["world"]
+	fresh.apply_dict(decoded)
+	_eq(fresh.chronicle.size(), world.chronicle.size(), "纪年条数往返一致")
+	_eq(int(fresh.chronicle_seq), int(world.chronicle_seq), "id 游标往返一致")
+	if fresh.chronicle.is_empty():
+		return
+	_eq(str(fresh.chronicle[0].get("title", "")), str(world.chronicle[0].get("title", "")),
+		"首条内容往返一致")
+
+
+## 视图模型：最近在顶、光标与分项统计。
+func _test_chronicle_view_model() -> void:
+	var chronicle := Chronicle.create()
+	var world: WorldState = _new_world()["world"]
+	chronicle.record(world, chronicle.soul_entry(1, "俑一", 1))
+	chronicle.record(world, chronicle.tier_entry(world, "aedran", "村落", "乡镇", 2))
+	chronicle.record(world, chronicle.soul_entry(2, "俑二", 3))
+	var view: Dictionary = ChronicleViewModel.build(world.chronicle, 0)
+	_eq(int(view["rowCount"]), 3, "三条都在")
+	var rows: Array = view["rows"]
+	_eq(str(rows[0].get("title", "")), "第2世俑二落幕", "最近一条在顶")
+	_eq(int(rows[0].get("id", 0)), 3, "顶行的 id 是最大的（最新）")
+	_eq(int(view.get("cursor", -1)), 0, "光标钳到 0")
+	var counts: Dictionary = view["counts"]
+	_eq(int(counts.get(Chronicle.KIND_SOUL, 0)), 2, "转生条目数 2")
+	_eq(int(counts.get(Chronicle.KIND_TIER, 0)), 1, "跨档条目数 1")
+	# 光标越界钳住
+	var tail: Dictionary = ChronicleViewModel.build(world.chronicle, 99)
+	_eq(int(tail.get("cursor", -1)), 2, "光标越上界钳到最后一条")
+
+
+## 面板命中：能点到行与返回按钮。
+func _test_chronicle_panel_hit_test() -> void:
+	var chronicle := Chronicle.create()
+	var world: WorldState = _new_world()["world"]
+	for i in range(6):
+		chronicle.record(world, chronicle.soul_entry(i + 1, "回环", i + 1))
+	var view: Dictionary = ChronicleViewModel.build(world.chronicle, 3)
+	var rect: Rect2 = Rect2(16.0, 48.0, 1248.0, 568.0)
+	# 点中第一行（最近在顶、光标定位后可见区内的某一行）的左上处
+	var list: Rect2 = ChroniclePanel.list_rect(rect)
+	var first_row: Rect2 = ChroniclePanel._row_rect(rect, view, 3)
+	var hit: Dictionary = ChroniclePanel.hit_test(view, rect, first_row.position + Vector2(8.0, 10.0))
+	_eq(str(hit.get("kind", "")), "row", "点到列表能命中行")
+	_eq(int(hit.get("index", -1)), 3, "命中的正好是光标那行")
+	# 范围外返回空
+	_check(ChroniclePanel.hit_test(view, rect, list.position - Vector2(40.0, 40.0)).is_empty(),
+		"列表外点不到")
+	# 返回按钮在右上，点名它
+	var buttons: Array = ChroniclePanel.buttons(view, rect)
+	_check(not buttons.is_empty(), "史书有返回按钮")
+	if not buttons.is_empty():
+		var btn: Dictionary = buttons[0]
+		var center: Vector2 = ((btn["rect"] as Rect2).position + (btn["rect"] as Rect2).size / 2.0)
+		var bhit: Dictionary = ChroniclePanel.hit_test(view, rect, center)
+		_eq(str(bhit.get("kind", "")), "button", "点到返回按钮")
+		_eq(str(bhit.get("id", "")), "back", "返回按钮 id")
 
 
 func _check(condition: bool, label: String) -> void:

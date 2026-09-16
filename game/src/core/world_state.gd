@@ -64,6 +64,13 @@ var applied_changes: Dictionary = {}
 ## 派生值不落盘，这里只存玩家亲手投的那部分。
 var building_investments: Dictionary = {}
 
+## 世界大事件与历史纪年（M16）。跨城、跨代的条目数组，随世界落盘——纪年的价值
+## 正在于"换了代还能翻开"，所以它是真实条目而非派生的趋势窗口。元素形如
+## {id, kind, title, cityId, cityLabel, detail, attribution, month, year}，由
+## Chronicle.record 追加、钳总量上限。chronicle_seq 是纪年 id 的单调游标。
+var chronicle: Array = []
+var chronicle_seq: int = 0
+
 
 static func create(world_seed_value: int) -> WorldState:
 	var w := WorldState.new()
@@ -452,6 +459,11 @@ func to_dict() -> Dictionary:
 	for key in build_keys:
 		buildings_out[str(key)] = building_investments[key].duplicate()
 
+	var chronicle_out: Array = []
+	for entry in chronicle:
+		if entry is Dictionary:
+			chronicle_out.append((entry as Dictionary).duplicate(true))
+
 	return {
 		"worldSeed": world_seed,
 		"rngState": rng.get_state() if rng != null else 0,
@@ -468,6 +480,8 @@ func to_dict() -> Dictionary:
 		"cityEvents": event_list,
 		"appliedChanges": applied_changes.duplicate(true),
 		"buildingInvestments": buildings_out,
+		"chronicle": chronicle_out,
+		"chronicleSeq": chronicle_seq,
 		"playerAvatar": avatar.to_dict() if avatar != null else {},
 	}
 
@@ -572,6 +586,12 @@ func apply_dict(data: Dictionary) -> void:
 		for bkey in city_builds:
 			per_city[str(bkey)] = int(city_builds[bkey])
 		building_investments[str(city_key)] = per_city
+
+	chronicle.clear()
+	chronicle_seq = int(data.get("chronicleSeq", 0))
+	for entry in data.get("chronicle", []):
+		if entry is Dictionary:
+			chronicle.append((entry as Dictionary).duplicate(true))
 
 	var avatar_data: Dictionary = data.get("playerAvatar", {})
 	avatar = PlayerAvatar.from_dict(avatar_data) if not avatar_data.is_empty() else null

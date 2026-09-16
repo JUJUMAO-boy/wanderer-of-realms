@@ -92,6 +92,7 @@ const VIEW_EVENT: int = 7
 const VIEW_TRADE: int = 8
 const VIEW_ENCOUNTER: int = 9
 const VIEW_CRAFTING: int = 10
+const VIEW_HISTORY: int = 11
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -108,6 +109,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_TRADE: "←→ 换城市    ↑↓ 选货    回车 成交 / 敲一炉    Tab 换买卖    X 换渠道    F 铁匠铺    ESC 或 T 返回地图",
 	VIEW_ENCOUNTER: "↑↓ 选做法    回车 执行    点做法行也行    （遭遇里没有回头路）",
 	VIEW_CRAFTING: "↑↓ 选配方 / 采集    回车 制作 / 采集    点行先选中、再点同一行执行    ESC 或 T 返回地图",
+	VIEW_HISTORY: "↑↓ 翻阅史书    ESC 或 T 返回地图",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -190,6 +192,10 @@ var _event_mode: int = EventViewModel.MODE_LIST
 var _event_view: Dictionary = {}
 ## 事件战斗：讨伐利维坦那一场，胜负决定走 victory 还是 defeat 那一套后果
 var _event_combat: Dictionary = {}
+
+# 世界纪年史书（M16）。条目沉淀在 _world.chronicle（跨代落盘），界面只持有光标。
+var _chronicle_cursor: int = 0
+var _chronicle_view: Dictionary = {}
 
 # 商铺与黑市（M8）。界面只持有"在看哪座城、买还是卖、哪条渠道、光标在哪"——
 # 价格与货架每次都按当前城市状态重算，不落盘（物价随城长，存下来就会过期）。
@@ -502,6 +508,8 @@ func _refresh() -> void:
 			_refresh_encounter()
 		VIEW_CRAFTING:
 			_refresh_crafting()
+		VIEW_HISTORY:
+			_refresh_chronicle()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -1347,6 +1355,61 @@ func _event_input(key_event: InputEventKey) -> void:
 			_switch_view(VIEW_MAP)
 
 
+# --- 世界纪年史书（M16）---
+#
+# 只读史书：条目沉淀在 _world.chronicle（跨代落盘），这里不写它。键位只有
+# 翻阅与返回——史书不是操作台，是给玩家翻开看的世界褶皱。
+
+## 打开世界纪年史书。
+func _enter_history() -> void:
+	if _world == null:
+		return
+	_chronicle_cursor = 0
+	_switch_view(VIEW_HISTORY)
+	_status.text = "世界纪年：这个世界因谁改了什么，全在这本史书里。"
+
+
+func _refresh_chronicle() -> void:
+	_chronicle_view = ChronicleViewModel.build(_world.chronicle, _chronicle_cursor)
+	_chronicle_cursor = int(_chronicle_view.get("cursor", 0))
+
+
+func _history_move_cursor(delta: int) -> void:
+	var count: int = maxi(1, int(_chronicle_view.get("rowCount", 0)))
+	_chronicle_cursor = posmod(_chronicle_cursor + delta, count)
+	_refresh()
+
+
+func _history_page(delta: int) -> void:
+	var visible: int = maxi(1, int(ChroniclePanel.list_rect(PANEL_RECT).size.y / ChroniclePanel.ROW_HEIGHT))
+	_history_move_cursor(delta * visible)
+
+
+## 点一行先把史书翻到那条，点同一行也只翻不执行——史书是只读的。
+func _history_click(point: Vector2) -> void:
+	var hit: Dictionary = ChroniclePanel.hit_test(_chronicle_view, PANEL_RECT, point)
+	match str(hit.get("kind", "")):
+		"button":
+			_switch_view(VIEW_MAP)
+		"row":
+			_chronicle_cursor = int(hit["index"])
+			_refresh()
+
+
+func _history_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_history_move_cursor(-1)
+		KEY_DOWN, KEY_S:
+			_history_move_cursor(1)
+		KEY_PAGEUP, KEY_PAGEDOWN:
+			_history_page(1 if key_event.keycode == KEY_PAGEDOWN else -1)
+		KEY_ESCAPE, KEY_T, KEY_H:
+			_switch_view(VIEW_MAP)
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_refresh()
+
+
 # --- 商铺与黑市（《数值框架》9.3 动态物价）---
 #
 # 买卖是"当场结清"：钱与货在 Economy.execute_trade 里就落了账，不进变更队列，
@@ -1898,6 +1961,9 @@ func _start_avatar_from_free() -> void:
 
 
 func _start_avatar_from_rebirth(rebirth: Dictionary) -> void:
+	# 转生是在一世落幕之后才拿到的。先把落幕这世的姓名记下，供纪年史书用——
+	# 否则 _place_avatar 一换人，旧躯壳的名字就没了。
+	var ended_name: String = _world.avatar.display_name if _world.avatar != null else ""
 	# 沉眠：契约要求 rebirth 只给出月数，推进世界是调用方的事。
 	# 先沉眠再落位，否则醒来时人已经不在原来的城市了。
 	var sleep_months: int = int(rebirth.get("sleepMonths", 0))
@@ -1919,6 +1985,13 @@ func _start_avatar_from_rebirth(rebirth: Dictionary) -> void:
 	var legacy: Dictionary = rebirth.get("legacy", {})
 	avatar.debt_copper += maxi(0, int(legacy.get("debtCopper", 0)))
 	_place_avatar(avatar, str(legacy.get("hostCityId", "")))
+
+	# 世界纪年史书（M16）：一世落幕，写进史书。落幕这世的序号以 _soul 的
+	# reincarnation_count 计——它是"已经落幕了几世"，恰好就是这一世。
+	if not ended_name.is_empty():
+		var soul_month: int = Clock.total_months()
+		_sim.chronicle.record(_world, _sim.chronicle.soul_entry(
+			maxi(1, _soul.reincarnation_count), ended_name, soul_month))
 
 	_status.text = "沉眠 %d 个月后，你在%s的躯壳里醒来（记忆保留率 %d%%）。" % [
 		sleep_months, _city_label_or_wilds(str(legacy.get("hostCityId", ""))),
@@ -2870,6 +2943,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return EncounterPanel.hit_test(_encounter_view, PANEL_RECT, point)
 		VIEW_CRAFTING:
 			return CraftingPanel.hit_test(_crafting_view, PANEL_RECT, point)
+		VIEW_HISTORY:
+			return ChroniclePanel.hit_test(_chronicle_view, PANEL_RECT, point)
 	return {}
 
 
@@ -2897,6 +2972,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_encounter_click(event.position)
 		VIEW_CRAFTING:
 			_crafting_click(event.position)
+		VIEW_HISTORY:
+			_history_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -3159,6 +3236,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_encounter_input(key_event)
 		VIEW_CRAFTING:
 			_crafting_input(key_event)
+		VIEW_HISTORY:
+			_history_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -3198,6 +3277,8 @@ func _handle_map_input(key_event: InputEventKey) -> void:
 			_enter_quest()
 		KEY_E:
 			_enter_event()
+		KEY_H:
+			_enter_history()
 		KEY_R:
 			_enter_trade()
 		KEY_V:
@@ -3547,6 +3628,8 @@ func _draw() -> void:
 			EncounterPanel.draw(self, _encounter_view, PANEL_RECT, _hover)
 		VIEW_CRAFTING:
 			CraftingPanel.draw(self, _crafting_view, PANEL_RECT, _hover)
+		VIEW_HISTORY:
+			ChroniclePanel.draw(self, _chronicle_view, PANEL_RECT, _hover)
 		_:
 			_draw_map()
 
