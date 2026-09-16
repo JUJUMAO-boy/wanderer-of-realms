@@ -203,6 +203,8 @@ func run_all() -> int:
 	print("=== M20 阶段一：行走路径与导航侧栏 ===")
 	_test_walk_path_grid()
 	_test_hud_nav_layout_hit()
+	print("=== M20 阶段二：全场景面板统一外壳 ===")
+	_test_ui_panel_chrome()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7580,3 +7582,25 @@ func _test_hud_nav_layout_hit() -> void:
 	_eq(HudNav.hit(items, Vector2(-50.0, -50.0)), -1, "越界点返回 -1")
 	var bottom: Rect2 = items[items.size() - 1]["rect"]
 	_eq(HudNav.hit(items, Vector2(40.0, bottom.end.y + 5.0)), -1, "侧栏底沿之外返回 -1")
+
+
+## M20 阶段二：全场景面板统一外壳帮助函数。
+## draw_panel 只画矩形、不碰字体，无头能跑；draw_panel_header 在无头下字体为 null，
+## 应干净早退不报错。两条合起来验证"外壳已统一到 UiTheme，各面板可直接复用"。
+func _test_ui_panel_chrome() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	var stub := Node2D.new()
+	if tree != null:
+		tree.root.add_child(stub)
+	var rect := Rect2(16.0, 48.0, 1248.0, 568.0)
+	# draw_panel 无字体也照画——所有面板共享的底色/外框/顶底边条
+	UiTheme.draw_panel(stub, rect)
+	_check(true, "draw_panel 在无头环境可调用（纯矩形绘制）")
+	# 无头没有字体，draw_panel_header 应早退不崩
+	UiTheme.draw_panel_header(stub, UiTheme.draw_font(), rect, {
+		"title": "城市状态",
+		"titleY": 26.0,
+		"lineY": 40.0,
+	})
+	_check(true, "draw_panel_header 在无字体（无头）下干净早退")
+	stub.queue_free()

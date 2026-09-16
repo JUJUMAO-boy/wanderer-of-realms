@@ -62,8 +62,7 @@ static func draw(
 	var font: Font = UiTheme.draw_font()
 	if font == null:
 		return
-	canvas.draw_rect(rect, COLOR_BG)
-	canvas.draw_rect(rect, COLOR_BORDER, false, 1.0)
+	UiTheme.draw_panel(canvas, rect)
 
 	var list_rect := Rect2(rect.position, Vector2(LIST_WIDTH, rect.size.y))
 	canvas.draw_rect(list_rect, COLOR_LIST_BG)
@@ -195,13 +194,21 @@ static func _draw_buttons(
 static func _draw_header(
 	canvas: CanvasItem, font: Font, panel: Dictionary, rect: Rect2, hover: Dictionary
 ) -> void:
-	_text(canvas, font, rect.position + Vector2(MARGIN, 26.0),
-		"城市状态", COLOR_ACCENT, SIZE_TITLE)
+	UiTheme.draw_panel_header(canvas, font, rect, {
+		"left": MARGIN,
+		"title": "城市状态",
+		"titleY": 26.0,
+		"titleColor": COLOR_ACCENT,
+		"hint": "点城市看详情    ◀▶ 换趋势维度",
+		"hintY": 26.0,
+		"hintRightX": _button_left(rect) - BACK_BUTTON_RESERVE,
+		"hintColor": COLOR_DIM,
+	})
+	# 月历标签是标题行上的第二枚左排元素，config 只有一个标题位，保持原样单独画。
 	_text(canvas, font, rect.position + Vector2(MARGIN + 108.0, 26.0),
 		str(panel.get("monthLabel", "")), COLOR_DIM, SIZE_NORMAL)
-	_text_right(canvas, font,
-		Vector2(_button_left(rect) - BACK_BUTTON_RESERVE, 26.0),
-		"点城市看详情    ◀▶ 换趋势维度", COLOR_DIM, SIZE_SMALL)
+	# 分隔线横贯整板（0..宽），而 draw_panel_header 的分隔线随标题缩进，画不了全宽，
+	# 保持原样单独画，避免配色条的起点偏移。
 	canvas.draw_line(
 		rect.position + Vector2(0.0, HEADER_HEIGHT - 8.0),
 		rect.position + Vector2(rect.size.x, HEADER_HEIGHT - 8.0),

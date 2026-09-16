@@ -80,6 +80,14 @@ const BUTTON_HEIGHT: float = 26.0
 const BUTTON_MIN_WIDTH: float = 84.0
 const BUTTON_GAP: float = 8.0
 const BUTTON_PADDING: float = 14.0
+
+## 面板外壳（M20 阶段二）共用的几个数，供 draw_panel / draw_panel_header 兜底。
+## 各面板若有自己的 MARGIN / 头部高度，就在 config 里写照抄一遍；没有就吃默认。
+const PANEL_MARGIN: float = 16.0
+const PANEL_HEADER_TITLE_Y: float = 30.0
+const PANEL_HEADER_SUBTITLE_Y: float = 56.0
+const PANEL_HEADER_HINT_Y: float = 26.0
+const PANEL_EDGE_STRIP: float = 3.0
 ## 无头环境没有字体可用时的每字宽度估算。只用于无头下的命中测试，
 ## 窗口里一律走真实字宽——见 button_row 的说明。
 const ESTIMATED_CHAR_WIDTH: float = 13.0
@@ -250,6 +258,62 @@ static func draw_bar(
 		elif clamped > 0.75:
 			color = COLOR_UP
 	canvas.draw_rect(Rect2(rect.position, Vector2(rect.size.x * clamped, rect.size.y)), color)
+
+
+## 全场景统一的面板外壳（M20 阶段二）：底色 + 外框 + 顶/底两条强调色边条。
+## 所有面板的 draw() 开头统一调用它，替换各自手写的
+## "draw_rect(rect, COLOR_BG) + draw_rect(rect, COLOR_BORDER)"，让整块界面的
+## "镀铬上沿 / 收骨折边" 观感一致，不再每家自己拿主意。
+## 不带字体、只画矩形，因此无头环境也能跑（可写纯函数测试）。
+static func draw_panel(canvas: CanvasItem, rect: Rect2) -> void:
+	canvas.draw_rect(rect, COLOR_BG)
+	canvas.draw_rect(rect, COLOR_BORDER, false, 1.0)
+	var accent: Color = COLOR_ACCENT
+	canvas.draw_rect(
+		Rect2(rect.position, Vector2(rect.size.x, PANEL_EDGE_STRIP)), accent)
+	canvas.draw_rect(
+		Rect2(rect.position + Vector2(0.0, rect.size.y - PANEL_EDGE_STRIP),
+			Vector2(rect.size.x, PANEL_EDGE_STRIP)),
+		Color(accent.r, accent.g, accent.b, 0.45))
+
+
+## 全场景统一的标题带（M20 阶段二）：标题前置一枚强调色印记、标题（强调色）、
+## 副标题（次要色）、右上角操作提示（次要色）、下方分隔线。所有面板的 _draw_header
+## 统一调它，把各自的 Y 位/关键词写在 config 里自报，于是**字面观感统一、版式不动**。
+##
+## config 可用键（全部可选，缺省即吃上面声明的兜底）：
+##   left        标题列起点横坐标（相对 rect.x）
+##   title      titleY
+##   subtitle   subtitleY       subtitleColor   （缺 subtitle 就不画）
+##   hint       hintY  hintRightX（提示右边界绝对 X）hintColor
+##   lineY      lineWidth       （缺 lineY 就不画分隔线）
+##   titleColor
+static func draw_panel_header(canvas: CanvasItem, font: Font, rect: Rect2, c: Dictionary) -> void:
+	if font == null:
+		return
+	var top: float = rect.position.y
+	var left: float = rect.position.x + float(c.get("left", PANEL_MARGIN))
+	var title_color: Color = c.get("titleColor", COLOR_ACCENT)
+	# 标题前的小方块印花：整块面板统一的书帖印记
+	var tick_y: float = top + float(c.get("titleY", PANEL_HEADER_TITLE_Y)) - 11.0
+	canvas.draw_rect(Rect2(Vector2(left - 6.0, tick_y), Vector2(4.0, 4.0)), title_color)
+	draw_text(canvas, font, Vector2(left, top + float(c.get("titleY", PANEL_HEADER_TITLE_Y))),
+		str(c.get("title", "")), title_color, SIZE_TITLE)
+	if c.has("subtitle") and str(c["subtitle"]) != "":
+		draw_text(canvas, font, Vector2(left, top + float(c.get("subtitleY", PANEL_HEADER_SUBTITLE_Y))),
+			str(c["subtitle"]), c.get("subtitleColor", COLOR_DIM), SIZE_SMALL)
+	if c.has("hint") and str(c["hint"]) != "":
+		var hx: float = float(c.get("hintRightX",
+			rect.position.x + rect.size.x - PANEL_MARGIN))
+		draw_text_right(canvas, font, Vector2(hx, top + float(c.get("hintY", PANEL_HEADER_HINT_Y))),
+			str(c["hint"]), c.get("hintColor", COLOR_DIM), SIZE_SMALL)
+	if c.has("lineY"):
+		var ly: float = top + float(c["lineY"])
+		canvas.draw_line(
+			Vector2(left, ly),
+			Vector2(left + float(c.get("lineWidth", rect.size.x - float(c.get("left", PANEL_MARGIN)) * 2.0)), ly),
+			COLOR_BORDER, 1.0
+		)
 
 
 static func reset_cache() -> void:

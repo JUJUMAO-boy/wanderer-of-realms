@@ -29,8 +29,7 @@ static func draw(
 	var font: Font = UiTheme.draw_font()
 	if font == null or view.is_empty():
 		return
-	canvas.draw_rect(rect, UiTheme.COLOR_BG)
-	canvas.draw_rect(rect, UiTheme.COLOR_BORDER, false, 1.0)
+	UiTheme.draw_panel(canvas, rect)
 
 	_draw_header(canvas, font, view, rect)
 	_draw_buttons(canvas, font, view, rect, hover)
@@ -193,33 +192,31 @@ static func _draw_header(
 ) -> void:
 	var left: float = rect.position.x + MARGIN
 	var top: float = rect.position.y
-	var width: float = rect.size.x - MARGIN * 2.0
 	var black: bool = str(view.get("channel", "")) == Economy.CHANNEL_BLACK_MARKET
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 30.0),
-		str(view.get("channelLabel", "")), UiTheme.COLOR_WARN if black else UiTheme.COLOR_ACCENT,
-		UiTheme.SIZE_TITLE)
-	UiTheme.draw_text(canvas, font, Vector2(left + 62.0, top + 30.0),
-		str(view.get("cityLabel", "")), UiTheme.COLOR_TEXT, UiTheme.SIZE_TITLE)
-
 	var here: bool = bool(view.get("atCity", false))
 	var position_text: String = "你就站在这座城" if here else "你不在这座城（只看得到价）"
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 56.0),
-		"%s · %s · 身上 %s" % [
+	var hint_text: String = "↑↓ 选货　回车 修理　F 回铁匠铺　G 切档位" if is_repair(view) \
+		else ("↑↓ 选货　←→ 换城市　回车 敲一炉　F 回商铺" if is_forge(view) \
+			else "↑↓ 选货    ←→ 换城市看价    回车 成交    Tab 换买卖")
+	UiTheme.draw_panel_header(canvas, font, rect, {
+		"left": MARGIN,
+		"title": str(view.get("channelLabel", "")),
+		"titleY": 30.0,
+		"titleColor": UiTheme.COLOR_WARN if black else UiTheme.COLOR_ACCENT,
+		"subtitle": "%s · %s · 身上 %s" % [
 			position_text, str(view.get("sideLabel", "")), str(view.get("moneyLabel", "")),
 		],
-		UiTheme.COLOR_TEXT if here else UiTheme.COLOR_WARN, UiTheme.SIZE_SMALL)
-	UiTheme.draw_text_right(canvas, font,
-		Vector2(_button_left(view, rect) - BACK_BUTTON_RESERVE, top + 56.0),
-		"↑↓ 选货　回车 修理　F 回铁匠铺　G 切档位" if is_repair(view) \
-			else ("↑↓ 选货　←→ 换城市　回车 敲一炉　F 回商铺" if is_forge(view) \
-				else "↑↓ 选货    ←→ 换城市看价    回车 成交    Tab 换买卖"),
-		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
-
-	canvas.draw_line(
-		Vector2(left, top + HEADER_HEIGHT - 8.0),
-		Vector2(left + width, top + HEADER_HEIGHT - 8.0),
-		UiTheme.COLOR_BORDER, 1.0
-	)
+		"subtitleY": 56.0,
+		"subtitleColor": UiTheme.COLOR_TEXT if here else UiTheme.COLOR_WARN,
+		"hint": hint_text,
+		"hintY": 56.0,
+		"hintRightX": _button_left(view, rect) - BACK_BUTTON_RESERVE,
+		"hintColor": UiTheme.COLOR_DIM,
+		"lineY": HEADER_HEIGHT - 8.0,
+	})
+	# 城市标签是标题行上的第二枚左排元素，config 只有一个标题位，保持原样单独画。
+	UiTheme.draw_text(canvas, font, Vector2(left + 62.0, top + 30.0),
+		str(view.get("cityLabel", "")), UiTheme.COLOR_TEXT, UiTheme.SIZE_TITLE)
 
 
 static func _draw_buttons(

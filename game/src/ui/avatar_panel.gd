@@ -54,8 +54,7 @@ static func draw(
 	var font: Font = UiTheme.draw_font()
 	if font == null or view.is_empty():
 		return
-	canvas.draw_rect(rect, UiTheme.COLOR_BG)
-	canvas.draw_rect(rect, UiTheme.COLOR_BORDER, false, 1.0)
+	UiTheme.draw_panel(canvas, rect)
 
 	var left: float = rect.position.x + MARGIN
 	var right_edge: float = rect.position.x + rect.size.x - MARGIN
@@ -205,8 +204,20 @@ static func _draw_header(
 	canvas: CanvasItem, font: Font, view: Dictionary, left: float, top: float,
 	info_right: float, width: float
 ) -> void:
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 30.0),
-		str(view.get("displayName", "无名者")), UiTheme.COLOR_ACCENT, UiTheme.SIZE_TITLE)
+	UiTheme.draw_panel_header(canvas, font,
+		Rect2(left - MARGIN, top, width + MARGIN * 2.0, 1.0), {
+		"left": MARGIN,
+		"title": str(view.get("displayName", "无名者")),
+		"titleY": 30.0,
+		"titleColor": UiTheme.COLOR_ACCENT,
+		"hint": "↑↓ 选（装备 / 背包）　回车 穿脱　R 就地修",
+		"hintY": 56.0,
+		"hintRightX": info_right - 470.0,
+		"hintColor": UiTheme.COLOR_DIM,
+		"lineY": HEADER_HEIGHT - 8.0,
+	})
+	# 角色面板的头部在标题行右侧还放着金钱、副标题行左右分置身份/地点/负债/幸运善恶，
+	# config 只有一枚标题 + 一枚副标题 + 一枚提示，放不下，这几枚保持原样单独画。
 	UiTheme.draw_text(canvas, font, Vector2(left + 8.0, top + 56.0),
 		str(view.get("identityLine", "")), UiTheme.COLOR_TEXT, UiTheme.SIZE_SMALL)
 
@@ -224,11 +235,6 @@ static func _draw_header(
 	UiTheme.draw_text_right(canvas, font, Vector2(info_right - 260.0, top + 56.0),
 		"幸运 %d    善恶 %d" % [int(view.get("luck", 0)), int(view.get("karma", 0))],
 		UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
-	UiTheme.draw_text_right(canvas, font, Vector2(info_right - 470.0, top + 56.0),
-		"↑↓ 选（装备 / 背包）　回车 穿脱　R 就地修", UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
-
-	canvas.draw_line(Vector2(left, top + HEADER_HEIGHT - 8.0),
-		Vector2(left + width, top + HEADER_HEIGHT - 8.0), UiTheme.COLOR_BORDER, 1.0)
 
 
 ## 顶部右侧的返回按钮。测试与命中测试都靠它拿位置。

@@ -30,8 +30,7 @@ static func draw(
 	var font: Font = UiTheme.draw_font()
 	if font == null or view.is_empty():
 		return
-	canvas.draw_rect(rect, UiTheme.COLOR_BG)
-	canvas.draw_rect(rect, UiTheme.COLOR_BORDER, false, 1.0)
+	UiTheme.draw_panel(canvas, rect)
 
 	_draw_header(canvas, font, view, rect)
 	_draw_buttons(canvas, font, view, rect, hover)
@@ -169,28 +168,27 @@ static func _draw_header(
 ) -> void:
 	var left: float = rect.position.x + MARGIN
 	var top: float = rect.position.y
-	var width: float = rect.size.x - MARGIN * 2.0
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 30.0),
-		"委托", UiTheme.COLOR_ACCENT, UiTheme.SIZE_TITLE)
+	var here: bool = bool(view.get("atCity", false))
+	UiTheme.draw_panel_header(canvas, font, rect, {
+		"left": MARGIN,
+		"title": "委托",
+		"titleY": 30.0,
+		"titleColor": UiTheme.COLOR_ACCENT,
+		"subtitle": "%s · 手上有 %d / %d 张" % [
+			("你就站在这座城" if here else "你不在这座城"),
+			int(view.get("activeCount", 0)), int(view.get("maxAccepted", 0)),
+		],
+		"subtitleY": 56.0,
+		"subtitleColor": UiTheme.COLOR_TEXT if here else UiTheme.COLOR_WARN,
+		"hint": "←→ 换城市    ↑↓ 选单子    回车 接受 / 办理    Del 放弃",
+		"hintY": 56.0,
+		"hintRightX": _button_left(view, rect) - BACK_BUTTON_RESERVE,
+		"hintColor": UiTheme.COLOR_DIM,
+		"lineY": HEADER_HEIGHT - 8.0,
+	})
+	# 城市标签是标题行上的第二枚左排元素，config 只有一个标题位，保持原样单独画。
 	UiTheme.draw_text(canvas, font, Vector2(left + 62.0, top + 30.0),
 		str(view.get("cityLabel", "")), UiTheme.COLOR_TEXT, UiTheme.SIZE_TITLE)
-
-	var here: bool = bool(view.get("atCity", false))
-	var position_text: String = "你就站在这座城" if here else "你不在这座城"
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 56.0),
-		"%s · 手上有 %d / %d 张" % [
-			position_text, int(view.get("activeCount", 0)), int(view.get("maxAccepted", 0))
-		],
-		UiTheme.COLOR_TEXT if here else UiTheme.COLOR_WARN, UiTheme.SIZE_SMALL)
-	UiTheme.draw_text_right(canvas, font,
-		Vector2(_button_left(view, rect) - BACK_BUTTON_RESERVE, top + 56.0),
-		"←→ 换城市    ↑↓ 选单子    回车 接受 / 办理    Del 放弃", UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
-
-	canvas.draw_line(
-		Vector2(left, top + HEADER_HEIGHT - 8.0),
-		Vector2(left + width, top + HEADER_HEIGHT - 8.0),
-		UiTheme.COLOR_BORDER, 1.0
-	)
 
 
 static func _draw_buttons(

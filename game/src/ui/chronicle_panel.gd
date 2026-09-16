@@ -24,8 +24,7 @@ static func draw(
 	var font: Font = UiTheme.draw_font()
 	if font == null or view.is_empty():
 		return
-	canvas.draw_rect(rect, UiTheme.COLOR_BG)
-	canvas.draw_rect(rect, UiTheme.COLOR_BORDER, false, 1.0)
+	UiTheme.draw_panel(canvas, rect)
 
 	_draw_header(canvas, font, view, rect)
 	_draw_buttons(canvas, font, view, rect, hover)
@@ -118,10 +117,6 @@ static func _draw_header(
 ) -> void:
 	var left: float = rect.position.x + MARGIN
 	var top: float = rect.position.y
-	var width: float = rect.size.x - MARGIN * 2.0
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 30.0),
-		"世界纪年·史书", UiTheme.COLOR_ACCENT, UiTheme.SIZE_TITLE)
-
 	var counts: Dictionary = view.get("counts", {})
 	var summary: String = "全史 %d 条 · 大事 %d · 跨档 %d · 转生 %d" % [
 		int(view.get("rowCount", 0)),
@@ -129,17 +124,20 @@ static func _draw_header(
 		int(counts.get(Chronicle.KIND_TIER, 0)),
 		int(counts.get(Chronicle.KIND_SOUL, 0)),
 	]
-	UiTheme.draw_text(canvas, font, Vector2(left, top + 56.0),
-		summary, UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
-	UiTheme.draw_text_right(canvas, font,
-		Vector2(_button_left(view, rect) - BACK_BUTTON_RESERVE, top + 56.0),
-		"↑↓ 翻阅    回车 无操作（只读史书）", UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
-
-	canvas.draw_line(
-		Vector2(left, top + HEADER_HEIGHT - 8.0),
-		Vector2(left + width, top + HEADER_HEIGHT - 8.0),
-		UiTheme.COLOR_BORDER, 1.0
-	)
+	UiTheme.draw_panel_header(canvas, font, rect, {
+		"left": MARGIN,
+		"title": "世界纪年·史书",
+		"titleY": 30.0,
+		"titleColor": UiTheme.COLOR_ACCENT,
+		"subtitle": summary,
+		"subtitleY": 56.0,
+		"subtitleColor": UiTheme.COLOR_DIM,
+		"hint": "↑↓ 翻阅    回车 无操作（只读史书）",
+		"hintY": 56.0,
+		"hintRightX": _button_left(view, rect) - BACK_BUTTON_RESERVE,
+		"hintColor": UiTheme.COLOR_DIM,
+		"lineY": HEADER_HEIGHT - 8.0,
+	})
 
 
 static func _draw_buttons(

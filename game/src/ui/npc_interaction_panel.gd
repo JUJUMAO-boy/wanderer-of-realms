@@ -28,8 +28,7 @@ static func draw(
 	var font: Font = UiTheme.draw_font()
 	if font == null or view.is_empty():
 		return
-	canvas.draw_rect(rect, UiTheme.COLOR_BG)
-	canvas.draw_rect(rect, UiTheme.COLOR_BORDER, false, 1.0)
+	UiTheme.draw_panel(canvas, rect)
 
 	_draw_header(canvas, font, view, rect)
 	_draw_buttons(canvas, font, view, rect, hover)
@@ -148,9 +147,12 @@ static func action_at(view: Dictionary, rect: Rect2, point: Vector2) -> int:
 # --- 绘制 ---
 
 static func _draw_header(canvas: CanvasItem, font: Font, view: Dictionary, rect: Rect2) -> void:
-	var title: String = "居民与人物（%s）" % str(view.get("subject", ""))
-	canvas.draw_string(font, Vector2(rect.position.x + MARGIN, rect.position.y + 34.0), title,
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 20.0, UiTheme.COLOR_TEXT)
+	UiTheme.draw_panel_header(canvas, font, rect, {
+		"left": MARGIN,
+		"title": "居民与人物（%s）" % str(view.get("subject", "")),
+		"titleY": 34.0,
+		"titleColor": UiTheme.COLOR_TEXT,
+	})
 
 
 static func _draw_buttons(canvas: CanvasItem, font: Font, view: Dictionary, rect: Rect2, hover: Dictionary) -> void:
