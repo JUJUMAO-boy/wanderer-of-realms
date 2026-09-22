@@ -299,6 +299,14 @@ var _silent_walk: bool = false
 ## 上一次所处的城。进城那一瞬间判一次城内遭遇，站在城里反复走不再判。
 var _last_city_id: String = ""
 
+# 大地图可见实体（M-C：废墟/遗构 + 游荡怪物窝点）。会话级派生、不落盘：
+# 读档后重新派生（已清窝点重生成）。_seen.monsters 是"仍存活"的窝点——击杀/绕开
+# 就从中移除，本会话不再复活；遗构不随进入消失，离开后可再走进去（同一座，同布局）。
+var _seen: Dictionary = {}
+## 游荡时间桶。每落一格外野实际加一次，窝点用它与自身种子推出"此刻该在哪一格"，
+## 于是图上能看见怪在窝点半径内慢慢挪——它不是静止的墨点。
+var _seen_bucket: int = 0
+
 # 临时副本（M21：野外奇遇 → 走进可探索网格）
 var _dungeon: Dictionary = {}
 var _dungeon_view: Dictionary = {}
@@ -2777,6 +2785,32 @@ func _reset_encounter_session() -> void:
 	_merchant_cursor = 0
 	_merchant_side = Merchant.SIDE_BUY
 
+	# 大地图可见实体随会话重建：由世界种子派生、不落盘，读档回来重生成
+	_seen_bucket = 0
+	_rebuild_seen()
+
+
+## 重建大地图可见实体图纸（M-C）。每会话一次；窝点存活态随图纸重建而重置——
+## 于是"读档回来打得只剩几只的怪会重新站满大地图"符合"能派生就不落盘"的铁则。
+func _rebuild_seen() -> void:
+	_seen = {}
+	if _world == null or _grid == null:
+		return
+	var city_coords: Array = []
+	for cid in _world.get_city_ids():
+		var c: City = _world.get_city(cid)
+		if c != null:
+			city_coords.append(Vector2i(c.coord_x, c.coord_y))
+	var opts: Dictionary = ContentLoader.get_balance_section("worldSeen")
+	if _encounter_system != null:
+		# 危险度前缀要贴近地理真实：离城越远越凶，与遭遇分层同源
+		opts["tierAt"] = _encounter_system.tier_at
+	var seen := WorldSeen.build(_world.world_seed, _grid, city_coords, opts)
+	var alive: Dictionary = {}
+	for lair in seen.lairs():
+		alive[str(lair.get("key", ""))] = lair
+	_seen = {"dungeons": seen.dungeons(), "monsters": alive}
+
 
 ## 走了一格（点地图的连续走法会把步数一次给全）。攒够 stepInterval 就在野外判一次；
 ## 进城那一瞬间另判一次城内遭遇——城里不能按格走，所以"每 8 格"这条规则在城里
@@ -2795,24 +2829,85 @@ func _encounter_advance(steps: int) -> void:
 			_hidden_check("enter", city_id)
 		return
 	_last_city_id = ""
+	_seen_bucket += 1
 	if _silent_walk:
-		# 静默行走期间不攒步数：否则关掉它的第一步就会立刻撞上一场，
-		# 而玩家刚才按 Z 的意思正是"我要专心赶路"
+		# 静默行走期间不判定：否则关掉静默第一步就会撞上一场，而玩家按 Z 的
+		# 意思正是"我要专心赶路"。可见的怪/遗构也一并让路——静默=不惹事。
 		_encounter_steps = 0
 		return
+	# M-C：走上可见实体优先触发——怪物窝点→遭遇战，遗构→走进去。这一支取代了
+	# 旧版"野外随机掷副本 / 遭遇的计数器"，把"撞没撞上"的决定权交回地图本身。
+	var hit: Dictionary = _seen_node_at(pos)
+	if not hit.is_empty():
+		if str(hit.get("kind", "")) == "monster":
+			_trigger_visible_combat(hit["node"])
+		else:
+			_trigger_visible_dungeon(hit["node"])
+		return
+	# 野外随机遭遇已被可见怪物取代，不再按步数掷对打。游方商车的随机偶遇保留，
+	# 但照旧按 stepInterval 定价节奏走（不至于每走一步都迎面一辆车）。
 	_encounter_steps += maxi(0, steps)
 	if not _encounter_system.should_check(_encounter_steps):
 		return
 	_encounter_steps = 0
-	_encounter_check(
-		_encounter_system.context_at(pos), _encounter_system.nearest_city_id(pos), false
-	)
-	# 野外没撞上人（没被拦），再判一次有没有撞见地下入口。城里不进副本。
-	if _encounter.is_empty() and _encounter_system.context_at(pos) != EncounterSystem.CONTEXT_CITY:
-		_dungeon_discover_check()
-		# 也没撞见地下入口的话，再撞撞运气看有没有迎面而来的商车
-		if _dungeon.is_empty():
-			_merchant_discover_check()
+	_merchant_discover_check()
+
+
+## 玩家现在这一格上压着哪座可见实体。窝点按当前游荡桶取"此刻的位置"，
+## 遗构按固定座标取。返回 { kind, node } 或 {}。
+func _seen_node_at(pos: Vector2i) -> Dictionary:
+	var monsters: Dictionary = _seen.get("monsters", {})
+	for key in monsters:
+		var lair: Dictionary = monsters[key]
+		if WorldSeen.lair_pos(lair, _seen_bucket) == pos:
+			return {"kind": "monster", "node": lair}
+	for node in _seen.get("dungeons", []):
+		if int(node.get("x", -1)) == pos.x and int(node.get("y", -1)) == pos.y:
+			return {"kind": "dungeon", "node": node}
+	return {}
+
+
+## 走上怪物窝点：清掉这个窝点（本会话不再复活），然后摇一场遭遇、进遭遇抉择视图。
+## 复用 _encounter_check 全程（含战斗/绕开/交涉与结算），只是跳过概率——地图上
+## 看见它、走上它，就必然是这一场，不存在"地图上明明有怪却骰子不响再接战"的误差。
+func _trigger_visible_combat(node: Dictionary) -> void:
+	if _encounter_system == null or _world.avatar == null:
+		return
+	_seen.get("monsters", {}).erase(str(node.get("key", "")))
+	var pos := Vector2i(_world.avatar.pos_x, _world.avatar.pos_y)
+	# 窝点在野外，不占城格（placement 已避让）；但保险起见别把它算成"进城遭遇"。
+	var context: String = _encounter_system.context_at(pos)
+	if context == EncounterSystem.CONTEXT_CITY:
+		context = EncounterSystem.CONTEXT_WILD
+	_encounter_check(context, _encounter_system.nearest_city_id(pos), true)
+
+
+## 走上遗构：以该遗构的稳定序号作副本会话号（同座可复现、可重入），走进去。
+## 遗构不随进入消失——离开后原格还在，可再走进去同一座、同一批布局与词条。
+func _trigger_visible_dungeon(node: Dictionary) -> void:
+	if _world.avatar == null:
+		return
+	_dungeon_seq = WorldSeen.node_seq(node)
+	_enter_dungeon()
+	var words: String = _seen_words_text(node)
+	_status.text = "你踏进%s一处遗构%s。按回车触碰出口可下潜，越深越凶。" % [
+		str(node.get("prefix", "沉眠的")), words,
+	]
+
+
+## 遗构的修正词条文案（0–2 条，逗号接在后面）。没有词条就不加任何字。
+func _seen_words_text(node: Dictionary) -> String:
+	var words: Array = node.get("words", [])
+	if words.is_empty():
+		return ""
+	var labels: Array = []
+	for w in words:
+		var label: String = str(w.get("label", ""))
+		if not label.is_empty():
+			labels.append(label)
+	if labels.is_empty():
+		return ""
+	return "（" + "、".join(labels) + "）"
 
 
 ## 判一次遭遇。判定与做法各用一支自己的随机源（与世界演化分开），
@@ -3811,21 +3906,6 @@ func _city_space_approach_building(index: int) -> void:
 
 
 # --- 临时副本（M21：野外奇遇 → 走进可探索网格）---
-
-## 野外没撞上人时，再掷一次"撞见地下入口"。命中就开一层副本（从第 1 层进）。
-func _dungeon_discover_check() -> void:
-	if _world.avatar == null or not _dungeon.is_empty():
-		return
-	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
-	var chance: int = maxi(0, int(rules.get("discoverChanceBp", 0)))
-	if chance <= 0:
-		return
-	_dungeon_seq += 1
-	var rng := DeterministicRNG.new(_world.world_seed ^ (_dungeon_seq * 433494437))
-	if rng.next_int(10000) >= chance:
-		return
-	_enter_dungeon()
-
 
 ## 进入副本：建第 1 层、把玩家放到出生点、生成这一层的宝箱内容。
 func _enter_dungeon() -> void:
@@ -5224,6 +5304,11 @@ func _draw_map() -> void:
 			var ring: float = TILE * (2.0 * radius / 3.0 + 2.8)
 			draw_arc(pos, ring, 0.0, TAU, 20, Color(0.87, 0.44, 0.41), 1.0)
 
+	# M-C：大地图可见实体——遗构（青/蓝点）与怪物窝点（绯红点）。会自己出现、
+	# 自己消失、窝点里的怪还在小范围游荡；图上看得见的才是这世界当下正在发生的。
+	if not _seen.is_empty():
+		_draw_seen_markers()
+
 	# 化身：青色小圆。行走中就画在插值出来的位置上，并把后续路线高亮出来。
 	if _world.avatar != null:
 		var p: Vector2
@@ -5235,6 +5320,30 @@ func _draw_map() -> void:
 		else:
 			p = MAP_ORIGIN + Vector2(_world.avatar.pos_x * TILE, _world.avatar.pos_y * TILE)
 		draw_circle(p, 3.0, Color(0.40, 0.88, 0.95))
+
+
+## 画大地图可见实体（M-C）：遗构用青→蓝点（危险度越高越深越艳），怪物窝点用
+## 绯红点（正在按游荡桶挪位）。名字不画在图上——一格才 5px，写了也看不清，读名
+## 靠走上后的遭遇/遗构标题。
+func _draw_seen_markers() -> void:
+	# 遗构：危险度五档→五级青蓝。看得见的"这一页"，颜色先替玩家估一估里面的好坏。
+	for node in _seen.get("dungeons", []):
+		var danger: int = clampi(int(node.get("danger", 0)), 0, WorldSeen.DANGER_PREFIXES.size() - 1)
+		var t: float = float(danger) / float(maxi(1, WorldSeen.DANGER_PREFIXES.size() - 1))
+		var pint: float = clampf(0.25 + t * 0.55, 0.25, 0.8)
+		var color := Color(lerpf(0.95, 0.55, t), lerpf(0.90, 0.60, t), lerpf(0.35, 0.95, t))
+		var pos: Vector2 = MAP_ORIGIN + Vector2(
+			int(node.get("x", 0)) * TILE, int(node.get("y", 0)) * TILE)
+		# 亮青/蓝圆里垫一个深色小核，与城市的地标圆相区别（城市是淡金+深核）
+		draw_circle(pos, 2.6, color)
+		draw_circle(pos, 1.1, Color(0.10 + pint * 0.15, 0.14 + pint * 0.12, 0.22))
+	# 怪物窝点（仍存活）：绯红点，位置 = 锚点 + 本桶偏移 → 看得见它在动。
+	for key in _seen.get("monsters", {}):
+		var lair: Dictionary = _seen["monsters"][key]
+		var p: Vector2 = WorldSeen.lair_pos(lair, _seen_bucket)
+		var mark: Vector2 = MAP_ORIGIN + Vector2(p.x * TILE, p.y * TILE)
+		draw_circle(mark, 2.0, Color(0.87, 0.36, 0.38))
+		draw_circle(mark, 0.9, Color(0.35, 0.08, 0.08))
 
 
 ## 把 _walk 里尚未走到的路线用柔金细线 + 圆点画出来（从化身当前位置串到终点）。

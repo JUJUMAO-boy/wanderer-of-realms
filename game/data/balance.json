@@ -9,6 +9,19 @@
     "width": 120,
     "height": 120
   },
+  "worldSeen": {
+    "_comment": "大地图可见实体（M-C）。由世界种子派生、不落盘：遗构（副本入口）与怪物窝点在地图上看得见、走上即触发，取代原先『野外每 N 步随机掷副本/遭遇』的计数器。这里只放数量与避让的规则侧首值，图纸派生逻辑在 WorldSeen。",
+    "_comment_dungeonCount": "大地图上同时可见的遗构座数。太少扫一眼地图看不见，太多把整片蛮荒铺满格子。",
+    "dungeonCount": 10,
+    "_comment_lairCount": "大地图上同时可见的怪物窝点数。窝点是『看得见的怪』，铺得密一点，才不会退回以前『整片荒野蹲半天看不到一头怪』的老样子。",
+    "lairCount": 20,
+    "_comment_lairRadius": "窝点内怪物在其锚点周围游荡的半径（格）。为了『看得见它在动』而设，半径小到不会跑进邻座城。",
+    "lairRadius": 2,
+    "_comment_dungeonMinDistance": "遗构最近的落地离所有城中心的曼哈顿距离。不贴在城门口，才守得住『要到野外去找』的直觉。",
+    "dungeonMinDistance": 6,
+    "_comment_lairMinDistance": "窝点最近的落地离所有城中心的曼哈顿距离。也让它有 margin 给游荡半径，既不占城门口、也不会越界游出图。",
+    "lairMinDistance": 6
+  },
   "cityEvolution": {
     "_comment": "《世界模拟量化规则》2.2 节月度演化公式的系数。2.2 节里的「贸易」项不在这里：路线收益属于 Economy 的职责（接口 I-14），由 Economy.settleRoutes 按 9.4 节的数值结算，放在这里会变成两处各加一遍。",
     "birthRate": 0.008,

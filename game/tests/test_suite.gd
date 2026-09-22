@@ -225,6 +225,12 @@ func run_all() -> int:
 	_test_merchant_persona()
 	_test_merchant_legendary()
 	_test_merchant_buy_back_value()
+	print("=== M-C 大地图可见实体：遗构（副本入口）与怪物窝点 ===")
+	_test_world_seen_determinism()
+	_test_world_seen_prefix()
+	_test_world_seen_placement()
+	_test_world_seen_lair()
+	_test_world_seen_words()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -8115,3 +8121,119 @@ func _test_merchant_buy_back_value() -> void:
 	worn["durability"] = 1
 	_check(m.buy_back_value(worn) <= m.buy_back_value(instance), "耐久折损后收价不升")
 	_check(m.buy_back_value(worn) < m.buy_back_value(instance), "耐久近损坏时收价明显更低")
+
+
+# --- 里程碑 M-C 大地图可见实体（遗构 / 怪物窝点）---
+#
+# M-C 把"副本与怪从随机事件变成地图上看得见、走上即触发的实体"。图纸由世界种子
+# 派生、不落盘（读档重派生→重生成）。这些测试钉住规则层 WorldSeen 的纯接口：
+# 同种子可复现、危险度前缀五档、落点避开城与边界、窝点游荡确定且在半径内、
+# 修正词条 0–MAX_WORDS 且危险度越高越多。战斗/进副本的触发在 main.gd（场景层，
+# 无头不可兼测），这里测的是它们依赖的那套图纸。
+
+## 两岸世界种子一致的可见实体快照。
+static func _seen_snapshot(seen: WorldSeen) -> Dictionary:
+	var d: Array = []
+	for node in seen.dungeons():
+		d.append([str(node.get("key", "")), int(node["x"]), int(node["y"]),
+			int(node.get("danger", 0)), str(node.get("prefix", ""))])
+	var l: Array = []
+	for lair in seen.lairs():
+		l.append([str(lair.get("key", "")), int(lair["x"]), int(lair["y"]),
+			int(lair.get("tier", 0))])
+	return {"dungeons": d, "lairs": l}
+
+
+## 各自带一份"最近之城距离 ≥ minDist"的城坐标（测试要用的几何断言用得上）。
+func _seen_built(seed: int) -> Dictionary:
+	var built: Dictionary = _new_encounters(false)
+	var world: WorldState = built["world"]
+	var grid: MapGrid = built["grid"]
+	var city_coords: Array = []
+	for cid in world.get_city_ids():
+		var c: City = world.get_city(cid)
+		if c != null:
+			city_coords.append(Vector2i(c.coord_x, c.coord_y))
+	var seen := WorldSeen.build(seed, grid, city_coords, {"tierAt": built["system"].tier_at})
+	return {"world": world, "grid": grid, "cities": city_coords, "seen": seen}
+
+
+## 同种子两次派生完全一致；不同种子不同。
+func _test_world_seen_determinism() -> void:
+	var a: Dictionary = _seen_built(20260922)
+	var b: Dictionary = _seen_built(20260922)
+	_eq(_seen_snapshot(a["seen"]), _seen_snapshot(b["seen"]), "同种子可见实体逐位一致")
+	var c: Dictionary = _seen_built(777)
+	_check(not (_seen_snapshot(a["seen"]) == _seen_snapshot(c["seen"])), "不同种子图纸不同")
+
+
+## 危险度前缀五档映射：越低越无害、越高越吓人；越界退到致命档。
+func _test_world_seen_prefix() -> void:
+	var prefix: Array = WorldSeen.DANGER_PREFIXES
+	_eq(prefix.size(), 5, "前缀五档")
+	_eq(WorldSeen.prefix_of(0), "沉眠的", "0 档沉眠")
+	_eq(WorldSeen.prefix_of(1), "吱呀作响的", "1 档吱呀作响")
+	_eq(WorldSeen.prefix_of(2), "淌血的", "2 档淌血")
+	_eq(WorldSeen.prefix_of(3), "无名的", "3 档无名")
+	_eq(WorldSeen.prefix_of(4), "夹缝间的", "4 档夹缝间")
+	_eq(WorldSeen.prefix_of(99), "夹缝间的", "越界退到致命档")
+
+
+## 落点合法：遗构与窝点都在网格内、数量与配置一致、离每座城 ≥ 各自 minDist。
+func _test_world_seen_placement() -> void:
+	var r: Dictionary = _seen_built(20260922)
+	var grid: MapGrid = r["grid"]
+	var cities: Array = r["cities"]
+	var seen: WorldSeen = r["seen"]
+	var rules: Dictionary = ContentLoader.get_balance_section("worldSeen")
+	_eq(seen.dungeons().size(), int(rules.get("dungeonCount", 10)), "遗构数量按配置")
+	_eq(seen.lairs().size(), int(rules.get("lairCount", 20)), "窝点数量按配置")
+	for node in seen.dungeons():
+		var x: int = int(node["x"])
+		var y: int = int(node["y"])
+		_check(grid.is_inside(x, y), "遗构在网格内")
+		var far: bool = true
+		for c in cities:
+			if MapGrid.manhattan(c, Vector2i(x, y)) < int(rules.get("dungeonMinDistance", 6)):
+				far = false
+		_check(far, "遗构离每座城 ≥ dungeonMinDistance（%d,%d）" % [x, y])
+	for lair in seen.lairs():
+		var x: int = int(lair["x"])
+		var y: int = int(lair["y"])
+		_check(grid.is_inside(x, y), "窝点在网格内")
+		var far: bool = true
+		for c in cities:
+			if MapGrid.manhattan(c, Vector2i(x, y)) < int(rules.get("lairMinDistance", 6)):
+				far = false
+		_check(far, "窝点离每座城 ≥ lairMinDistance（%d,%d）" % [x, y])
+
+
+## 窝点游荡：同窝点同桶同一位置且不越出半径；桶变位置可能挪步。
+func _test_world_seen_lair() -> void:
+	var r: Dictionary = _seen_built(20260922)
+	var lairs: Array = r["seen"].lairs()
+	_check(not lairs.is_empty(), "有窝点")
+	if lairs.is_empty():
+		return
+	var node: Dictionary = lairs[0]
+	var anchor := Vector2i(int(node["x"]), int(node["y"]))
+	var radius: int = int(node.get("radius", 2))
+	var p0: Vector2i = WorldSeen.lair_pos(node, 3)
+	var p1: Vector2i = WorldSeen.lair_pos(node, 3)
+	_eq(p0, p1, "同窝点同桶位置确定")
+	_check(MapGrid.manhattan(anchor, p0) <= radius, "窝点游荡不越出半径")
+	_eq(WorldSeen.node_seq(node), WorldSeen.node_seq(node), "节点序号稳定")
+
+
+## 修正词条：条数落在 0..MAX_WORDS，危险度越高越多，条条都有名有姓。
+func _test_world_seen_words() -> void:
+	var r: Dictionary = _seen_built(20260922)
+	var dungeons: Array = r["seen"].dungeons()
+	_check(not dungeons.is_empty(), "有遗构")
+	for node in dungeons:
+		var danger: int = int(node.get("danger", 0))
+		var words: Array = node.get("words", [])
+		_check(words.size() <= WorldSeen.MAX_WORDS, "词条不超过上限")
+		_check(words.size() <= danger, "危险度越高词条越多（≤ danger）")
+		for w in words:
+			_check(not str(w.get("label", "")).is_empty(), "词条都有名")
