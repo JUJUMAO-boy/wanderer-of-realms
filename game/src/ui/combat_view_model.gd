@@ -66,11 +66,13 @@ static func is_player_turn(combat: Combat) -> bool:
 
 static func _unit_rows(combat: Combat) -> Array:
 	var out: Array = []
+	var chain: Dictionary = combat.get_state().get("chainStacks", {})
 	for unit in combat.units:
 		var max_hp: int = maxi(1, int(unit["maxHp"]))
 		out.append({
 			"unitId": str(unit["unitId"]),
 			"name": str(unit["name"]),
+			"identity": identity_of(unit),
 			"side": str(unit["side"]),
 			"hp": int(unit["hp"]),
 			"maxHp": max_hp,
@@ -80,9 +82,25 @@ static func _unit_rows(combat: Combat) -> Array:
 			"downed": bool(unit["downed"]),
 			"dead": bool(unit["dead"]),
 			"statusLabel": status_label(unit),
+			"chain": int(chain.get(str(unit["unitId"]), 0)),
 			"isCurrent": str(unit["unitId"]) == combat.current_unit_id(),
 		})
 	return out
+
+
+## 单位的"身份"一行，用于侧栏与档案卡：本名 + 类别 / 生物类别。NPC 战斗单位
+## 来自 encounter_system（带 displayName / category），怪物带 creatureKind，
+## 随从 / 英雄只有名字——没有身份时退化为只显名字。纯函数，可无头验收。
+static func identity_of(unit: Dictionary) -> String:
+	var name: String = str(unit.get("displayName", str(unit.get("name", ""))))
+	if name.is_empty():
+		name = str(unit.get("name", ""))
+	var category: String = str(unit.get("category", ""))
+	if category.is_empty():
+		category = str(unit.get("creatureKind", ""))
+	if not category.is_empty():
+		return "%s · %s" % [name, category]
+	return name
 
 
 static func status_label(unit: Dictionary) -> String:
@@ -120,6 +138,8 @@ static func _battlefield(combat: Combat) -> Dictionary:
 			"dead": bool(unit["dead"]),
 			"isCurrent": str(unit["unitId"]) == combat.current_unit_id(),
 			"initial": str(unit["name"]).substr(0, 1),
+			"displayName": str(unit.get("displayName", str(unit.get("name", "")))),
+			"creatureKind": str(unit.get("creatureKind", "")),
 		})
 	var blocked: Array = []
 	for key in combat.obstacles:

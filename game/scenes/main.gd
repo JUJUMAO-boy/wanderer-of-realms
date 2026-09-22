@@ -63,6 +63,9 @@ const MAP_CITY_PICK_RADIUS: float = 12.0
 ## 所以到得了；上限只是防止将来某处改出"原地不动"时这里变成死循环。
 ## 120×120 的地图上斜走最远也就 119 步。
 const MAP_WALK_LIMIT: int = 200
+## 城内 / 副本按住方向键连续走的步进间隔（秒）。地图端不用它——地图按住走的是
+## _walk 动画（逐格有速度）。这是 M22 手感补齐：城内 / 副本原是一次一格的硬跳。
+const HELD_STEP_INTERVAL: float = 0.14
 const SAVE_SLOT: String = "slot1"
 const FAST_FORWARD_YEARS: int = 10
 const NOTABLE_KEEP: int = 40
@@ -185,6 +188,12 @@ var _nav_hover: int = -1
 # 世界地图行走动画（M20 阶段一）。点地图不再是瞬移，而是先规划一条路线、
 # 逐格走过去（视觉上逐格跳、画投影路线），动画完结时一次性判遭遇。
 var _walk: Dictionary = {}
+## 方向键按住持续走路（M22）。_held_dir 记当前按住的方向（按下置、松开清），
+## _held_step_t 是按住的步进累积计时。地图端不用它：地图按住走的是 _walk 动画
+## （见 _process），城内 / 副本按住靠这里定时跳格。
+var _held_dir: Vector2i = Vector2i.ZERO
+var _held_step_t: float = 0.0
+
 ## 这张世界的确定性地形纹理缓存。种子变了就重烘焙（见 _build_map_terrain）。
 var _map_terrain_tex: ImageTexture = null
 var _map_terrain_seed: int = -1
@@ -3562,29 +3571,37 @@ func _report_walk_stop(steps: int) -> void:
 	_refresh()
 
 
-## 行走动画的逐格推进。每帧把误差跑满一格就把化身推到下一格，直到走完最后一段。
-## 只有在地图视图且正在行走时才做任何事；玩家走一半切走视图时动画挂起、切回续走。
+## 行走动画的逐格推进 + M22 方向键按住持续走路。
+## 地图的 _walk 动画在点地图时由 set_process(true) 激活；地图按住方向键时无 _walk
+## （地图方向键单步走 _move），城内 / 副本按住时也借着这个 _process 定时跳格。
 func _process(delta: float) -> void:
-	if _walk.is_empty() or _view != VIEW_MAP:
+	if _view == VIEW_MAP:
+		if not _walk.is_empty():
+			var path: Array = _walk["path"]
+			_walk["t"] = float(_walk["t"]) + delta * float(_walk.get("speed", 12.0))
+			while float(_walk["t"]) >= 1.0:
+				_walk["t"] = float(_walk["t"]) - 1.0
+				var idx: int = int(_walk["idx"])
+				if idx >= path.size():
+					break
+				var cell: Vector2i = path[idx]
+				_world.avatar.pos_x = cell.x
+				_world.avatar.pos_y = cell.y
+				_walk["idx"] = idx + 1
+				_walk["draw_from"] = cell
+				if idx + 1 < path.size():
+					_walk["draw_to"] = path[idx + 1]
+				if idx >= path.size() - 1:
+					_finish_walk()
+					return
+			queue_redraw()
+		elif _held_dir != Vector2i.ZERO:
+			# 地图按住方向键：每格间隔走一步（与 _move 同口径，每步判遭遇）
+			_step_held_dir(delta)
 		return
-	var path: Array = _walk["path"]
-	_walk["t"] = float(_walk["t"]) + delta * float(_walk.get("speed", 12.0))
-	while float(_walk["t"]) >= 1.0:
-		_walk["t"] = float(_walk["t"]) - 1.0
-		var idx: int = int(_walk["idx"])
-		if idx >= path.size():
-			break
-		var cell: Vector2i = path[idx]
-		_world.avatar.pos_x = cell.x
-		_world.avatar.pos_y = cell.y
-		_walk["idx"] = idx + 1
-		_walk["draw_from"] = cell
-		if idx + 1 < path.size():
-			_walk["draw_to"] = path[idx + 1]
-		if idx >= path.size() - 1:
-			_finish_walk()
-			return
-	queue_redraw()
+	# 城内 / 副本按住方向键：定时跳格
+	if _view == VIEW_CITY_SPACE or _view == VIEW_DUNGEON:
+		_step_held_dir(delta)
 
 
 # --- 城内空间（M19）---
@@ -4332,6 +4349,29 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
 		return
 	var key_event: InputEventKey = event
+	# M22 方向键按住持续走路：方向键在"按下"与"松开"两个时刻都放行。
+	# 按下时记下将要持续走的方向，松开时清空——靠这一段记"按住态"，
+	# 而不是依赖 OS 的重复按键（echo）。其余按键仍照旧丢弃 echo / 非按下。
+	var dir_key: bool = key_event.keycode == KEY_LEFT or key_event.keycode == KEY_A \
+		or key_event.keycode == KEY_RIGHT or key_event.keycode == KEY_D \
+		or key_event.keycode == KEY_UP or key_event.keycode == KEY_W \
+		or key_event.keycode == KEY_DOWN or key_event.keycode == KEY_S
+	if dir_key:
+		if key_event.pressed:
+			_held_dir = _dir_from_key(key_event.keycode)
+			_held_step_t = 0.0
+			# 保证 _process 接管按住持续：只有点地图走 _walk 才会 set_process(true)，
+			# 城内 / 副本仅靠方向键时 process 未必开着，按下时显式打开。
+			set_process(true)
+			# 按下那一下先走一步（有即时反馈），按住不放开时由 _process 续走
+			_step_view_movement(_held_dir)
+		else:
+			_held_dir = Vector2i.ZERO
+			_held_step_t = 0.0
+			# 松开时若没有 _walk 动画在跑，process 没有别的活要干，关掉省心
+			if _walk.is_empty():
+				set_process(false)
+		return
 	if not key_event.pressed or key_event.echo:
 		return
 	match _view:
@@ -4869,6 +4909,9 @@ func _npc_click(point: Vector2) -> void:
 
 func _switch_view(view: int) -> void:
 	_view = view
+	# 按住方向键持续走路：切走视图就停。不然在别的界面上会一直"按着方向键走"
+	_held_dir = Vector2i.ZERO
+	_held_step_t = 0.0
 	# 悬停目标跟着视图走。不清掉的话，切过来的一瞬间新面板上会有一个
 	# 莫名其妙高亮着的按钮——鼠标还没动过，却被上一屏的坐标指着。
 	_hover = {}
@@ -4894,10 +4937,61 @@ func _move(dx: int, dy: int) -> void:
 	_refresh()
 
 
+## 把方向键 / WASD 的键码翻译成移动方向。方向键与 WASD 两套键位共用一套方向语义。
+func _dir_from_key(keycode: Key) -> Vector2i:
+	match keycode:
+		KEY_LEFT, KEY_A:
+			return Vector2i(-1, 0)
+		KEY_RIGHT, KEY_D:
+			return Vector2i(1, 0)
+		KEY_UP, KEY_W:
+			return Vector2i(0, -1)
+		KEY_DOWN, KEY_S:
+			return Vector2i(0, 1)
+	return Vector2i.ZERO
+
+
+## 当前视图下朝某个方向走一步（M22 手感补齐）。地图走 _walk 动画（逐格、动画收尾
+## 判一次遭遇，不因按住连判），城内 / 副本走各自的 step（即时跳格）。
+func _step_view_movement(dir: Vector2i) -> void:
+	match _view:
+		VIEW_MAP:
+			_move_step(dir)
+		VIEW_CITY_SPACE:
+			_city_space_step(dir.x, dir.y)
+		VIEW_DUNGEON:
+			_dungeon_step(dir.x, dir.y)
+
+
+## 地图朝某个方向走近一格：把目标格（当前 + 方向）交给 _walk_to 走动画。
+## 走完由 _finish_walk → _report_walk_stop 判一次遭遇，按住连走不会每格连环遭遇。
+func _move_step(dir: Vector2i) -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var target: Vector2i = _grid.step(
+		_world.avatar.pos_x, _world.avatar.pos_y, dir.x, dir.y)
+	if target.x == _world.avatar.pos_x and target.y == _world.avatar.pos_y:
+		_status.text = "已到地图边缘。"
+		_refresh()
+		return
+	_walk_to(target)
+
+
+## _process 里的按住持续步进。累加间隔，够一格就走一步；城内 / 副本松开即停。
+func _step_held_dir(delta: float) -> void:
+	if _held_dir == Vector2i.ZERO:
+		return
+	_held_step_t += delta
+	if _held_step_t < HELD_STEP_INTERVAL:
+		return
+	_held_step_t = 0.0
+	_step_view_movement(_held_dir)
+
+
+## 推进时钟 tick。推进过夜那一下判一次隐藏事件（幸运类）。同月已判过就不再判，
+## 免得按一次键被同一档属性连环弹出来。
 func _advance_ticks(ticks: int) -> void:
 	Clock.advance(ticks)
-	# 推进过夜那一下判一次隐藏事件（幸运类）。同月已判过就不再判，
-	# 免得按一次键被同一档属性连环弹出来。
 	if _world != null and _world.avatar != null and _hidden_event.is_empty():
 		var month: int = Clock.total_months()
 		if month != _hidden_last_advance_month:

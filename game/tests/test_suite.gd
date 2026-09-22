@@ -215,6 +215,10 @@ func run_all() -> int:
 	_test_merchant_quote()
 	_test_merchant_buy_sell_stock()
 	_test_merchant_view_model()
+	print("=== M22 战斗深度：连携/遮挡/随从倾向 ===")
+	_test_element_chain()
+	_test_line_of_sight_blocks_ranged()
+	_test_m22_identity_and_tendency()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7851,3 +7855,117 @@ static func _merchant_signature(stock: Array) -> String:
 static func _merchant_buy_all(m: Merchant) -> void:
 	for entry in m.stock_left().duplicate():
 		m.buy_off_stock(str(entry["templateId"]))
+
+
+# --- M22 战斗深度（连携 / 遮挡 / 随从倾向与身份）---
+
+## 元素连携（C2）：元素/法术命中逐发攒层，第三发触发 ×1.5 加伤并清零；
+## 故连层序列 1→2→0→1→…；普通物理平A不参与，不触发文案。
+func _test_element_chain() -> void:
+	var combat := _new_combat(8211)
+	combat.start(_spell_encounter({"water_water_arrow": 10}, -1, {"element": "fire"}))
+	var damages: Array = []
+	var chain_after: Array = []
+	var hits := 0
+	var guard := 0
+	while hits < 6 and guard < 24:
+		guard += 1
+		var actor_id := combat.current_unit_id()
+		if actor_id.is_empty():
+			break
+		if actor_id != "hero" or int(combat.unit_by_id("hero")["ap"]) < 2:
+			combat.submit_action({"actionType": Combat.ACTION_END_TURN, "actorId": actor_id})
+			continue
+		var before := int(combat.unit_by_id("foe")["hp"])
+		combat.submit_action({
+			"actionType": Combat.ACTION_SKILL, "actorId": "hero", "targetId": "foe",
+			"skillId": "water_water_arrow",
+		})
+		if int(combat.unit_by_id("foe")["hp"]) < before:
+			hits += 1
+			damages.append(int(before) - int(combat.unit_by_id("foe")["hp"]))
+			chain_after.append(int(combat.get_state()["chainStacks"].get("hero", 0)))
+	_check(hits >= 6, "拿到至少 6 次命中（%d）" % hits)
+	if hits >= 6:
+		_eq(chain_after[0], 1, "第一发命中攒 1 层")
+		_eq(chain_after[1], 2, "第二发命中攒 2 层")
+		_eq(chain_after[2], 0, "第三发触发后清零")
+		_eq(chain_after[3], 1, "第四发重新从 1 层攒起")
+		# 触发发（下标 2）是第三发，命中那次就是触发发，文案里应出现连携
+	_check(_join(combat.get_state()["log"]).contains("连携炸响"), "触发发的日志出现连携文案")
+	# 平A（普通物理）不参与连携：连层保持空、不触发文案
+	var duel := _new_combat(8221)
+	duel.start(_duel_encounter(40, 1))
+	var before_duel := int(duel.unit_by_id("foe")["hp"])
+	duel.submit_action({"actionType": Combat.ACTION_ATTACK, "actorId": "hero", "targetId": "foe"})
+	if int(duel.unit_by_id("foe")["hp"]) < before_duel:
+		_eq(duel.get_state()["chainStacks"], {}, "普通攻击不攒连携层")
+	_check(not _join(duel.get_state()["log"]).contains("连携"), "普通攻击不触发连携文案")
+
+
+## 战场遮挡（C3）：Bresenham 弹道上的中间障碍格挡住弹道；相邻/畅通弹道不挡。
+func _test_line_of_sight_blocks_ranged() -> void:
+	var combat := _new_combat(8331)
+	combat.start({
+		"sessionId": "los-test",
+		"units": [
+			{"unitId": "hero", "side": Combat.SIDE_PLAYER, "name": "弓手",
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_DEXTERITY, 60),
+			 "weaponTemplateId": "weapon_bow_common",
+			 "position": [0, 0], "threatLevel": 1, "hp": 100000, "maxHp": 100000},
+			{"unitId": "foe", "side": Combat.SIDE_ENEMY, "name": "木桩",
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_DEXTERITY, 1),
+			 "weaponTemplateId": "weapon_longsword_common",
+			 "position": [4, 0], "threatLevel": 1, "hp": 100000, "maxHp": 100000},
+		],
+		"obstacles": [[2, 0]],
+	})
+	_check(combat._los_blocked(Vector2i(0, 0), Vector2i(4, 0)), "横穿柱子的弹道被挡")
+	_check(not combat._los_blocked(Vector2i(0, 0), Vector2i(1, 0)), "相邻格无中间障碍")
+	_check(not combat._los_blocked(Vector2i(0, 0), Vector2i(4, 2)), "绕开柱子的弹道畅通")
+	# 直径只差一格（3 格）也不被柱子挡——只有正中间那格算遮挡
+	_check(not combat._los_blocked(Vector2i(0, 0), Vector2i(3, 1)), "斜线未压柱子的弹道畅通")
+	# 带遮挡的远程攻击仍可扇出去（只是命中率被打折），不会被拒
+	var res: Dictionary = combat.submit_action({
+		"actionType": Combat.ACTION_ATTACK, "actorId": "hero", "targetId": "foe",
+	})
+	_check(bool(res.get("ok", true)), "隔着柱子的弓手仍能出手（%s）" % str(res))
+
+
+## 身份标识（B）与随从行动倾向（C1）：combat 单元透传 displayName/category + aiTendency，
+## 视图的 identity_of 折叠成「本名 · 类别」，follower_combat_spec 按职业映射倾向。
+func _test_m22_identity_and_tendency() -> void:
+	var combat := _new_combat(8441)
+	combat.start({
+		"sessionId": "identity-test",
+		"units": [
+			{"unitId": "hero", "side": Combat.SIDE_PLAYER, "name": "主角", "displayName": "主角",
+			 "category": "wanderer", "controlled": "manual",
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_CONSTITUTION, 40),
+			 "weaponTemplateId": "weapon_longsword_common", "position": [0, 0], "threatLevel": 1},
+			{"unitId": "fol", "side": Combat.SIDE_PLAYER, "name": "铁卫", "displayName": "铁卫",
+			 "category": "military", "aiTendency": "attack", "controlled": "auto",
+			 "attributes": _attributes_with(PlayerAvatar.ATTR_CONSTITUTION, 40),
+			 "weaponTemplateId": "weapon_longsword_common", "position": [1, 0], "threatLevel": 2},
+			{"unitId": "gob", "side": Combat.SIDE_ENEMY, "name": "哥布林", "displayName": "哥布林",
+			 "creatureKind": "living", "attributes": _attributes_with(PlayerAvatar.ATTR_CONSTITUTION, 30),
+			 "weaponTemplateId": "weapon_dagger_common", "position": [4, 0], "threatLevel": 1},
+		],
+	})
+	# _build_unit 透传身份字段 → 视图 identity_of 能折叠成带类别的身份
+	_eq(CombatViewModel.identity_of(combat.unit_by_id("fol")), "铁卫 · military",
+		"随从身份 = 本名 · 类别")
+	_eq(CombatViewModel.identity_of(combat.unit_by_id("gob")), "哥布林 · living",
+		"怪物身份 = 本名 · 生物类别")
+	var fol: Dictionary = combat.unit_by_id("fol")
+	_eq(str(fol.get("aiTendency", "")), "attack", "军事随从倾向随规格透传")
+	# 敌人缺省倾向 attack（auto_action 就近攻击）
+	_eq(str(combat.unit_by_id("gob").get("aiTendency", "")), "attack", "敌人默认倾向攻击")
+	_check(combat.is_auto("fol"), "随从自动驱动")
+	# follower_combat_spec 按职业给倾向：军事 → attack，守序职业 → guard
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	_eq(str(NpcInteractionSystem.follower_combat_spec(null, world, {"npcId": "a", "name": "甲", "category": "military"})
+		.get("aiTendency", "")), "attack", "军事随从倾向 attack")
+	_eq(str(NpcInteractionSystem.follower_combat_spec(null, world, {"npcId": "b", "name": "乙", "category": "knowledge"})
+		.get("aiTendency", "")), "ranged", "知识随从倾向 ranged")

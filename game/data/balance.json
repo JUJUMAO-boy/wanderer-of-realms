@@ -384,7 +384,17 @@
     "mpRegenPerRound": 2,
     "skillGainPerCast": 1,
     "masteryFactorMilli": 1100,
-    "masteryHitBonusBp": 500
+    "masteryHitBonusBp": 500,
+    "_comment_elementChain": "元素连携（M22，C2）：同一攻击者每成功命中一次**元素/法术**攻击攒 1 层（普通物理攻击不攒），叠到 threshold 层时下一次命中触发 chainBonusMilli 的比例加伤并清零。把『反复用同一种元素磨』变成‘连起来炸一波’的战斗手感，配 M13 的元素克制与元素循环用。只计打中的（未命中不攒），被目标也是每击一次。",
+    "elementChains": {
+      "threshold": 3,
+      "bonusMilli": 1500
+    },
+    "_comment_losBlock": "战场遮挡（M22，C3）：射程 ≥ rangeFrom 的远程攻击，若弹道上碍着障碍物（Bresenham 取中间格），命中率按 penaltyBp 扣。近战与弹道畅通不受影响——让『拿弓隔着柱子打』有且只有『先换个角度』这一种解法，呼应副本敌人占障的布局。",
+    "losBlock": {
+      "rangeFrom": 3,
+      "penaltyBp": 2000
+    }
   },
   "hiddenAttributes": {
     "_comment": "《数值框架》第 3 章",
@@ -439,6 +449,13 @@
       "knowledge": {"attack": 4, "range": 2}
     },
     "followerArmor": 3,
-    "followerSkill": "guard"
+    "followerSkill": "guard",
+    "followerTendencyDefault": "guard",
+    "followerTendencyByCategory": {
+      "military": "attack",
+      "gray": "guard",
+      "commerce": "guard",
+      "knowledge": "ranged"
+    }
   }
 }

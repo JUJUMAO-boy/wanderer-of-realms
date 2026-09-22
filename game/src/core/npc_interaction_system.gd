@@ -324,6 +324,10 @@ static func follower_combat_spec(avatar: PlayerAvatar, world: WorldState, hire: 
 		"side": Combat.SIDE_PLAYER,
 		"controlled": "auto",
 		"isHero": false,
+		# M22 随从 AI 行动倾向：按职业类别给一个性格，auto_action 据此分流
+		# （战士抢先卡位、刺客守玩家身旁只补刀、射手保持距离放箭）。
+		"aiTendency": str(cfg.get("followerTendencyByCategory", {}).get(category,
+			str(cfg.get("followerTendencyDefault", "guard")))),
 		"attributes": attrs,
 		"skills": {skill_id: 40},
 		"weaponAttack": int(weapon.get("attack", 6)),

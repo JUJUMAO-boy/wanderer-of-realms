@@ -69,6 +69,9 @@ var world_flags: Dictionary = {}
 ## 打的哪种目标"，落下我们做纯计数，避免战斗层去改玩家背包里的东西。
 var wear_player_attacks: int = 0
 var wear_player_taken: int = 0
+## M22 元素连携：攻击者 unitId -> 已攒层数。同一攻击者每次带元素克制命中的
+## 攻击攒一层，攒够 threshold 触发一次 bonus 加伤并清零（见 _apply_chain）。
+var _chain_stacks: Dictionary = {}
 
 var _derived: DerivedStats = null
 var _combat_cfg: Dictionary = {}
@@ -107,6 +110,7 @@ func start(encounter: Dictionary) -> Dictionary:
 	world_flags.clear()
 	wear_player_attacks = 0
 	wear_player_taken = 0
+	_chain_stacks.clear()
 	finished = false
 	winner = RESULT_ONGOING
 	round = 1
@@ -159,6 +163,7 @@ func get_state() -> Dictionary:
 		"finished": finished,
 		"winner": winner,
 		"log": log.duplicate(true),
+		"chainStacks": _chain_stacks.duplicate(),
 	}
 
 
@@ -328,15 +333,25 @@ func _build_unit(spec: Dictionary) -> Dictionary:
 		"controlled": str(spec.get("controlled",
 			"auto" if str(spec.get("side", SIDE_ENEMY)) == SIDE_ENEMY else "manual")),
 		"isHero": bool(spec.get("isHero", false)),
+		# M22 随从 AI 行动倾向：auto_action 按它分流 player 侧的随从怎么打。
+		# 敌人缺省 attack（就近打），随从由 follower_combat_spec 指定倾向。
+		"aiTendency": str(spec.get("aiTendency",
+			"attack" if str(spec.get("side", SIDE_ENEMY)) == SIDE_ENEMY else "guard")),
 		# 元素克制（M13）：element 是目标侧的亲和（affinity），用于判定四元素循环/光暗互克；
 		# creatureKind 是生物类别（undead/holy/living），用于魂系克制。缺省无克制（M13 前行为）。
 		"element": str(spec.get("element", "physical")),
 		"creatureKind": str(spec.get("creatureKind", "living")),
+		# M22 身份标识：透传遭遇给的显示名与类别，战斗界面 token / 侧栏用它画身份小牌。
+		"displayName": str(spec.get("displayName",
+			str(spec.get("name", str(unit_id))))),
+		"category": str(spec.get("category", "")),
 	}
 
 
-## 让 AI 替一个单位行动一次（就近攻击，够不着就走近）。返回是否真的动了手。
-## 敌人的行动逻辑文档未定义，这里只是一个够用的默认策略，供主循环调用。
+## 让 AI 替一个单位行动一次。返回是否真的动了手。
+## 敌人默认 attack（就近攻击，够不着就走近）；随从（side=player, controlled=auto）
+## 按 aiTendency 分流打法（M22）——guard 抢先卡位、finisher 只补刀低血、
+## ranged 保持距离放箭。敌人的行动逻辑文档未定义，attack 只是一个够用的默认。
 func auto_action(unit_id: String) -> Dictionary:
 	var actor: Dictionary = unit_by_id(unit_id)
 	if actor.is_empty() or str(actor["unitId"]) != current_unit_id():
@@ -344,26 +359,89 @@ func auto_action(unit_id: String) -> Dictionary:
 	if int(actor["ap"]) <= 0:
 		_end_turn()
 		return {"ok": true, "state": get_state(), "log": []}
+	# M22 随从倾向分流；敌人走默认 attack
+	match str(actor.get("aiTendency", "attack")):
+		"guard":
+			return _auto_guard(actor)
+		"finisher":
+			return _auto_finisher(actor)
+		"ranged":
+			return _auto_ranged(actor)
+		_:
+			return _auto_default(actor)
 
+
+## 敌人 / attack 倾向的默认策略：就近攻击，够不着就走近。
+func _auto_default(actor: Dictionary) -> Dictionary:
 	var target: Dictionary = _nearest_opponent(actor)
 	if target.is_empty():
-		# 对手全倒了：把未定的倒地者按「放走」处理，否则自动驱动的战斗会永远空转
-		var other_side: String = SIDE_PLAYER if str(actor["side"]) == SIDE_ENEMY else SIDE_ENEMY
-		_abandon_pending(other_side)
-		_spend_all(actor)
-		_end_turn()
-		return {"ok": true, "state": get_state(), "log": []}
-
+		return _abandon_all(actor)
 	var reach: int = maxi(1, int(actor["weapon"].get("attackRange", 1)))
 	var distance: int = _manhattan(actor["position"], target["position"])
 	if distance > reach:
-		var step: Vector2i = _step_toward(actor["position"], target["position"])
-		if step == actor["position"]:
-			_spend_all(actor)
-			_end_turn()
-			return {"ok": true, "state": get_state(), "log": []}
-		return _do_move(actor, {"moveTo": [step.x, step.y]})
+		return _try_move_toward(actor, target["position"])
 	return _do_attack(actor, {"targetId": str(target["unitId"])}, "")
+
+
+## 守势（guard）：出手范围内就打最近的，够不着就向目标逼近——它不挑目标，
+## 谁近打谁，像贴身护卫一样挡在前面。与默认策略行为相同，但语义上用于随从，
+## 方便将来在同一点上区分「往前走 vs 守在玩家旁」。
+func _auto_guard(actor: Dictionary) -> Dictionary:
+	return _auto_default(actor)
+
+
+## 补刀（finisher）：只打已经倒地的对手（优先收残血），没有就原地等（不动，省得
+## 冲到前排把位置让给敌人）。"补刀"指优先攻击重伤者，而非一定等倒地。
+func _auto_finisher(actor: Dictionary) -> Dictionary:
+	var choices: Array = _opponents_sorted(actor)
+	if choices.is_empty():
+		return _abandon_all(actor)
+	var best: Dictionary = choices[0]
+	var reach: int = maxi(1, int(actor["weapon"].get("attackRange", 1)))
+	if _manhattan(actor["position"], best["position"]) > reach:
+		# 够不着最重伤的：原地待机，不盲目冲（守则打法另有意图）
+		_spend_all(actor)
+		_end_turn()
+		return {"ok": true, "state": get_state(), "log": []}
+	return _do_attack(actor, {"targetId": str(best["unitId"])}, "")
+
+
+## 远程（ranged）：优先挑最近的敌人，够得着就放箭；够不着则跟目标保持距离——
+## 不贴身，而是往反方向拉出射程（维持远程火力）。
+func _auto_ranged(actor: Dictionary) -> Dictionary:
+	var target: Dictionary = _nearest_opponent(actor)
+	if target.is_empty():
+		return _abandon_all(actor)
+	var reach: int = maxi(1, int(actor["weapon"].get("attackRange", 2)))
+	var distance: int = _manhattan(actor["position"], target["position"])
+	if distance <= reach and distance > 1:
+		return _do_attack(actor, {"targetId": str(target["unitId"])}, "")
+	# 够不着（太远）或贴脸：往远离目标的格子撤一步，拉开距离
+	var back: Vector2i = _step_away(actor["position"], target["position"])
+	if back == actor["position"] or not _cell_empty(back):
+		_spend_all(actor)
+		_end_turn()
+		return {"ok": true, "state": get_state(), "log": []}
+	return _do_move(actor, {"moveTo": [back.x, back.y]})
+
+
+## 目标全没时统一收尾（对面全员倒地/阵亡）。
+func _abandon_all(actor: Dictionary) -> Dictionary:
+	var other_side: String = SIDE_PLAYER if str(actor["side"]) == SIDE_ENEMY else SIDE_ENEMY
+	_abandon_pending(other_side)
+	_spend_all(actor)
+	_end_turn()
+	return {"ok": true, "state": get_state(), "log": []}
+
+
+## 往目标方向走一步（够得着时停）。碰上不可走就结束回合。
+func _try_move_toward(actor: Dictionary, target: Vector2i) -> Dictionary:
+	var step: Vector2i = _step_toward(actor["position"], target)
+	if step == actor["position"] or not _cell_empty(step):
+		_spend_all(actor)
+		_end_turn()
+		return {"ok": true, "state": get_state(), "log": []}
+	return _do_move(actor, {"moveTo": [step.x, step.y]})
 
 
 # --- 内部：回合推进 ---
@@ -467,6 +545,27 @@ func _do_move(actor: Dictionary, action: Dictionary) -> Dictionary:
 	return {"ok": true, "state": get_state(), "log": [entry]}
 
 
+## 元素连携（M22，C2）：同一攻击者每次元素/法术命中攒 1 层（普通物理攻击不攒），
+## 达到 balance.combat.elementChains.threshold 时本次命中触发 bonusMilli 的比例加伤并清零。
+## 返回本次可乘到 damage 上的比例（毫，如 1500 → ×1.5）；非元素攻击恒为 0。
+func _chain_bonus_milli(actor: Dictionary, is_element: bool) -> int:
+	if not is_element:
+		return 0
+	var cfg: Dictionary = _combat_cfg.get("elementChains", {})
+	var threshold: int = int(cfg.get("threshold", 3))
+	if threshold <= 0:
+		return 0
+	var bonus: int = int(cfg.get("bonusMilli", 0))
+	var actor_id: String = str(actor["unitId"])
+	var stacks: int = int(_chain_stacks.get(actor_id, 0))
+	stacks += 1
+	if stacks >= threshold:
+		_chain_stacks[actor_id] = 0
+		return bonus
+	_chain_stacks[actor_id] = stacks
+	return 0
+
+
 func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dictionary:
 	var target: Dictionary = unit_by_id(str(action.get("targetId", "")))
 	if target.is_empty():
@@ -540,6 +639,11 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 			hit_bp += passive_hit
 	# 超重拖累身手：闪避不开、瞄不准，直接扣命中（渐进惩罚，D-66）
 	hit_bp -= _enc_int(actor.get("encumbrance", {}), "hitPenaltyBp")
+	# 战场遮挡（M22，C3）：远程（距离 ≥ losBlock.rangeFrom）且弹道上碍着障碍物时，
+	# 弹道被挡、瞄不准，扣命中。近战与弹道畅通不受影响。
+	if distance >= _los_block_cfg("rangeFrom", 3) \
+			and _los_blocked(actor["position"], target["position"]):
+		hit_bp -= _los_block_cfg("penaltyBp", 2000)
 	# 越级惩罚在派生值的钳制之后扣：它要能把命中率压到常规下限（5%）以下，
 	# 否则"打不过的东西"依旧能靠 5% 一点点磨死（13.2 节明确要挡住这种解法）
 	hit_bp -= level_gap_hit_penalty_bp(int(actor["threatLevel"]), int(target["threatLevel"]))
@@ -558,6 +662,15 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 	damage = apply_level_gap_to_damage(
 		damage, int(actor["threatLevel"]), int(target["threatLevel"])
 	)
+	# 元素连携（M22，C2）：元素/法术命中参与攒层，达阈值本次按比例加伤并清零。
+	var chain_milli: int = _chain_bonus_milli(
+		actor,
+		not is_basic and (str(skill.get("category", "weapon")) == "spell"
+			or (str(skill.get("damageType", "physical")) != "physical"
+				and str(skill.get("damageType", "physical")) != "none"))
+	)
+	if chain_milli > 0:
+		damage = roundi(float(damage) * float(chain_milli) / 1000.0)
 
 	var before: int = int(target["hp"])
 	target["hp"] = before - damage
@@ -574,6 +687,10 @@ func _do_attack(actor: Dictionary, action: Dictionary, skill_id: String) -> Dict
 		damage, "，暴击" if is_crit else "", before, maxi(0, int(target["hp"])),
 	]
 	_push_log(entry)
+	if chain_milli > 0:
+		_push_log("  %s 元素连携炸响（×%.1f），重置连层！" % [
+			str(actor["name"]), float(chain_milli) / 1000.0
+		])
 
 	if aim_part == DerivedStats.AIM_HEAD and _roll(_derived.stun_chance_per_mille(), 1000):
 		target["stunnedTurns"] = 1
@@ -968,6 +1085,53 @@ func _step_toward(from: Vector2i, to: Vector2i) -> Vector2i:
 	return step
 
 
+## 对手按"残血程度"排序（HP 少的排前面），供补刀倾向挑最该收的那个。
+## 只算还站着的对手；全倒时返回空，调用方据此收尾。
+func _opponents_sorted(actor: Dictionary) -> Array:
+	var out: Array = []
+	for unit in units:
+		if str(unit["side"]) == str(actor["side"]):
+			continue
+		if bool(unit["dead"]) or bool(unit["downed"]):
+			continue
+		out.append(unit)
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ah: int = int(a["hp"]) * (int(a["maxHp"]) if int(a["maxHp"]) > 0 else 1)
+		var bh: int = int(b["hp"]) * (int(b["maxHp"]) if int(b["maxHp"]) > 0 else 1)
+		if ah != bh:
+			return ah < bh
+		return str(a["unitId"]) < str(b["unitId"]))
+	return out
+
+
+## 朝远离目标的方向离开一步（远程倾向拉开距离用）。x/y 各取一个离目标的符号；
+## 两个轴都贴着目标时（被包夹）返回原位。
+func _step_away(from: Vector2i, target: Vector2i) -> Vector2i:
+	var step := from
+	var dx: int = -signi(target.x - from.x) if target.x != from.x else 0
+	var dy: int = -signi(target.y - from.y) if target.y != from.y else 0
+	if dx != 0:
+		step = Vector2i(from.x + dx, from.y)
+	if step != from:
+		return step
+	if dy != 0:
+		step = Vector2i(from.x, from.y + dy)
+	return step
+
+
+## 一个目标格能不能站（非障碍、无站立单位占格）。倒地/阵亡者不挡路，
+## 与 _step_toward 一致。战斗格没有硬性边界，越界由 _do_move 交给调用方处理。
+func _cell_empty(cell: Vector2i) -> bool:
+	if obstacles.has("%d,%d" % [cell.x, cell.y]):
+		return false
+	for unit in units:
+		if bool(unit["downed"]) or bool(unit["dead"]):
+			continue
+		if unit["position"] == cell:
+			return false
+	return true
+
+
 func _roll(numerator: int, denominator: int) -> bool:
 	if denominator <= 0 or numerator <= 0:
 		return false
@@ -978,6 +1142,41 @@ func _roll(numerator: int, denominator: int) -> bool:
 
 func _manhattan(a: Vector2i, b: Vector2i) -> int:
 	return absi(a.x - b.x) + absi(a.y - b.y)
+
+
+## 战场遮挡（M22，C3）：用 Bresenham 沿 a→b 弹道取整格，任一中间格（不含两端）
+## 是障碍物则返回 true。近战/相邻攻击弹道无中间格，恒 false。
+## 障碍字典是 `_do_move` 填充的 obstacles（"x,y" -> true）。
+func _los_blocked(a: Vector2i, b: Vector2i) -> bool:
+	if obstacles.is_empty():
+		return false
+	var x0: int = a.x
+	var y0: int = a.y
+	var x1: int = b.x
+	var y1: int = b.y
+	var dx: int = absi(x1 - x0)
+	var dy: int = -absi(y1 - y0)
+	var sx: int = 1 if x0 < x1 else -1
+	var sy: int = 1 if y0 < y1 else -1
+	var err: int = dx + dy
+	while true:
+		if x0 == x1 and y0 == y1:
+			break
+		var e2: int = 2 * err
+		if e2 >= dy:
+			err += dy
+			x0 += sx
+		if e2 <= dx:
+			err += dx
+			y0 += sy
+		# 走到的新格若仍是中间格（没到终点）且是障碍，弹道被挡。
+		if (x0 != x1 or y0 != y1) and obstacles.has("%d,%d" % [x0, y0]):
+			return true
+	return false
+
+
+func _los_block_cfg(key: String, fallback: int) -> int:
+	return int(_combat_cfg.get("losBlock", {}).get(key, fallback))
 
 
 func _part_label(part: String) -> String:

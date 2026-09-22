@@ -293,6 +293,14 @@ static func _draw_unit_token(
 			Vector2(TILE * 0.92, TILE * 0.92)), UiTheme.COLOR_ACCENT, false, 2.0)
 	UiTheme.draw_text_center(canvas, font, center + Vector2(0.0, 5.0),
 		str(unit.get("initial", "?")), Color(0.06, 0.07, 0.09), UiTheme.SIZE_SMALL)
+	# M22：token 下方一行名字小牌，看清"这格是谁"。名字取短名 displayName（敌人 /
+	# NPC 由 encounter_system 带，英雄 / 随从退化为 name），字段空则不画省得叠字。
+	var tag: String = str(unit.get("displayName", ""))
+	if tag.is_empty():
+		tag = str(unit.get("name", ""))
+	if not tag.is_empty():
+		UiTheme.draw_text_center(canvas, font, center + Vector2(0.0, 24.0),
+			tag, Color(0.92, 0.94, 0.97), UiTheme.SIZE_SMALL)
 
 
 ## 右上：单位列表 + 战斗日志。
@@ -308,7 +316,8 @@ static func _draw_side_panel(
 		var row_y: float = row_rect.position.y + 16.0
 		if bool(unit.get("isCurrent", false)):
 			canvas.draw_rect(row_rect, UiTheme.COLOR_SELECTED)
-		UiTheme.draw_text(canvas, font, Vector2(x, row_y), str(unit["name"]),
+		# M22：用 identity（本名 · 类别）当名字，侧栏一眼看清身份
+		UiTheme.draw_text(canvas, font, Vector2(x, row_y), str(unit["identity"]),
 			UiTheme.COLOR_TEXT if str(unit.get("side", "")) == Combat.SIDE_PLAYER \
 				else UiTheme.COLOR_DIM, UiTheme.SIZE_NORMAL)
 		UiTheme.draw_bar(canvas,
@@ -319,6 +328,10 @@ static func _draw_side_panel(
 			UiTheme.COLOR_TEXT, UiTheme.SIZE_SMALL)
 		UiTheme.draw_text(canvas, font, Vector2(x + 400.0, row_y),
 			"%d AP" % int(unit["ap"]), UiTheme.COLOR_DIM, UiTheme.SIZE_SMALL)
+		var chain_stacks: int = int(unit.get("chain", 0))
+		if chain_stacks > 0:
+			UiTheme.draw_text(canvas, font, Vector2(x + 452.0, row_y),
+				"连携 %d" % chain_stacks, UiTheme.COLOR_ACCENT, UiTheme.SIZE_SMALL)
 		UiTheme.draw_text_right(canvas, font, Vector2(x + width - 4.0, row_y),
 			str(unit["statusLabel"]), UiTheme.COLOR_WARN, UiTheme.SIZE_SMALL)
 
