@@ -82,14 +82,22 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 
 
 ## 标题带：标题 + 层数副题 + 右上操作提示（方向键走 / ESC 离开 / 出口下探）。
+static func _subtitle(view: Dictionary) -> String:
+	var base: String = "%s · %s" % [str(view.get("depthLabel", "")),
+		str(view.get("depthHint", ""))]
+	var theme_label: String = str(view.get("themeLabel", ""))
+	if theme_label.is_empty():
+		return base
+	return "%s · %s" % [base, theme_label]
+
+
 static func _ui_header(canvas: CanvasItem, font: Font, rect: Rect2, view: Dictionary) -> void:
 	UiTheme.draw_panel_header(canvas, font, rect, {
 		"left": 24.0,
 		"title": 30.0,
 		"titleColor": UiTheme.COLOR_ACCENT,
 		"subtitleY": 56.0,
-		"subtitle": "%s · %s" % [str(view.get("depthLabel", "")),
-			str(view.get("depthHint", ""))],
+		"subtitle": _subtitle(view),
 		"subtitleColor": UiTheme.COLOR_DIM,
 		"hintY": 30.0,
 		"hintRightX": rect.end.x - 24.0,

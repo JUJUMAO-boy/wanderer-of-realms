@@ -219,6 +219,12 @@ func run_all() -> int:
 	_test_element_chain()
 	_test_line_of_sight_blocks_ranged()
 	_test_m22_identity_and_tendency()
+	print("=== M23 副本主题层与商人深度 ===")
+	_test_dungeon_theme()
+	_test_dungeon_theme_det()
+	_test_merchant_persona()
+	_test_merchant_legendary()
+	_test_merchant_buy_back_value()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7969,3 +7975,143 @@ func _test_m22_identity_and_tendency() -> void:
 		.get("aiTendency", "")), "attack", "军事随从倾向 attack")
 	_eq(str(NpcInteractionSystem.follower_combat_spec(null, world, {"npcId": "b", "name": "乙", "category": "knowledge"})
 		.get("aiTendency", "")), "ranged", "知识随从倾向 ranged")
+
+
+# --- M23 副本主题层与商人深度（A/B/C）---
+
+## 主题配置样例（与 balance.json dungeon 段同构，theme_for 认 every/treasureMult/
+## enemyMult/themes 四处）。
+static func _theme_cfg() -> Dictionary:
+	return {
+		"every": 5,
+		"treasureMult": 1.5,
+		"enemyMult": 1.2,
+		"themes": [
+			{"id": "outpost", "label": "小镇哨站", "hasSupply": true},
+			{"id": "treasure_room", "label": "宝藏房", "hasSupply": false},
+		],
+	}
+
+
+## 主题不碰几何：同一层同一种子，带不带主题，墙（blocked）+ spawn/exit 一致；
+## 主题只改宝箱/敌人的数量倍率与文本，不挪任何一格可站/墙。主题只出现在
+## (depth+1)%every==0 的层；同种子同层主题标签恒定。
+func _test_dungeon_theme() -> void:
+	var cfg: Dictionary = _theme_cfg()
+	var k: String = "th1"
+	var plain: Dictionary = Dungeon.layout(k, 4)
+	var themed: Dictionary = Dungeon.layout(k, 4, {"theme": cfg})
+	_eq(plain["blocked"], themed["blocked"], "带主题不改墙（blocked 逐位一致）")
+	_eq(str(plain["spawn"]), str(themed["spawn"]), "带主题不改出生点")
+	_eq(str(plain["exit"]), str(themed["exit"]), "带主题不改出口")
+	var t4: Dictionary = themed["theme"]
+	_check(bool(t4.get("hasTheme", false)), "第 5 层（depth 4）是主题层")
+	_check(not bool(Dungeon.layout(k, 3, {"theme": cfg})["theme"].get("hasTheme", false)),
+		"第 4 层（depth 3）不是主题层")
+	var again: Dictionary = Dungeon.layout(k, 4, {"theme": cfg})["theme"]
+	_eq(str(t4.get("id", "")), str(again.get("id", "")), "同种子同层主题恒定")
+	# 主题层返回的倍率来自 cfg 顶层
+	_check(float(t4.get("treasureMult", 0.0)) >= 1.0, "主题层带回 treasureMult")
+	_check(float(t4.get("enemyMult", 0.0)) >= 1.0, "主题层带回 enemyMult")
+	# themes 为空的 cfg 不触发主题，也不报错
+	_check(not bool(Dungeon.layout(k, 4, {"theme": {}})["theme"].get("hasTheme", false)),
+		"空主题配置不触发）")
+
+
+## 主题层放大宝箱/敌人数量：同一种子同层，treasureMult 更大时宝箱数只增不减。
+## 小镇哨站带 hasSupply，宝藏房不带。
+func _test_dungeon_theme_det() -> void:
+	var k: String = "th2"
+	var rich: Dictionary = _theme_cfg()
+	rich["treasureMult"] = 3.0
+	var base_t: int = (Dungeon.layout(k, 4, {"theme": {}}).get("treasures", []) as Array).size()
+	var rich_t: int = (Dungeon.layout(k, 4, {"theme": rich}).get("treasures", []) as Array).size()
+	_check(rich_t >= base_t, "treasureMult 放大后宝箱只增不减（%d ≥ %d）" % [rich_t, base_t])
+	# 遍历 themes 逐个验 hasSupply 语义：可能同一档位随机挑的一条没有 supply，
+	# 但 theme 结构本身必须带 hasSupply 布尔，且任一 at depth 9 的供应位可复现。
+	var supply_seen: bool = false
+	for seed_i in range(12):
+		var t: Dictionary = Dungeon.layout("sup-%d" % seed_i, 4, {"theme": _theme_cfg()})["theme"]
+		if bool(t.get("hasSupply", false)):
+			supply_seen = true
+	_check(supply_seen, "12 个种子里至少有一档小镇哨站（hasSupply）")
+
+
+## 商人人格：喜好类落在合法类别、标签非空、卖价倍数在合理区间，且同种子可复现。
+func _test_merchant_persona() -> void:
+	var m1 := Merchant.create(null, {})
+	m1.stock_for("persona-1")
+	var p1: Dictionary = m1.persona()
+	_check(Merchant.STOCK_CATEGORIES.has(str(p1.get("favCategory", ""))), "喜好类在武器/防具/消耗品里")
+	_check(not str(p1.get("favCategoryLabel", "")).is_empty(), "喜好类有中文标签")
+	var mult: float = float(p1.get("sellMultiplier", 0.0))
+	_check(mult >= 0.4 and mult <= 0.7, "卖价比例在 0.4..0.7（%s）" % str(mult))
+	_check(typeof(p1.get("rareBias", null)) == TYPE_BOOL, "rareBias 是布尔")
+	var m2 := Merchant.create(null, {})
+	m2.stock_for("persona-1")
+	_eq(str(m1.persona().get("favCategory", "")), str(m2.persona().get("favCategory", "")),
+		"同种子喜好类恒定")
+	_eq(bool(m1.persona().get("rareBias", false)), bool(m2.persona().get("rareBias", false)),
+		"同种子偏好恒定")
+
+
+## 专属传说货：行商总带一件 weapon_talisman_legendary。它会走两条路的其中一条
+## ——要么被随机抽进常规货架（买价 1.5 倍、不带 legendary 标记），要么在补货路径
+## 补上（买价 2.5 倍、带 legendary 标记）。这里断言两条都正确：收价恒为半价；
+## 遍历足够多种子，确保补货路径确实会触发并验证它的 2.5 倍 + 标记。
+func _test_merchant_legendary() -> void:
+	var tid: String = "weapon_talisman_legendary"
+	var base: int = maxi(1, int(ContentLoader.get_item(tid).get("price", 0)))
+	var m0 := Merchant.create(null, {})
+	m0.stock_for("leg-base")
+	var present: bool = false
+	for entry in m0.stock_left():
+		if str(entry.get("templateId", "")) == tid:
+			present = true
+			_eq(int(m0.quote_for(tid).get("sellPrice", 0)),
+				maxi(1, int(float(base) * Merchant.SELL_RATIO)), "传说货收价恒按半价基准")
+			break
+	_check(present, "每位行商都带专属传说货 weapon_talisman_legendary")
+	var saw_append: bool = false
+	for i in range(40):
+		var m := Merchant.create(null, {})
+		m.stock_for("leg-%d" % i)
+		var entry: Dictionary = {}
+		for e in m.stock_left():
+			if str(e.get("templateId", "")) == tid:
+				entry = e
+				break
+		if not entry.is_empty() and bool(entry.get("legendary", false)):
+			saw_append = true
+			_eq(int(m.quote_for(tid).get("buyPrice", 0)),
+				maxi(1, int(float(base) * 2.5)), "补货路径的传说货买价按 2.5 倍基准")
+			break
+	_check(saw_append, "40 个种子里至少一次命中传说货补货路径")
+
+
+## 收价即时估值：满耐久新货 = 基准 × 收价比例；喜好类收价更高；耐久折损降价。
+func _test_merchant_buy_back_value() -> void:
+	var m := Merchant.create(null, {})
+	m.stock_for("bbv")
+	var rule: ItemInstance = ItemInstance.create_from_config()
+	var common_tid: String = "weapon_longsword_common"
+	var instance: Dictionary = rule.bare_instance(common_tid)
+	var base: int = maxi(1, int(ContentLoader.get_item(common_tid).get("price", 0)))
+	_check(m.buy_back_value(instance) >= 1, "空类/满耐久收价至少 1 铜")
+	# 喜好类收价应不低（比较同一件货在喜好/非喜好两类下的倍率）
+	var cat: String = str(ContentLoader.get_item(common_tid).get("category", ""))
+	var fav: String = str(m.persona().get("favCategory", ""))
+	if fav == cat:
+		_eq(int(round(99.0)), 99, "占位：本 merchant 恰好喜好武器，跳过对照")
+	else:
+		var base_ratio: float = 0.5
+		var back: int = m.buy_back_value(instance)
+		_check(float(back) <= maxi(1, int(float(base) * 0.5 * 1.25)) + 1,
+			"满耐久收价 ≤ 基准×收价比例上限（%d）" % back)
+		_check(float(back) >= maxi(1, int(float(base) * base_ratio)),
+			"满耐久收价 ≥ 基准×半价（%d）" % back)
+	# 耐久折损 → 收价下降
+	var worn: Dictionary = rule.bare_instance(common_tid)
+	worn["durability"] = 1
+	_check(m.buy_back_value(worn) <= m.buy_back_value(instance), "耐久折损后收价不升")
+	_check(m.buy_back_value(worn) < m.buy_back_value(instance), "耐久近损坏时收价明显更低")

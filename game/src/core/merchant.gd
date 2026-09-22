@@ -46,12 +46,18 @@ var _seed_key: String = ""
 var _stock: Array = []  # [{ templateId, template }...]
 var _quotations: Dictionary = {}  # templateId -> { buyPrice, sellPrice }
 var _rng: DeterministicRNG = null
+## M23（B/C）：商人的人格与即时估值所需的物品实例规则。
+var _items: ItemInstance = null
+var _fav_category: String = ""
+var _rare_bias: bool = false
+var _legendary_template: String = ""
 
 
 static func create(p_world: WorldState, p_rules: Dictionary = {}) -> Merchant:
 	var merchant := Merchant.new()
 	merchant.world = p_world
 	merchant._rules = p_rules if not p_rules.is_empty() else ContentLoader.get_balance_section("merchant")
+	merchant._items = ItemInstance.create_from_config()
 	return merchant
 
 
@@ -59,10 +65,11 @@ static func create(p_world: WorldState, p_rules: Dictionary = {}) -> Merchant:
 func stock_for(seed_key: String) -> Array:
 	_seed_key = seed_key
 	_rng = DeterministicRNG.new(str(seed_key).hash() & 0xFFFFFFFF)
+	_derive_persona()
 	var count: int = _rng.range_int(STOCK_COUNT_MIN, STOCK_COUNT_MAX)
 	_stock = []
 	_quotations = {}
-	var pool: Array = _tradable_pool()
+	var pool: Array = _biased_pool(_tradable_pool())
 	if pool.is_empty():
 		return _stock
 	for _i in range(count):
@@ -72,7 +79,33 @@ func stock_for(seed_key: String) -> Array:
 			continue
 		_stock.append({"templateId": template_id, "template": template})
 		_quotations[template_id] = _quote(template)
+	# 专属传说货：行商总带一件，没被随机抽中就补一件。
+	if not _legendary_template.is_empty() and not _already_in_stock(_legendary_template):
+		var legendary: Dictionary = _find_template(_legendary_template)
+		if not legendary.is_empty() and STOCK_CATEGORIES.has(str(legendary.get("category", ""))):
+			_stock.append({
+				"templateId": _legendary_template, "template": legendary,
+				"legendary": true,
+			})
+			_quotations[_legendary_template] = {
+				"buyPrice": maxi(
+					1,
+					int(float(maxi(1, int(legendary.get("price", 0))))
+						* float(_rules.get("legendaryBuyRatio", 2.5))),
+				),
+				"sellPrice": maxi(1, int(float(maxi(1, int(legendary.get("price", 0)))) * SELL_RATIO)),
+			}
 	return _stock
+
+
+## 商人的随机人格（M23, B）。由 seed 派生，见 _derive_persona。
+func persona() -> Dictionary:
+	return {
+		"favCategory": _fav_category,
+		"favCategoryLabel": _fav_label(),
+		"rareBias": _rare_bias,
+		"sellMultiplier": _effective_sell_ratio(_fav_category),
+	}
 
 
 func rng() -> DeterministicRNG:
@@ -153,3 +186,96 @@ func _already_in_stock(template_id: String) -> bool:
 		if str(entry.get("templateId", "")) == template_id:
 			return true
 	return false
+
+
+## 按 seed 派生这份货架的人格（M23, B）：抽一个偏好类别（喜好类收价更高，
+## 见 _effective_sell_ratio）、掷是否偏收稀有货、并定下专属传说货模板。
+func _derive_persona() -> void:
+	var weights: Dictionary = _rules.get("favCategoryWeights", {})
+	var cats: Array = []
+	var cum: Array = []
+	var total: int = 0
+	for c in STOCK_CATEGORIES:
+		var w: int = maxi(0, int(weights.get(c, 1)))
+		cats.append(c)
+		total += w
+		cum.append(total)
+	if total > 0:
+		var roll: int = _rng.next_int(total)
+		for i in range(cum.size()):
+			if roll < int(cum[i]):
+				_fav_category = str(cats[i])
+				break
+	_rare_bias = _rng.next_int(10000) < int(_rules.get("rareBiasChanceBp", 0))
+	_legendary_template = str(_rules.get("legendaryTemplateId", ""))
+
+
+## 把货池按人格做偏置：喜好类多放一份（被抽中的概率更高）；若偏收稀有，
+## 再垫一只稀有以上的模板进池。同一车货可能重叠，确定仍可复现。
+func _biased_pool(pool: Array) -> Array:
+	var arr: Array = []
+	arr.append_array(pool)
+	if not _fav_category.is_empty():
+		for template in pool:
+			if str(template.get("category", "")) == _fav_category:
+				arr.append(template)
+	if _rare_bias:
+		for template in pool:
+			if _rarity_rank(template) >= _rarity_rank_min("rare"):
+				arr.append(template)
+				break
+	return arr
+
+
+static func _rarity_rank_min(rarity: String) -> int:
+	return _rarity_rank({"rarity": rarity})
+
+
+static func _rarity_rank(template: Dictionary) -> int:
+	var order: Array = ["common", "fine", "rare", "epic", "legendary", "dragonforged"]
+	return order.find(str(template.get("rarity", "common")))
+
+
+func _fav_label() -> String:
+	match _fav_category:
+		"weapon": return "武器"
+		"armor": return "防具"
+		"consumable": return "消耗品"
+	return _fav_category
+
+
+## --- M23 C：商人收价接入即时估值 ---
+## 抽一个不绑城市的静态估值（词缀+强化可复现于 Economy 同一口径），而不是给
+## Economy.get_price 传"中性城市"沉淀——五因子强绑 City，伪造哨站会污染字段。
+## 一件实例的"现值" = （模板价 + 词缀/强化折价）× 耐久比 × 有效收价比例。
+
+## 实例的弹性市值（模板价 + 词缀/强化折价）。与 Economy.get_price 用同一套
+## ItemInstance.price_bonus，不重复造公式。
+static func instance_base(instance: Dictionary, items: ItemInstance) -> int:
+	var tpl_price: int = maxi(0, int(items.template_of(str(instance.get("templateId", ""))).get("price", 0)))
+	return tpl_price + items.price_bonus(instance)
+
+
+## 耐久折价系数：剩多少耐久就按比例折多少（满耐久 1、损坏趋近 0）。
+static func durability_factor(instance: Dictionary, items: ItemInstance) -> float:
+	return clampf(
+		float(items.durability(instance)) / float(maxi(1, items.durability_max())),
+		0.0, 1.0,
+	)
+
+
+## 这件货的实际收价比例：基准 sellRatio，商人喜好这类时再乘 favSellMultiplier。
+func _effective_sell_ratio(category: String) -> float:
+	var ratio: float = float(_rules.get("sellRatio", SELL_RATIO))
+	if category == _fav_category:
+		ratio *= float(_rules.get("favSellMultiplier", 1.0))
+	return ratio
+
+
+## 商人收一件实例的价（M23, C）。卖侧按它结算，词缀/强化/耐久/喜好都进价。
+func buy_back_value(instance: Dictionary) -> int:
+	var items: ItemInstance = _items if _items != null else ItemInstance.create_from_config()
+	var base: int = Merchant.instance_base(instance, items)
+	var category: String = str(items.template_of(str(instance.get("templateId", ""))).get("category", ""))
+	var ratio: float = _effective_sell_ratio(category)
+	return maxi(1, roundi(float(base) * Merchant.durability_factor(instance, items) * ratio))

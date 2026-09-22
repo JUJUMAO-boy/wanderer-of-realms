@@ -218,7 +218,15 @@
     "_comment_enemyCountPerDepth": "每层敌人数量 = 保底 + 深度区间缩放。深度越大裂得越多，但保底至少一个让人永远有对手。",
     "enemyBase": 1,
     "enemyPerDepth": 1,
-    "enemyPerDepthDivisor": 6
+    "enemyPerDepthDivisor": 6,
+    "_comment_theme": "副本主题层（M23, A）：每 every 层出一次特殊层（第 every/2×every... 层）。主题只加文本与宝箱/敌人数量倍率，不改几何（walkable/step/连通性都不受影响）。themes 每条给显示名与是否清怪后补给，具体结构由 Dungeon 规则层消费（Dungeon.theme_for）。",
+    "themeEvery": 5,
+    "themeTreasureMult": 1.5,
+    "themeEnemyMult": 1.2,
+    "themes": [
+      { "id": "outpost", "label": "小镇哨站", "hasSupply": true },
+      { "id": "treasure_room", "label": "宝藏房", "hasSupply": false }
+    ]
   },
   "merchant": {
     "_comment": "游方商人（M21 地图商人奇遇）。行商不隶属任何一座城，野外交互有概率撞见，就地开一架车的买卖。与商铺（Economy）的区别是它没有城市上下文——价只由入货与跑腿决定，不该被玩家脚下的城勾兑，所以这里只放这类初值。",
@@ -227,7 +235,20 @@
     "_comment_buyRatio": "商人卖给你的价 = 基准价 × buyRatio。比商铺里的公式价略高（少了一堆城市因子的折扣），但胜在随遇随买、不用专程进城。",
     "buyRatio": 1.5,
     "stockCountMin": 3,
-    "stockCountMax": 6
+    "stockCountMax": 6,
+    "_comment_persona": "商人按 seed 有人格（M23, B）：喜好某一类货（收这类时给好价）、可能偏爱收稀有货，并常备一只专属传说货。收价接即时估值（M23, C）：一件实例的现值 = （模板价 + 词缀/强化折价）× 耐久比 × 有效收价比例，其中词缀/强化折价复用 ItemInstance.price_bonus，耐久按剩余比例线性折价。",
+    "_comment_sellRatio": "商人收价基准比例（非喜好类）。与旧口径一致保持 0.5：收价减半是行商压价的本事。",
+    "sellRatio": 0.5,
+    "_comment_favCategoryWeights": "喜好类的权重表（按 Merchant.STOCK_CATEGORIES 枚举武器/防具/消耗品）。等权时每个商人随机好一样。",
+    "favCategoryWeights": { "weapon": 1, "armor": 1, "consumable": 1 },
+    "_comment_rareBiasChanceBp": "商人偏好收稀有货的概率，基点：为真时货架里会多垫一只稀有档模板，更常收到值钱的货。",
+    "rareBiasChanceBp": 3000,
+    "_comment_favSellMultiplier": "收喜好这一类货时，收价比例再乘的倍数（1.25 打 8 折的利好）。喜好的货给更好的价，商人格人从此有手感。",
+    "favSellMultiplier": 1.25,
+    "_comment_legendaryTemplateId": "专用传说货模板（每车必有一件）。模板本身在 items.json（merchantLegendary 标记、category 须落在 Merchant.STOCK_CATEGORIES）。",
+    "legendaryTemplateId": "weapon_talisman_legendary",
+    "_comment_legendaryBuyRatio": "传说货的买入溢价：基准价 × legendaryBuyRatio。传说不该烂大街，价要压得住…但更贵更值得。",
+    "legendaryBuyRatio": 2.5
   },
   "quests": {
     "_comment": "《世界模拟量化规则》10.2 / 10.3 与 6 章。委托板不落盘：它由城市六维与 worldFlags 推导（QuestBoard），所以「城市状态越差、对应类型的委托越多」是结构上的必然，而不是定期刷新的结果。",

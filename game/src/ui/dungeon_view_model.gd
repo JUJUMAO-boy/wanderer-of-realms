@@ -52,6 +52,7 @@ static func build(layout: Dictionary, player: Vector2i, rect: Rect2, labels: Dic
 			"rect": cell_rect(origin, int(e["x"]), int(e["y"])),
 		})
 
+	var theme: Dictionary = layout.get("theme", {})
 	return {
 		"layout": layout,
 		"origin": origin,
@@ -68,4 +69,7 @@ static func build(layout: Dictionary, player: Vector2i, rect: Rect2, labels: Dic
 		"depth": int(layout.get("depth", 0)),
 		"depthLabel": "第 %d 层" % (int(layout.get("depth", 0)) + 1),
 		"depthHint": str(labels.get("depthHint", "越深越凶，石头下藏着更怪的东西")),
+		"theme": theme,
+		"themeLabel": str(theme.get("label", "")),
+		"themeHasSupply": bool(theme.get("hasSupply", false)),
 	}

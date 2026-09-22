@@ -55,6 +55,7 @@ static func _build_buy(
 			"label": _name(template, template_id),
 			"rarityLabel": _rarity(template),
 			"categoryLabel": _category(template),
+			"legendary": bool(entry.get("legendary", false)),
 			"detail": AvatarViewModel.item_detail(template),
 			"price": buy,
 			"priceText": AvatarViewModel.money_label(buy),
@@ -63,7 +64,8 @@ static func _build_buy(
 				AvatarViewModel.money_label(buy - money)
 			),
 		})
-	return _finish(merchant, SIDE_BUY, rows, cursor, money, "这辆车上摆的货就在这里。买走的会空出来，卖回的行商再上车。")
+	return _finish(merchant, SIDE_BUY, rows, cursor, money,
+		_rich_buy_hint(merchant, "这辆车上摆的货就在这里。买走的会空出来，卖回的行商再上车。"))
 
 
 ## 卖侧：背包里的每一件（同名多件各占一行，点的是具体那一件）。
@@ -74,15 +76,14 @@ static func _build_sell(
 	var rules: ItemInstance = ItemInstance.create_from_config()
 	var rows: Array = []
 	if avatar != null:
-		var quotations: Dictionary = merchant.quotations()
 		for instance_id in avatar.inventory:
 			var instance: Dictionary = avatar.item_instances.get(instance_id, {})
 			var template_id: String = str(instance.get("templateId", ""))
 			var template: Dictionary = _template(templates, template_id)
 			if template.is_empty():
 				continue
-			var sell: int = int(quotations.get(template_id, {}).get("sellPrice",
-				maxi(1, int(float(int(template.get("price", 0))) * Merchant.SELL_RATIO))))
+			# 收价接即时估值（M23, C）：词缀/强化/耐久/喜好都进价。
+			var sell: int = merchant.buy_back_value(instance)
 			var row: Dictionary = AvatarViewModel.instance_info(rules, instance, template)
 			row["kind"] = ROW_KIND_HELD
 			row["instanceId"] = str(instance_id)
@@ -132,7 +133,32 @@ static func _finish(
 		"canTrade": blocked.is_empty() and not selected.is_empty(),
 		"blockedReason": blocked,
 		"hint": hint,
+		"personaLabel": _persona_label(merchant),
 	}
+
+
+## 买侧提示附上这位行商的人格（喜好类、偏爱稀有），让抽象数值落成一句话。
+static func _rich_buy_hint(merchant: Merchant, base: String) -> String:
+	var extra: String = _persona_label(merchant)
+	if extra.is_empty():
+		return base
+	return "%s\n这位行商：%s。" % [base, extra]
+
+
+## 一位行商的人格一句话（M23, B）。面板标题旁也用它。
+static func _persona_label(merchant: Merchant) -> String:
+	if merchant == null:
+		return ""
+	var p: Dictionary = merchant.persona()
+	var parts: Array = []
+	var fav: String = str(p.get("favCategoryLabel", ""))
+	if not fav.is_empty():
+		parts.append("好收%s" % fav)
+	if bool(p.get("rareBias", false)):
+		parts.append("偏爱值钱货")
+	if parts.is_empty():
+		return ""
+	return "，".join(PackedStringArray(parts))
 
 
 ## 右列：这件货是谁、多少钱。

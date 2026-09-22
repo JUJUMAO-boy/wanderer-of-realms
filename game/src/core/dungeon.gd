@@ -35,6 +35,44 @@ const ENEMY_MAX: int = 4
 ## 最大可下探的层数（技术实现上的钳制；设计上"越深越凶"由调用方据此加深敌群）。
 const MAX_DEPTH: int = 20
 
+## 特殊主题层每隔几层出一档（M23）：实际下探到的第 5/10/15... 层为特殊层。
+## 具体数值由 opts.theme.every 控制，此常量只作缺省。
+const THEME_EVERY: int = 5
+
+
+## 派生一层副本的主题（M23, A）。主题**只改文本与宝箱/敌人数量倍率，不改几何**——
+## walkable/step/连通性都不受它影响（楼层结构与外圈墙/岩屑照旧，宝箱与敌人仍是
+## 可站的空格）。theme_cfg 为空时什么也不改。
+##   触发：`(depth + 1) % every == 0`（第 5/10/15... 层）；
+##   分组：g = (depth+1)/every - 1（0,1,2,...），用 `(seed_key.hash() ^ g*16777619)`
+##         派生独立随机源从 themes 里挑一条 → 同种子同档位恒定、不同档位各不相同。
+## 返回：{ hasTheme, id, label, hasSupply, treasureMult, enemyMult }
+static func theme_for(seed_key: String, depth: int, theme_cfg: Dictionary) -> Dictionary:
+	var themes: Array = theme_cfg.get("themes", [])
+	var every: int = maxi(1, int(theme_cfg.get("every", THEME_EVERY)))
+	var flat: Dictionary = {
+		"hasTheme": false, "id": "", "label": "", "hasSupply": false,
+		"treasureMult": 1.0, "enemyMult": 1.0,
+	}
+	if themes.is_empty():
+		return flat
+	var d: int = maxi(0, depth)
+	if (d + 1) % every != 0:
+		return flat
+	var g: int = (d + 1) / every - 1
+	var g_rng: DeterministicRNG = DeterministicRNG.new(
+		(str(seed_key).hash() ^ (g * 16777619)) & 0xFFFFFFFF
+	)
+	var t: Dictionary = themes[g_rng.next_int(themes.size())]
+	return {
+		"hasTheme": true,
+		"id": str(t.get("id", "")),
+		"label": str(t.get("label", "")),
+		"hasSupply": bool(t.get("hasSupply", false)),
+		"treasureMult": float(theme_cfg.get("treasureMult", 1.0)),
+		"enemyMult": float(theme_cfg.get("enemyMult", 1.0)),
+	}
+
 
 ## 生成一层副本结构。输入：
 ##   seed_key  派生随机用的种子键（通常是"世界种子 ^ 奇遇序号"的字符串）
@@ -60,6 +98,7 @@ static func layout(seed_key: String, depth: int, opts: Dictionary = {}) -> Dicti
 		"w": WIDTH, "h": HEIGHT,
 		"spawn": SPAWN, "exit": EXIT, "depth": d,
 		"blocked": {}, "treasures": [], "enemies": [],
+		"theme": theme_for(seed_key, d, opts.get("theme", {})),
 	}
 	# 外圈墙：整幅地图四周一圈。
 	for x in range(WIDTH):
@@ -75,12 +114,21 @@ static func layout(seed_key: String, depth: int, opts: Dictionary = {}) -> Dicti
 		_place_rubble(out["blocked"], source)
 
 	# 宝箱与敌人：只落在可站的空地上，绝不落在墙/出口/出生点上。
-	var treasure_count: int = source.range_int(treasure_min, treasure_max)
+	# 特殊主题层按倍率放大数量，并钳制到不低于下限（特殊层也从不会变成 0 件）。
+	var treasure_count: int = maxi(
+		treasure_min,
+		roundi(float(source.range_int(treasure_min, treasure_max))
+			* float(out["theme"].get("treasureMult", 1.0))),
+	)
 	for i in range(treasure_count):
 		var cell: Vector2i = _free_open_cell(out["blocked"], source)
 		out["treasures"].append({"x": cell.x, "y": cell.y})
 
-	var enemy_count: int = source.range_int(enemy_min, enemy_max)
+	var enemy_count: int = maxi(
+		enemy_min,
+		roundi(float(source.range_int(enemy_min, enemy_max))
+			* float(out["theme"].get("enemyMult", 1.0))),
+	)
 	for i in range(enemy_count):
 		var cell: Vector2i = _free_open_cell(out["blocked"], source, out)
 		out["enemies"].append({"x": cell.x, "y": cell.y})

@@ -309,6 +309,8 @@ var _dungeon_seq: int = 0
 var _dungeon_combat: bool = false
 ## 副本宝箱内容（templateId 数组，与 layout.treasures 对齐）；下楼层时重新生成。
 var _dungeon_loot: Array = []
+## 当前层是不是补给型主题（小镇哨站）：把这一层清完可以在哨站歇脚回满一口气。
+var _dungeon_supply_ready: bool = false
 
 # 游方商人（M21：地图商人奇遇）
 var _merchant_view: Dictionary = {}
@@ -3832,8 +3834,11 @@ func _enter_dungeon() -> void:
 	_dungeon_depth = 0
 	_dungeon_player = Dungeon.SPAWN
 	_dungeon_combat = false
-	_dungeon_loot = _dungeon_roll_loot(Dungeon.layout(
-		"dungeon-%04d" % _dungeon_seq, _dungeon_depth), _dungeon_rng())
+	var dungeon_theme: Dictionary = _dungeon_theme_cfg()
+	_dungeon = Dungeon.layout("dungeon-%04d" % _dungeon_seq, _dungeon_depth,
+		{"theme": dungeon_theme})
+	_dungeon_loot = _dungeon_roll_loot(_dungeon, _dungeon_rng())
+	_dungeon_supply_ready = bool(_dungeon.get("theme", {}).get("hasSupply", false))
 	_switch_view(VIEW_DUNGEON)
 	_status.text = "你发现了一道向下延伸的入口，决定进去看看。按回车触碰出口可下潜，越深越凶。"
 
@@ -3842,6 +3847,19 @@ func _enter_dungeon() -> void:
 ## 但每次新发现都是新布局（序号递增）。
 func _dungeon_rng() -> DeterministicRNG:
 	return DeterministicRNG.new((_world.world_seed ^ (_dungeon_seq * 733977134)) & 0xFFFFFFFF)
+
+
+## 组装主题配置（M23, A）：把 dungeon 段的 themeEvery / themeTreasureMult /
+## themeEnemyMult / themes 映射成 Dungeon.theme_for 认的 every / treasureMult /
+## enemyMult / themes。满了 themeEvery 层才触发，回非主题层取不到键也不报错。
+func _dungeon_theme_cfg() -> Dictionary:
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	return {
+		"every": maxi(1, int(rules.get("themeEvery", 5))),
+		"treasureMult": float(rules.get("themeTreasureMult", 1.5)),
+		"enemyMult": float(rules.get("themeEnemyMult", 1.2)),
+		"themes": (rules.get("themes", []) as Array).duplicate(),
+	}
 
 
 ## 为某一层生成与宝箱数量等长的战利品清单（templateId 数组）。
@@ -4128,6 +4146,9 @@ func _resolve_dungeon_combat() -> void:
 	_dungeon_combat = false
 	if won:
 		_status.text = "你打退了守在这里的东西（第 %d 层）。" % (_dungeon_depth + 1)
+		# 补给型主题（小镇哨站）：这一层的凶物都清光了，就在哨站歇脚回满一口气。
+		if _dungeon_supply_ready and _dungeon.get("enemies", [] as Array).is_empty():
+			_status.text = "这一层的哨站守住了防线，你在营地里歇了歇脚，精神完全恢复。"
 		_switch_view(VIEW_DUNGEON)
 	else:
 		_status.text = "你在地底失去了知觉，醒来时已回到地面。"
@@ -4154,8 +4175,10 @@ func _dungeon_descend() -> void:
 		return
 	_dungeon_depth += 1
 	_dungeon_player = Dungeon.SPAWN
-	_dungeon_loot = _dungeon_roll_loot(Dungeon.layout(
-		"dungeon-%04d" % _dungeon_seq, _dungeon_depth), _dungeon_rng())
+	_dungeon = Dungeon.layout("dungeon-%04d" % _dungeon_seq, _dungeon_depth,
+		{"theme": _dungeon_theme_cfg()})
+	_dungeon_loot = _dungeon_roll_loot(_dungeon, _dungeon_rng())
+	_dungeon_supply_ready = bool(_dungeon.get("theme", {}).get("hasSupply", false))
 	_switch_view(VIEW_DUNGEON)
 	_status.text = "你下到第 %d 层。地面上的光已经照不进来了。" % (_dungeon_depth + 1)
 
@@ -4168,6 +4191,7 @@ func _leave_dungeon() -> void:
 	_dungeon_depth = 0
 	_dungeon_combat = false
 	_dungeon_loot = []
+	_dungeon_supply_ready = false
 	_switch_view(VIEW_MAP)
 
 
