@@ -244,6 +244,13 @@ var _hidden_cursor: int = 0
 ## 上一次推进检查的月份。推进过夜那一下判一次（幸运类），同月反复推进不再判。
 var _hidden_last_advance_month: int = -1
 
+# --- 祈祷（M25/M-A）---
+# 会话级、不落盘，复用 VIEW_EVENT 的抉择形态（同 D-90 那条惯例）：B 键开祈祷
+# 列表 → 选一位神 → 回车结算恩惠/神罚 → 记一条事件流 → 回地图。神不落存档。
+var _pray_active: bool = false
+var _pray_view: Dictionary = {}
+var _pray_cursor: int = 0
+
 # 商铺与黑市（M8）。界面只持有"在看哪座城、买还是卖、哪条渠道、光标在哪"——
 # 价格与货架每次都按当前城市状态重算，不落盘（物价随城长，存下来就会过期）。
 var _trade_city_id: String = ""
@@ -575,7 +582,9 @@ func _refresh() -> void:
 		VIEW_QUEST:
 			_refresh_quest()
 		VIEW_EVENT:
-			if not _hidden_event.is_empty():
+			if _pray_active:
+				_refresh_pray()
+			elif not _hidden_event.is_empty():
 				_refresh_hidden()
 			else:
 				_refresh_event()
@@ -2853,6 +2862,58 @@ func _encounter_advance(steps: int) -> void:
 	_merchant_discover_check()
 
 
+# --- 昼夜·天候（M25/M-A）---
+#
+# 天候由世界种子 + 当天派生，纯确定性、不落盘（Weather.entry_at）。图上不新增
+# 常驻面板：风暴会在地图行走与遭遇时露出——遭遇时对手被 Weather.enemy_mult 放大，
+# 行走收尾那句状态把"该不该多走几步"念给你听。
+
+## 当前这一格命中的天候。地图外踩不到天候，给晴和兜底。
+func _current_weather() -> Dictionary:
+	if _world == null:
+		return Weather.entry_at(0, 0, ContentLoader.get_weathers())
+	var day: int = Clock.now().day
+	return Weather.entry_at(int(_world.world_seed), day, ContentLoader.get_weathers())
+
+
+## 天候敌强：城里的治安偶遇不吹风，路/荒野才吃风暴倍率。对已落定的一场遭遇，
+## 把对手的 hp / 攻击整体放大到 enemyMult。倍率钳 ≥1，所以至少是原地踏步。
+func _apply_weather_boost(context: String) -> void:
+	if context == EncounterSystem.CONTEXT_CITY:
+		return
+	if _encounter.is_empty():
+		return
+	var mult: float = Weather.enemy_mult(_current_weather())
+	if mult <= 1.001:
+		return
+	var opponents: Array = _encounter.get("opponents", [])
+	for opponent in opponents:
+		if not (opponent is Dictionary):
+			continue
+		var hp: int = int(opponent.get("hp", 0))
+		opponent["maxHp"] = int(round(float(hp) * mult))
+		opponent["hp"] = int(round(float(hp) * mult))
+		if opponent.has("attack"):
+			opponent["attack"] = int(round(float(opponent["attack"]) * mult))
+
+
+## 行走收尾照天候补一句"这段路走得久些"，并实打实多推进 movementCost 个小时
+## （风日赶路就是比晴日慢）。只能在野外表态；城里没有天这回事。
+func _apply_weather_walk(city_id: String) -> void:
+	var weather: Dictionary = _current_weather()
+	if not city_id.is_empty() or str(weather.get("id", "")) == "clear":
+		return
+	var wcost: int = Weather.movement_cost(weather)
+	var label: String = str(weather.get("label", ""))
+	if Weather.is_night(Clock.now().hour):
+		_status.text += "（入夜了）"
+	if wcost > 0:
+		_advance_ticks(wcost)
+		_status.text += "（%s，多耗了 %d 小时脚程）" % [label, wcost]
+	elif not _status.text.is_empty():
+		_status.text += "（今日%s）" % label
+
+
 ## 玩家现在这一格上压着哪座可见实体。窝点按当前游荡桶取"此刻的位置"，
 ## 遗构按固定座标取。返回 { kind, node } 或 {}。
 func _seen_node_at(pos: Vector2i) -> Dictionary:
@@ -2930,6 +2991,7 @@ func _encounter_check(context: String, city_id: String, force: bool) -> void:
 			_refresh()
 		return
 	_encounter = result["encounter"]
+	_apply_weather_boost(context)
 	_encounter_cursor = 0
 	_switch_view(VIEW_ENCOUNTER)
 	_status.text = "遇上「%s」——迎战、绕开、交涉，总得选一个。" % str(_encounter.get("title", ""))
@@ -3257,6 +3319,99 @@ func _mark_note(mark: String) -> String:
 	return "命运的痕迹"
 
 
+# --- 祈祷（M25/M-A）---
+#
+# 会话级、不落盘、复用 VIEW_EVENT 的抉择形态（同 D-90 那条惯例）。P 键在地图
+# 上开祈祷：一阵致敬四位神，回车任选一位即结算恩惠/神罚，记一条事件流回地图。
+# 神不落存档——每次打开都用当前善恶现算虔诚。
+
+func _open_prayer() -> void:
+	if _world == null or _world.avatar == null:
+		return
+	_pray_active = true
+	_pray_cursor = 0
+	_switch_view(VIEW_EVENT)
+	_status.text = "你跪下，向诸神求一字回音。↑↓ 选神，回车落地。ESC 回地图。"
+	_refresh()
+
+
+func _refresh_pray() -> void:
+	if not _pray_active or _world == null or _world.avatar == null:
+		_pray_view = {}
+		return
+	_pray_view = PrayerViewModel.build(
+		ContentLoader.get_gods(), _world.avatar.karma, _table("cityNames")
+	)
+
+
+func _pray_input(key_event: InputEventKey) -> void:
+	if _pray_view.is_empty():
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_pray_cursor = maxi(0, _pray_cursor - 1)
+			_refresh()
+		KEY_DOWN, KEY_S:
+			_pray_cursor = mini(_pray_view.get("branches", []).size() - 1, _pray_cursor + 1)
+			_refresh()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_pray_confirm()
+		KEY_ESCAPE, KEY_T:
+			_pray_cancel()
+
+
+func _pray_click(point: Vector2) -> void:
+	var hit: Dictionary = EventPanel.hit_test(_pray_view, _content_rect(), point)
+	match str(hit.get("kind", "")):
+		"button":
+			_pray_cancel()
+		"branch":
+			_pray_cursor = int(hit["index"])
+			_pray_confirm()
+
+
+## 回车。选光标所落的神，把这次祈祷结清。
+func _pray_confirm() -> void:
+	var branches: Array = _pray_view.get("branches", [])
+	if branches.is_empty():
+		return
+	var branch: Dictionary = branches[clampi(_pray_cursor, 0, branches.size() - 1)]
+	var god: Dictionary = ContentLoader.get_god(str(branch.get("godId", "")))
+	if god.is_empty():
+		_status.text = "这位神不在此处。"
+		_refresh()
+		return
+	var result: Dictionary = GodBlessing.pray_result(
+		god, _world.avatar.karma, int(_world.world_seed)
+	)
+	_pray_active = false
+	_pray_view = {}
+	var notice: String
+	if bool(result.get("cursed", false)):
+		notice = "向「%s」祈祷，它降下神罚：%s" % [
+			str(god.get("name", "")), str(result.get("penalty", ""))]
+		_status.text = "「%s」的注视变得冰冷：%s" % [
+			str(god.get("name", "")), str(result.get("penalty", ""))]
+	elif bool(result.get("ok", false)):
+		notice = "向「%s」祈祷，得赐一档恩惠：%s" % [
+			str(god.get("name", "")), str(result.get("effect", ""))]
+		_status.text = "「%s」垂听，恩泽落身：%s" % [
+			str(god.get("name", "")), str(result.get("effect", ""))]
+	else:
+		notice = "向「%s」祈祷，神未垂听（代价：%s）" % [
+			str(god.get("name", "")), str(result.get("cost", ""))]
+		_status.text = "「%s」没有回应你。（代价：%s）" % [
+			str(god.get("name", "")), str(result.get("cost", ""))]
+	_note_events([{"month": Clock.total_months(), "text": notice}])
+	_switch_view(VIEW_MAP)
+
+
+func _pray_cancel() -> void:
+	_pray_active = false
+	_pray_view = {}
+	_switch_view(VIEW_MAP)
+
+
 func _percent_bp(bp: int) -> int:
 	return int(round(float(bp) / 100.0))
 
@@ -3368,7 +3523,9 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 		VIEW_QUEST:
 			_quest_click(event.position)
 		VIEW_EVENT:
-			if not _hidden_event.is_empty():
+			if _pray_active:
+				_pray_click(event.position)
+			elif not _hidden_event.is_empty():
 				_hidden_click(event.position)
 			else:
 				_event_click(event.position)
@@ -3665,6 +3822,7 @@ func _report_walk_stop(steps: int) -> void:
 		here = "，这里是%s（再点一次看它的状态）" % str(_table("cityNames").get(city_id, city_id))
 	_status.text = "走了 %d 格，现在在 (%d, %d)%s。" % [steps, avatar.pos_x, avatar.pos_y, here]
 	_encounter_advance(steps)
+	_apply_weather_walk(city_id)
 	_refresh()
 
 
@@ -4492,7 +4650,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		VIEW_QUEST:
 			_quest_input(key_event)
 		VIEW_EVENT:
-			if not _hidden_event.is_empty():
+			if _pray_active:
+				_pray_input(key_event)
+			elif not _hidden_event.is_empty():
 				_hidden_input(key_event)
 			else:
 				_event_input(key_event)
@@ -4559,6 +4719,8 @@ func _handle_map_input(key_event: InputEventKey) -> void:
 			_enter_crafting()
 		KEY_F:
 			_gather_action()
+		KEY_P:
+			_open_prayer()
 		KEY_F5:
 			_save()
 		KEY_F9:
@@ -5189,7 +5351,7 @@ func _draw() -> void:
 			QuestPanel.draw(self, _quest_view, _content_rect(), _hover)
 		VIEW_EVENT:
 			EventPanel.draw(self,
-				_hidden_view if not _hidden_event.is_empty() else _event_view,
+				_pray_view if _pray_active else (_hidden_view if not _hidden_event.is_empty() else _event_view),
 				_content_rect(), _hover)
 		VIEW_TRADE:
 			TradePanel.draw(self, _trade_view, _content_rect(), _hover)

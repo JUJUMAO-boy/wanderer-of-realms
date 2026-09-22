@@ -1,0 +1,4 @@
+& "D:\toolllllll\godot\Godot_v4.7.2-stable_win64_console.exe" --path "c:\Users\YUJINYU\Desktop\侠客游\game"   按 Win 键，输入 powershell，回车
+或 Win + R，输入 powershell，回车
+或直接在文件夹（如 c:\Users\YUJINYU\Desktop\侠客游）地址栏输入 powershell 回车，会从该目录打开
+然后把这条命令粘进去：

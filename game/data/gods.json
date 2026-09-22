@@ -1,0 +1,60 @@
+{
+	"gods": [
+		{
+			"id": "zenith",
+			"name": "天衡之穹",
+			"title": "高悬的审判",
+			"domain": "秩序",
+			"sigil": "z",
+			"blessings": [
+				{ "threshold": 40, "effect": "行的正，就更少被夜里的手摸走东西。" },
+				{ "threshold": 70, "effect": "守序之人走夜路，脚下更稳。" },
+				{ "threshold": 90, "effect": "它把目光落在你身上，代价都明码标价。" }
+			],
+			"cost": "每次祈祷折一点沉眠",
+			"penalty": "若你行恶太多，它的注视会变成拷问。"
+		},
+		{
+			"id": "ember",
+			"name": "葬火之主",
+			"title": "烧掉一切账本",
+			"domain": "火焰",
+			"sigil": "e",
+			"blessings": [
+				{ "threshold": 30, "effect": "怒火淬进骨里，出手更重。" },
+				{ "threshold": 60, "effect": "火日时你的手更稳，风日时你更容易燃起。" },
+				{ "threshold": 85, "effect": "它点你的灯，从不问你借过什么。" }
+			],
+			"cost": "每次祈祷烧掉一点运气",
+			"penalty": "若你背叛了它的火，最先烧的是你。"
+		},
+		{
+			"id": "drift",
+			"name": "深航者",
+			"title": "永不靠岸的商帆",
+			"domain": "旅途与贸易",
+			"sigil": "d",
+			"blessings": [
+				{ "threshold": 35, "effect": "远路上的风声会为你让路。" },
+				{ "threshold": 65, "effect": "货比三家时，它替你多看了一眼秤。" },
+				{ "threshold": 88, "effect": "你走得越远，它越记得你。" }
+			],
+			"cost": "每次祈祷耗掉一段旅程",
+			"penalty": "若你中途折返，它会把你的路折断。"
+		},
+		{
+			"id": "morrow",
+			"name": "眠堤之母",
+			"title": "诸梦归处",
+			"domain": "沉眠与转世",
+			"sigil": "m",
+			"blessings": [
+				{ "threshold": 30, "effect": "梦做得安稳，醒时更清明。" },
+				{ "threshold": 62, "effect": "转世时，它替你多留一截旧路。" },
+				{ "threshold": 87, "effect": "死亡不再是终点，是它替你翻的一页。" }
+			],
+			"cost": "每次祈祷献上一点记忆",
+			"penalty": "若你拒绝睡去，它也会忘记你醒着。"
+		}
+	]
+}

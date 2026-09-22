@@ -231,6 +231,14 @@ func run_all() -> int:
 	_test_world_seen_placement()
 	_test_world_seen_lair()
 	_test_world_seen_words()
+	print("=== M25 神系与昼夜天候 ===")
+	_test_gods_config()
+	_test_god_blessing_devotion()
+	_test_god_blessing_tier()
+	_test_god_blessing_pray()
+	_test_weather_entry()
+	_test_weather_night_and_mult()
+	_test_weather_steal_interface()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -8237,3 +8245,117 @@ func _test_world_seen_words() -> void:
 		_check(words.size() <= danger, "危险度越高词条越多（≤ danger）")
 		for w in words:
 			_check(not str(w.get("label", "")).is_empty(), "词条都有名")
+
+# --- M25 神系与昼夜天候 ---
+
+## 神系配置（gods.json）：四神、每位都有名与三档恩惠。
+func _test_gods_config() -> void:
+	var gods: Array = ContentLoader.get_gods()
+	_eq(gods.size(), 4, "四神齐备")
+	for god in gods:
+		_check(not str(god.get("name", "")).is_empty(), "神都有名")
+		var blessings: Array = god.get("blessings", [])
+		_check(not blessings.is_empty(), "神都有恩惠")
+		for b in blessings:
+			_check(int(b.get("threshold", -1)) >= 0, "恩惠门槛 ≥0")
+			_check(not str(b.get("effect", "")).is_empty(), "恩惠都有说明")
+
+
+## 虔诚派生：善恶折成 0..100；同一神极性固定（善深则虔或恶深则虔，二者必居其一）。
+func _test_god_blessing_devotion() -> void:
+	var gods: Array = ContentLoader.get_gods()
+	_check(not gods.is_empty(), "有神可测")
+	if gods.is_empty():
+		return
+	var god: Dictionary = gods[0]
+	var d_high: int = GodBlessing.devotion_of(god, 100)
+	var d_low: int = GodBlessing.devotion_of(god, -100)
+	_check(d_high >= 0 and d_high <= 100, "善恶 100 → 虔诚在 0..100（%d）" % d_high)
+	_check(d_low >= 0 and d_low <= 100, "善恶 -100 → 虔诚在 0..100（%d）" % d_low)
+	_check(d_high != d_low, "极性方向确定、两端不相等")
+	_eq(GodBlessing.devotion_of(god, 100), GodBlessing.devotion_of(god, 100), "虔诚派生确定")
+
+
+## 档位映射：跨过一档门槛就升一档，满档不超过三档。
+func _test_god_blessing_tier() -> void:
+	var gods: Array = ContentLoader.get_gods()
+	_check(not gods.is_empty(), "有神可测")
+	if gods.is_empty():
+		return
+	var god: Dictionary = gods[0]
+	var blessings: Array = god.get("blessings", [])
+	_check(not blessings.is_empty(), "有恩惠门槛")
+	if blessings.is_empty():
+		return
+	_eq(GodBlessing.blessing_tier(god, -1), 0, "虔诚 0 无恩惠")
+	# 越过第一档门槛
+	var first := int(blessings[0].get("threshold", 1))
+	_check(GodBlessing.blessing_tier(god, first) >= 1, "跨过首档门槛升档")
+	_check(GodBlessing.blessing_tier(god, 100) <= blessings.size(), "顶格虔诚不越档")
+
+
+## 祈祷结算：确定性；恶到 -60 触发神罚且压住恩惠；善者高虔诚得赐。
+func _test_god_blessing_pray() -> void:
+	var gods: Array = ContentLoader.get_gods()
+	_check(not gods.is_empty(), "有神可测")
+	if gods.is_empty():
+		return
+	var god: Dictionary = gods[0]
+	var r1: Dictionary = GodBlessing.pray_result(god, 90, 7)
+	var r2: Dictionary = GodBlessing.pray_result(god, 90, 7)
+	_eq(r1, r2, "同种子同善恶祈祷结果确定")
+	var cursed: Dictionary = GodBlessing.pray_result(god, -70, 1)
+	_check(bool(cursed.get("cursed", false)), "善恶 -70 → 神罚")
+	_check(not bool(cursed.get("ok", false)), "神罚下压住恩惠")
+	var blessed: Dictionary = GodBlessing.pray_result(god, 90, 1)
+	if bool(blessed.get("ok", false)):
+		_check(not str(blessed.get("effect", "")).is_empty(), "得赐就有恩惠文案")
+
+
+## 天候派生：同种子同天确定；命中的必是既有天候或晴和兜底；空规则走兜底。
+func _test_weather_entry() -> void:
+	var rules: Array = ContentLoader.get_weathers()
+	_check(not rules.is_empty(), "天候表非空")
+	var ids: Array = []
+	for w in rules:
+		ids.append(str(w.get("id", "")))
+	ids.append("clear")
+	var a: Dictionary = Weather.entry_at(20260922, 15, rules)
+	var b: Dictionary = Weather.entry_at(20260922, 15, rules)
+	_eq(a, b, "同种子同天命中确定")
+	_check(ids.has(str(a.get("id", ""))), "命中必是既有天候或兜底")
+	_check(Weather.entry_at(5, 3, []).get("id", "") == "clear", "空规则 → 晴和兜底")
+
+
+## 昼夜窗口与天候数值钳制：is_night 边界、enemy_mult ≥1、movement_cost ≥0。
+func _test_weather_night_and_mult() -> void:
+	_check(not Weather.is_night(18), "18 点在昼")
+	_check(Weather.is_night(19), "19 点入夜")
+	_check(Weather.is_night(0), "0 点是夜")
+	_check(Weather.is_night(6), "6 点是夜")
+	_check(not Weather.is_night(7), "7 点破晓")
+	_check(Weather.is_night(23), "23 点是夜")
+	for w in ContentLoader.get_weathers():
+		_check(Weather.enemy_mult(w) >= 1.0, "天候敌强倍率 ≥1（%s）" % str(w.get("id", "")))
+		_check(Weather.movement_cost(w) >= 0, "天候移动代价 ≥0（%s）" % str(w.get("id", "")))
+	_eq(Weather.enemy_mult({"enemyMult": 0.5}), 1.0, "低于 1 的倍率钳到 1")
+	_eq(Weather.movement_cost({"movementCost": -3}), 0, "负移动代价钳到 0")
+
+
+## 夜间偷窃接口：同样善恶/幸运下夜里恒比白天好偷 +20；结果有界 ±50。
+func _test_weather_steal_interface() -> void:
+	var karma: int = 30
+	var luck: int = 20
+	for h in [19, 22, 0, 3]:
+		_check(Weather.is_night(h), "夜窗 %d" % h)
+		var n: int = Weather.night_steal_modifier(karma, luck, h)
+		var d: int = Weather.night_steal_modifier(karma, luck, 10)
+		_eq(n - d, 20, "夜比昼好偷 +20（%d 时）" % h)
+		_check(n >= -50 and n <= 50, "夜间修正有界 ±50")
+	# 善恶/幸运影响方向：恶增助偷、吉星助偷。
+	var evil: int = Weather.night_steal_modifier(-100, -100, 22)
+	var saint: int = Weather.night_steal_modifier(100, -100, 22)
+	_check(evil > saint, "恶比善更顺手")
+	var lucky: int = Weather.night_steal_modifier(-100, 100, 22)
+	var hapless: int = Weather.night_steal_modifier(-100, -100, 22)
+	_check(lucky > hapless, "吉星助偷")

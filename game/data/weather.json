@@ -1,0 +1,36 @@
+{
+	"weathers": [
+		{
+			"id": "clear",
+			"label": "晴和",
+			"windowDays": 4,
+			"movementCost": 0,
+			"enemyMult": 1.0,
+			"desc": "天好的时候，地上的人也会少些戾气。"
+		},
+		{
+			"id": "overcast",
+			"label": "阴翳",
+			"windowDays": 3,
+			"movementCost": 0,
+			"enemyMult": 1.0,
+			"desc": "云压得很低，连咳嗽都显得比平时闷。"
+		},
+		{
+			"id": "windgust",
+			"label": "朔风日",
+			"windowDays": 2,
+			"movementCost": 1,
+			"enemyMult": 1.35,
+			"desc": "风从荒原那边刮来，夹着砂，赶路慢半拍，撞上的东西也都硬了一层。"
+		},
+		{
+			"id": "stormbound",
+			"label": "界湮风暴",
+			"windowDays": 2,
+			"movementCost": 2,
+			"enemyMult": 1.8,
+			"desc": "灰紫色的天幕盘在头顶。这种天气里出现的，往往不止一头，也不止一个出处。"
+		}
+	]
+}

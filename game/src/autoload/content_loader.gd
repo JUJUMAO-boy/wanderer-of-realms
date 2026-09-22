@@ -27,6 +27,8 @@ const MONSTER_FILE: String = "monsters.json"
 const RECIPE_FILE: String = "recipes.json"
 const HIDDEN_EVENT_FILE: String = "hidden_events.json"
 const PERSONALITY_FILE: String = "personality.json"
+const GOD_FILE: String = "gods.json"
+const WEATHER_FILE: String = "weather.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -102,6 +104,8 @@ var _gathers: Dictionary = {}
 var _hidden_events: Dictionary = {}
 var _personalities: Dictionary = {}
 var _faiths: Dictionary = {}
+var _gods: Dictionary = {}
+var _weather: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -146,6 +150,8 @@ func load_all() -> Dictionary:
 	_hidden_events.clear()
 	_personalities = {}
 	_faiths = {}
+	_gods = {}
+	_weather = {}
 	_loaded = false
 
 	# 先读 balance：城市校验要用到世界网格尺寸与六维范围
@@ -256,6 +262,20 @@ func load_all() -> Dictionary:
 		_personalities = personality_root
 	else:
 		_errors.append("NPC 人格配置为空或读取失败")
+
+	var gods_root: Dictionary = _read_json(GOD_FILE, "神系配置")
+	if not gods_root.is_empty():
+		_validate_gods(gods_root)
+		_gods = gods_root
+	else:
+		_errors.append("神系配置为空或读取失败")
+
+	var weather_root: Dictionary = _read_json(WEATHER_FILE, "天候配置")
+	if not weather_root.is_empty():
+		_validate_weather(weather_root)
+		_weather = weather_root
+	else:
+		_errors.append("天候配置为空或读取失败")
 
 	_loaded = _errors.is_empty()
 	return {
@@ -813,6 +833,38 @@ func get_faith(faith_id: String) -> Dictionary:
 	return {}
 
 
+## 神系配置（M25/M-A）。GodBlessing 规则层读取。
+func get_god_config() -> Dictionary:
+	return _gods
+
+
+func get_gods() -> Array:
+	return _gods.get("gods", [])
+
+
+func get_god(god_id: String) -> Dictionary:
+	for entry in get_gods():
+		if str(entry.get("id", "")) == god_id:
+			return entry
+	return {}
+
+
+## 天候配置（M25/M-A）。Weather 规则层读取。
+func get_weather_config() -> Dictionary:
+	return _weather
+
+
+func get_weathers() -> Array:
+	return _weather.get("weathers", [])
+
+
+func get_weather(weather_id: String) -> Dictionary:
+	for entry in get_weathers():
+		if str(entry.get("id", "")) == weather_id:
+			return entry
+	return {}
+
+
 ## 人格池校验（M18）。查的都是会"静默失效"的错：人格 id 重复、谈话文案缺项、
 ## 送礼口味引用了不存在的物品类别（category 写错 → 永远是"中立"）、语气档位名
 ## 与好感档位对不上。信仰更简单，只查 id 唯一。
@@ -884,6 +936,83 @@ func _validate_personalities(root: Dictionary) -> void:
 				_errors.append("信仰 faithId 重复：%s" % fid)
 			else:
 				seen_f[fid] = true
+
+
+## 神系配置（M25/M-A）。查的是会"静默失效"的错：id 重复、恩惠三档门槛没递增
+## （否则 blessing_tier 失序、"越虔诚反而拿低档"）、门槛落在 [0,100] 外。
+func _validate_gods(root: Dictionary) -> void:
+	var list: Variant = root.get("gods", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("神系配置缺少非空的 gods 数组")
+		return
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "gods[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("神 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var gid: String = str(config.get("id", ""))
+		if gid.is_empty():
+			_errors.append("神缺少字段：%s.id" % path)
+		elif seen.has(gid):
+			_errors.append("神 id 重复：%s" % gid)
+		else:
+			seen[gid] = true
+			path = "gods[%s]" % gid
+		if str(config.get("name", "")).is_empty():
+			_errors.append("神缺少字段：%s.name" % path)
+		var blessings: Variant = config.get("blessings", null)
+		if not (blessings is Array) or (blessings as Array).is_empty():
+			_errors.append("神缺少非空的 blessings：%s" % path)
+		else:
+			var prev: int = -1
+			for b in (blessings as Array):
+				if not (b is Dictionary):
+					continue
+				var thr: int = int((b as Dictionary).get("threshold", -1))
+				if thr < 0 or thr > 100:
+					_errors.append("神恩惠门槛越界：%s.blessings.threshold=%d（应落在 0..100）" % [path, thr])
+				elif thr <= prev:
+					_errors.append("神恩惠门槛未递增：%s.blessings.threshold" % path)
+				else:
+					prev = thr
+				if str((b as Dictionary).get("effect", "")).is_empty():
+					_errors.append("神恩惠缺少 effect：%s.blessings" % path)
+
+
+## 天候配置（M25/M-A）。查会"静默失效"的错：id 重复、windowDays 非正、敌强倍率小于 1
+## （否则"刮风暴"反而把怪越刮越弱）、户外移动代价为负。晴空兜底由 Weather.entry_at 保证。
+func _validate_weather(root: Dictionary) -> void:
+	var list: Variant = root.get("weathers", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("天候配置缺少非空的 weathers 数组")
+		return
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "weathers[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("天候 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var wid: String = str(config.get("id", ""))
+		if wid.is_empty():
+			_errors.append("天候缺少字段：%s.id" % path)
+		elif seen.has(wid):
+			_errors.append("天候 id 重复：%s" % wid)
+		else:
+			seen[wid] = true
+			path = "weathers[%s]" % wid
+		if str(config.get("label", "")).is_empty():
+			_errors.append("天候缺少字段：%s.label" % path)
+		if int(config.get("windowDays", 0)) <= 0:
+			_errors.append("天候 windowDays 必须为正：%s" % path)
+		if float(config.get("enemyMult", 1.0)) < 1.0:
+			_errors.append("天候 enemyMult 必须 ≥ 1：%s" % path)
+		if int(config.get("movementCost", 0)) < 0:
+			_errors.append("天候 movementCost 必须 ≥ 0：%s" % path)
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。
