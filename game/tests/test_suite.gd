@@ -205,6 +205,16 @@ func run_all() -> int:
 	_test_hud_nav_layout_hit()
 	print("=== M20 阶段二：全场景面板统一外壳 ===")
 	_test_ui_panel_chrome()
+	print("=== M21 临时副本与地图商人 ===")
+	_test_dungeon_determinism()
+	_test_dungeon_layout_valid()
+	_test_dungeon_connectivity()
+	_test_dungeon_step_collision()
+	_test_dungeon_view_model()
+	_test_merchant_stock_deterministic()
+	_test_merchant_quote()
+	_test_merchant_buy_sell_stock()
+	_test_merchant_view_model()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7604,3 +7614,240 @@ func _test_ui_panel_chrome() -> void:
 	})
 	_check(true, "draw_panel_header 在无字体（无头）下干净早退")
 	stub.queue_free()
+
+
+# --- 里程碑 21 临时副本（M21）---
+#
+# 副本是"野外走路时的奇遇入口 → 走进可探索网格"的临时会话空间，确定性派生、不落盘。
+# 测试钉住四件事：同种子可复现、楼层布局合法（墙=外圈+岩屑、spawn/exit 可站、物什在
+# 界内且不重叠）、spawn 到出口/每一格宝箱敌人必可达、走格与出口判定正确。
+
+## 同种子两层完全一致，不同种子不同。
+func _test_dungeon_determinism() -> void:
+	var k: String = "enc-0001"
+	var a1: Dictionary = Dungeon.layout(k, 0)
+	var a2: Dictionary = Dungeon.layout(k, 0)
+	_eq(_dg_positions(a1), _dg_positions(a2), "同种子同层逐位相等")
+	var deeper: Dictionary = Dungeon.layout(k, 2)
+	_check(not (_dg_positions(a1) == _dg_positions(deeper)), "层数不同布局不同")
+	var other: Dictionary = Dungeon.layout("enc-0002", 0)
+	_check(not (_dg_positions(a1) == _dg_positions(other)), "种子不同布局不同")
+
+
+## 布局合法：外圈全是墙、spawn/exit 可站且在界内、宝箱/敌人落在可站空地且互不重叠。
+func _test_dungeon_layout_valid() -> void:
+	for depth in [0, 1, 5]:
+		var l: Dictionary = Dungeon.layout("seed-%d" % depth, depth)
+		_eq(int(l["w"]), Dungeon.WIDTH, "副本宽 24 格")
+		_eq(int(l["h"]), Dungeon.HEIGHT, "副本高 18 格")
+		_check(Dungeon.walkable(l, int(l["spawn"].x), int(l["spawn"].y)), "出生点可站")
+		_check(Dungeon.walkable(l, int(l["exit"].x), int(l["exit"].y)), "出口可站")
+		# 外圈一圈都是墙
+		var perimeter_ok: bool = true
+		for x in range(Dungeon.WIDTH):
+			if Dungeon.walkable(l, x, 0) or Dungeon.walkable(l, x, Dungeon.HEIGHT - 1):
+				perimeter_ok = false
+		for y in range(Dungeon.HEIGHT):
+			if Dungeon.walkable(l, 0, y) or Dungeon.walkable(l, Dungeon.WIDTH - 1, y):
+				perimeter_ok = false
+		_check(perimeter_ok, "外圈一圈都是墙")
+		var placed: Dictionary = {}
+		var bad: bool = false
+		for t in l["treasures"]:
+			var key: String = "%d,%d" % [int(t["x"]), int(t["y"])]
+			if not Dungeon.walkable(l, int(t["x"]), int(t["y"])) or placed.has(key):
+				bad = true
+			placed[key] = true
+		for e in l["enemies"]:
+			var key: String = "%d,%d" % [int(e["x"]), int(e["y"])]
+			if not Dungeon.walkable(l, int(e["x"]), int(e["y"])) or placed.has(key):
+				bad = true
+			placed[key] = true
+		_check(not bad, "宝箱与敌人都落在可站空地且互不重叠")
+
+
+## 可达性：spawn 到出口，以及每一格宝箱/敌人，都走得到（BFS）。
+func _test_dungeon_connectivity() -> void:
+	for depth in [0, 3, 7]:
+		var l: Dictionary = Dungeon.layout("conn-%d" % depth, depth)
+		var reach: Dictionary = _dg_bfs(l, l["spawn"])
+		_check(bool(reach.get("%d,%d" % [int(l["exit"].x), int(l["exit"].y)], false)),
+			"从出生点能走到出口（第 %d 层）" % depth)
+		for t in l["treasures"]:
+			_check(bool(reach.get("%d,%d" % [int(t["x"]), int(t["y"])], false)),
+				"每个宝箱都可达（第 %d 层）" % depth)
+		for e in l["enemies"]:
+			_check(bool(reach.get("%d,%d" % [int(e["x"]), int(e["y"])], false)),
+				"每个敌人都可达（第 %d 层）" % depth)
+
+
+## 走格：撞墙原地、走向空地成功、踩出口判定为到达出口。
+func _test_dungeon_step_collision() -> void:
+	var l: Dictionary = Dungeon.layout("step-1", 0)
+	var spawn: Vector2i = l["spawn"]
+	# 朝外圈墙走：spawn 在 y=HEIGHT-2，往下正是外圈墙（y=HEIGHT-1）
+	var into_wall: Dictionary = Dungeon.step(l, spawn, 0, 1)
+	_check(not bool(into_wall["ok"]) and into_wall["next"] == spawn, "朝墙走被挡在原地")
+	var up: Dictionary = Dungeon.step(l, spawn, 0, -1)
+	_check(bool(up["ok"]) and not bool(up["atExit"]), "朝空地走成功且未到出口")
+	# 出口在 (12,1)；从 (12,2) 往上一步正好踩上出口格 → atExit
+	var at_exit: Dictionary = Dungeon.step(l, Vector2i(Dungeon.EXIT.x, Dungeon.EXIT.y + 1), 0, -1)
+	_check(bool(at_exit["ok"]) and bool(at_exit["atExit"]), "踩到出口格判定到达出口")
+
+
+## 视图模型：原点居中、物体清单与玩家矩形对齐。
+func _test_dungeon_view_model() -> void:
+	var l: Dictionary = Dungeon.layout("vm-1", 2)
+	var rect := Rect2(0.0, 0.0, 1248.0, 568.0)
+	var view: Dictionary = DungeonViewModel.build(l, l["spawn"], rect)
+	var expected: Vector2 = rect.position + (rect.size - Vector2(
+		DungeonViewModel.DUNGEON_TILE * Dungeon.WIDTH,
+		DungeonViewModel.DUNGEON_TILE * Dungeon.HEIGHT)) * 0.5
+	_eq(view["origin"], expected, "副本面板原点居中算出")
+	_eq(view["player"], l["spawn"], "玩家出生点进视图")
+	_eq(view["playerRect"], DungeonViewModel.cell_rect(view["origin"],
+		int(l["spawn"].x), int(l["spawn"].y)), "玩家矩形对齐出生点")
+	_eq(int(view["treasures"].size()), int(l["treasures"].size()), "宝箱数一致")
+	_eq(int(view["enemies"].size()), int(l["enemies"].size()), "敌人数一致")
+	_check(int(view["depth"]) == 2, "层数带进视图")
+	_check(not view["exit"]["rect"].size.is_zero_approx(), "出口有矩形")
+
+
+## 楼层的位置快照，供 equal 判定。（取位置字典，忽略其余字段。）
+static func _dg_positions(layout: Dictionary) -> Dictionary:
+	return {
+		"blocked": layout["blocked"],
+		"treasures": layout["treasures"],
+		"enemies": layout["enemies"],
+		"spawn": layout["spawn"],
+		"exit": layout["exit"],
+	}
+
+
+## 从某格 BFS 出一张"可达格"表。
+static func _dg_bfs(layout: Dictionary, from: Vector2i) -> Dictionary:
+	var reach: Dictionary = {}
+	var frontier: Array = [from]
+	reach["%d,%d" % [from.x, from.y]] = true
+	while not frontier.is_empty():
+		var cur: Vector2i = frontier.pop_back()
+		for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nxt: Vector2i = cur + dir
+			var key: String = "%d,%d" % [nxt.x, nxt.y]
+			if reach.has(key) or not Dungeon.walkable(layout, nxt.x, nxt.y):
+				continue
+			reach[key] = true
+			frontier.push_back(nxt)
+	return reach
+
+
+# --- M21 游方商人 ---
+
+## 同车货同价：同种子同一次货架逐位相等，不同种子不同；货只在允许的类别里。
+func _test_merchant_stock_deterministic() -> void:
+	var m1 := Merchant.create(null, {})
+	var m2 := Merchant.create(null, {})
+	var s1: Array = m1.stock_for("road-0001")
+	var s2: Array = m2.stock_for("road-0001")
+	_eq(s1.size(), s2.size(), "同种子货架件数一致")
+	_check(s1.size() >= 3 and s1.size() <= 6, "货架在 3..6 件")
+	for i in range(s1.size()):
+		_eq(str(s1[i]["templateId"]), str(s2[i]["templateId"]), "同种子同位置货一致")
+		var cat: String = str(s1[i]["template"].get("category", ""))
+		_check(Merchant.STOCK_CATEGORIES.has(cat), "货架类别只取武器/防具/消耗品")
+	var m3 := Merchant.create(null, {})
+	var s3: Array = m3.stock_for("road-9999")
+	_check(not (s1.is_empty() or s3.is_empty()), "两组货架都非空")
+	var shared: bool = false
+	for a in s1:
+		for b in s3:
+			if str(a["templateId"]) == str(b["templateId"]):
+				shared = true
+	# 允许偶然同款，只确保不是整份照抄。种子不同时货架的件数与首件大概率有别。
+	_check(_merchant_signature(s1) != _merchant_signature(s3), "不同种子货架签名不同")
+
+
+## 报价：买价 = 基准×BUY_RATIO，收价 = 基准×SELL_RATIO；报价存入可查。
+func _test_merchant_quote() -> void:
+	var m := Merchant.create(null, {})
+	m.stock_for("quote-1")
+	var quotes: Dictionary = m.quotations()
+	_check(not quotes.is_empty(), "货架上有报价")
+	for entry in m.stock_left():
+		var tid: String = str(entry["templateId"])
+		var base: int = maxi(1, int(ContentLoader.get_item(tid).get("price", 0)))
+		var q: Dictionary = quotes[tid]
+		_eq(int(q["buyPrice"]), maxi(1, int(float(base) * Merchant.BUY_RATIO)), "买入价按 1.5 倍基准")
+		_eq(int(q["sellPrice"]), maxi(1, int(float(base) * Merchant.SELL_RATIO)), "收价按半价基准")
+	# 报价不因买走而变，行商从不临时改口
+	_merchant_buy_all(m)
+	_check(not m.quotations().is_empty(), "货已售罄报价仍在")
+
+
+## 买走移出、卖回重新上架；stock_count 跟随。
+func _test_merchant_buy_sell_stock() -> void:
+	var m := Merchant.create(null, {})
+	m.stock_for("trade-1")
+	var before: int = m.stock_count()
+	var tid: String = str(m.stock_left()[0]["templateId"])
+	_check(m.buy_off_stock(tid), "买走一件成功")
+	_eq(m.stock_count(), before - 1, "买走后件数减一")
+	_check(not m.buy_off_stock(tid), "重复买走同一件失败")
+	m.add_to_stock(tid)
+	_eq(m.stock_count(), before, "卖回再上架件数复原")
+	var back: bool = false
+	for entry in m.stock_left():
+		if str(entry["templateId"]) == tid:
+			back = true
+	_check(back, "卖回的货回到货架")
+	# 不在报价表里的货不给上架
+	m.add_to_stock("weapon_nothing_xx")
+	_eq(m.stock_count(), before, "不认识的货不上架")
+
+
+## 视图模型：买侧与卖侧的行、价、可成交状态。
+func _test_merchant_view_model() -> void:
+	var m := Merchant.create(null, {})
+	m.stock_for("vm-m")
+	var lookups: Dictionary = {"itemTemplates": _item_template_table()}
+	var buy: Dictionary = MerchantViewModel.build(m, lookups, null, Merchant.SIDE_BUY, 0, 999999)
+	_eq(int(buy["rowCount"]), m.stock_count(), "买侧行数等于货架件数")
+	_check(bool(buy["canTrade"]), "钱管够时买侧可成交")
+	_eq(str(buy["side"]), Merchant.SIDE_BUY, "买侧标记 buy")
+	# 卖侧：给化身一件货，应出现在卖侧
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "merchant-avatar"
+	_grant_items(avatar, str(m.stock_left()[0]["templateId"]), 1)
+	var sell: Dictionary = MerchantViewModel.build(m, lookups, avatar, Merchant.SIDE_SELL, 0, 100)
+	_eq(int(sell["rowCount"]), 1, "背包一件货出现卖侧一行")
+	_check(bool(sell["canTrade"]), "卖出总是可成交")
+	_eq(str(sell["rows"][0]["kind"]), MerchantViewModel.ROW_KIND_HELD, "卖侧行标注 held")
+	# 卖侧缺货时不可成交
+	var empty: Dictionary = MerchantViewModel.build(m, lookups, PlayerAvatar.new(), Merchant.SIDE_SELL, 0, 100)
+	_check(not bool(empty["canTrade"]), "空背包卖侧不可成交")
+	# 面板：按钮与命中
+	var rect := Rect2(200, 100, 900, 620)
+	var buttons: Array = MerchantPanel.buttons(buy, rect)
+	_check(buttons.size() == 2, "面板两个按钮")
+	var row_hit: Dictionary = MerchantPanel.hit_test(buy, rect,
+		MerchantPanel._row_rect(rect, buy, 0).get_center())
+	_eq(str(row_hit.get("kind", "")), "row", "点列表行命中 row")
+	# 点面板按钮应命中 button（修复：按钮自带 x/y 几何，不走 UiTheme 的 rect 契约）
+	var side_btn: Dictionary = MerchantPanel.buttons(buy, rect)[0]
+	var btn_hit: Dictionary = MerchantPanel.hit_test(buy, rect,
+		Vector2(float(side_btn["x"]) + 20.0, float(side_btn["y"]) + 10.0))
+	_eq(str(btn_hit.get("kind", "")), "button", "点面板按钮命中 button")
+	_eq(str(btn_hit.get("id", "")), "side", "命中的是换买/卖按钮")
+
+
+static func _merchant_signature(stock: Array) -> String:
+	var ids: Array = []
+	for entry in stock:
+		ids.append(str(entry["templateId"]))
+	ids.sort()
+	return str(ids)
+
+
+static func _merchant_buy_all(m: Merchant) -> void:
+	for entry in m.stock_left().duplicate():
+		m.buy_off_stock(str(entry["templateId"]))

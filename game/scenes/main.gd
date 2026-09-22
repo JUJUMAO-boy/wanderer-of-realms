@@ -95,6 +95,8 @@ const VIEW_CRAFTING: int = 10
 const VIEW_HISTORY: int = 11
 const VIEW_NPC: int = 12
 const VIEW_CITY_SPACE: int = 13
+const VIEW_DUNGEON: int = 14
+const VIEW_MERCHANT: int = 15
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -114,6 +116,8 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_HISTORY: "↑↓ 翻阅史书    ESC 或 T 返回地图",
 	VIEW_NPC: "↑↓ 选居民    ←→ 选动作    回车 交谈/送礼/雇佣    ◀▶ 送礼时改选物    1/2/3 快速交谈    ESC 或 T 返回城市",
 	VIEW_CITY_SPACE: "方向键/WASD 走动    走到建筑/居民旁按回车 互动    点城门或 ESC/T 离开    城内 T 看城市总览",
+	VIEW_DUNGEON: "方向键/WASD 或点格 行走    走到敌人旁按回车 交战    踩宝箱 拾取    到楼梯按回车 下潜    ESC/右下角 离开",
+	VIEW_MERCHANT: "↑↓ 选货    回车 成交    Tab 换买/卖    ESC/T 离开",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -285,6 +289,23 @@ var _encounter_combat: bool = false
 var _silent_walk: bool = false
 ## 上一次所处的城。进城那一瞬间判一次城内遭遇，站在城里反复走不再判。
 var _last_city_id: String = ""
+
+# 临时副本（M21：野外奇遇 → 走进可探索网格）
+var _dungeon: Dictionary = {}
+var _dungeon_view: Dictionary = {}
+var _dungeon_player: Vector2i = Vector2i.ZERO
+var _dungeon_depth: int = 0
+var _dungeon_seq: int = 0
+## 这一场是不是从副本打起来的（战斗收尾要走副本那条结算）。
+var _dungeon_combat: bool = false
+## 副本宝箱内容（templateId 数组，与 layout.treasures 对齐）；下楼层时重新生成。
+var _dungeon_loot: Array = []
+
+# 游方商人（M21：地图商人奇遇）
+var _merchant_view: Dictionary = {}
+var _merchant_cursor: int = 0
+var _merchant_side: String = Merchant.SIDE_BUY
+var _merchant_seq: int = 0
 
 
 func _ready() -> void:
@@ -551,6 +572,10 @@ func _refresh() -> void:
 			_refresh_npc()
 		VIEW_CITY_SPACE:
 			_refresh_city_space()
+		VIEW_DUNGEON:
+			_refresh_dungeon()
+		VIEW_MERCHANT:
+			_refresh_merchant()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -2427,7 +2452,7 @@ func _combat_input(key_event: InputEventKey) -> void:
 	if _combat.finished:
 		match key_event.keycode:
 			KEY_ENTER, KEY_KP_ENTER, KEY_ESCAPE, KEY_SPACE:
-				_switch_view(VIEW_MAP)
+				_exit_combat_to_context()
 		return
 	if not CombatViewModel.is_player_turn(_combat):
 		return
@@ -2436,7 +2461,7 @@ func _combat_input(key_event: InputEventKey) -> void:
 	match key_event.keycode:
 		KEY_ESCAPE:
 			if _combat_menu_mode == CombatViewModel.MENU_MAIN:
-				_switch_view(VIEW_MAP)
+				_exit_combat_to_context()
 			else:
 				_combat_menu_mode = CombatViewModel.MENU_MAIN
 				_combat_pending = {}
@@ -2645,6 +2670,9 @@ func _settle_combat() -> void:
 		# 是调用方的事（10.1 第 3 条）。
 		_resolve_encounter_combat()
 		return
+	if _dungeon_combat:
+		_resolve_dungeon_combat()
+		return
 	_status.text = "交手结束（%d 轮）：%s" % [
 		_combat.round, "你赢了" if _combat.winner == Combat.RESULT_PLAYER else "你输了"
 	]
@@ -2726,6 +2754,17 @@ func _reset_encounter_session() -> void:
 	_encounter_steps = 0
 	_encounter_combat = false
 	_last_city_id = ""
+	# 副本同属会话态（不落盘）：新世界/读档之后回到"没有正在探索的地下"
+	_dungeon = {}
+	_dungeon_view = {}
+	_dungeon_player = Vector2i.ZERO
+	_dungeon_depth = 0
+	_dungeon_combat = false
+	_dungeon_loot = []
+	# 游方商人同属会话态：读档回来他早就走远了
+	_merchant_view = {}
+	_merchant_cursor = 0
+	_merchant_side = Merchant.SIDE_BUY
 
 
 ## 走了一格（点地图的连续走法会把步数一次给全）。攒够 stepInterval 就在野外判一次；
@@ -2757,6 +2796,12 @@ func _encounter_advance(steps: int) -> void:
 	_encounter_check(
 		_encounter_system.context_at(pos), _encounter_system.nearest_city_id(pos), false
 	)
+	# 野外没撞上人（没被拦），再判一次有没有撞见地下入口。城里不进副本。
+	if _encounter.is_empty() and _encounter_system.context_at(pos) != EncounterSystem.CONTEXT_CITY:
+		_dungeon_discover_check()
+		# 也没撞见地下入口的话，再撞撞运气看有没有迎面而来的商车
+		if _dungeon.is_empty():
+			_merchant_discover_check()
 
 
 ## 判一次遭遇。判定与做法各用一支自己的随机源（与世界演化分开），
@@ -3180,6 +3225,10 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return NpcInteractionPanel.hit_test(_npc_view, _content_rect(), point)
 		VIEW_CITY_SPACE:
 			return CitySpacePanel.hit_test(_city_space_view, _content_rect(), point)
+		VIEW_DUNGEON:
+			return DungeonPanel.hit_test(_dungeon_view, _content_rect(), point)
+		VIEW_MERCHANT:
+			return MerchantPanel.hit_test(_merchant_view, _content_rect(), point)
 	return {}
 
 
@@ -3229,6 +3278,10 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_npc_click(event.position)
 		VIEW_CITY_SPACE:
 			_city_space_click(event.position)
+		VIEW_DUNGEON:
+			_dungeon_click(event.position)
+		VIEW_MERCHANT:
+			_merchant_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -3309,7 +3362,7 @@ func _combat_click(point: Vector2) -> void:
 	var kind: String = str(hit.get("kind", ""))
 	if _combat.finished:
 		if kind == "button":
-			_switch_view(VIEW_MAP)
+			_exit_combat_to_context()
 		return
 	if not CombatViewModel.is_player_turn(_combat):
 		_status.text = "现在轮到敌方行动。"
@@ -3317,7 +3370,7 @@ func _combat_click(point: Vector2) -> void:
 		return
 	match kind:
 		"button":
-			_switch_view(VIEW_MAP)
+			_exit_combat_to_context()
 		"menu":
 			# 点菜单项与键盘选中后回车走同一条路：先挪光标再提交，
 			# 这样"点了哪一项"与"高亮在哪一项"不会脱节
@@ -3738,6 +3791,534 @@ func _city_space_approach_building(index: int) -> void:
 	_city_space_open_kind(target_kind)
 
 
+# --- 临时副本（M21：野外奇遇 → 走进可探索网格）---
+
+## 野外没撞上人时，再掷一次"撞见地下入口"。命中就开一层副本（从第 1 层进）。
+func _dungeon_discover_check() -> void:
+	if _world.avatar == null or not _dungeon.is_empty():
+		return
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	var chance: int = maxi(0, int(rules.get("discoverChanceBp", 0)))
+	if chance <= 0:
+		return
+	_dungeon_seq += 1
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_dungeon_seq * 433494437))
+	if rng.next_int(10000) >= chance:
+		return
+	_enter_dungeon()
+
+
+## 进入副本：建第 1 层、把玩家放到出生点、生成这一层的宝箱内容。
+func _enter_dungeon() -> void:
+	if _world.avatar == null:
+		return
+	_dungeon_depth = 0
+	_dungeon_player = Dungeon.SPAWN
+	_dungeon_combat = false
+	_dungeon_loot = _dungeon_roll_loot(Dungeon.layout(
+		"dungeon-%04d" % _dungeon_seq, _dungeon_depth), _dungeon_rng())
+	_switch_view(VIEW_DUNGEON)
+	_status.text = "你发现了一道向下延伸的入口，决定进去看看。按回车触碰出口可下潜，越深越凶。"
+
+
+## 副本专用的随机源：会话号混进种子，同一座副本（同一序号）完全可复现，
+## 但每次新发现都是新布局（序号递增）。
+func _dungeon_rng() -> DeterministicRNG:
+	return DeterministicRNG.new((_world.world_seed ^ (_dungeon_seq * 733977134)) & 0xFFFFFFFF)
+
+
+## 为某一层生成与宝箱数量等长的战利品清单（templateId 数组）。
+func _dungeon_roll_loot(layout: Dictionary, rng: DeterministicRNG) -> Array:
+	var out: Array = []
+	var count: int = (layout.get("treasures", []) as Array).size()
+	if count <= 0:
+		return out
+	# 只从玩家真能用的类别里挑：武器 / 护甲 / 消耗品。材料与工具不进副本宝箱。
+	var pool: Array = []
+	for item in ContentLoader.get_items():
+		if str(item.get("category", "")) in ["weapon", "armor", "consumable"]:
+			pool.append(item)
+	if pool.is_empty():
+		for _i in range(count):
+			out.append("")
+		return out
+	for _i in range(count):
+		var item: Dictionary = pool[rng.next_int(pool.size())]
+		out.append(str(item.get("templateId", "")))
+	return out
+
+
+## 重新整理视图数据（放回出生点 / 刷新楼层 / 重新生成宝箱内容都要走它）。
+func _refresh_dungeon() -> void:
+	if _world == null or _dungeon.is_empty():
+		_dungeon_view = {}
+		return
+	_dungeon_view = DungeonViewModel.build(_dungeon, _dungeon_player, _content_rect(), {
+		"depthHint": "越深越凶，下面的石头里藏着更怪的东西",
+	})
+
+
+## 副本键盘输入：方向走格，回车触碰出口/敌人，ESC 离开。
+func _dungeon_input(key_event: InputEventKey) -> void:
+	if _dungeon.is_empty():
+		return
+	match key_event.keycode:
+		KEY_LEFT, KEY_A:
+			_dungeon_step(-1, 0)
+		KEY_RIGHT, KEY_D:
+			_dungeon_step(1, 0)
+		KEY_UP, KEY_W:
+			_dungeon_step(0, -1)
+		KEY_DOWN, KEY_S:
+			_dungeon_step(0, 1)
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_dungeon_interact()
+		KEY_ESCAPE:
+			_leave_dungeon()
+		KEY_F5:
+			_save()
+		KEY_F9:
+			_load()
+
+
+## 副本点击：点格走过去。途经宝箱/敌人会顺手触发；点到出口就走向楼梯等回车。
+func _dungeon_click(point: Vector2) -> void:
+	if _world == null or _dungeon.is_empty():
+		return
+	var hit: Dictionary = DungeonPanel.hit_test(_dungeon_view, _content_rect(), point)
+	if hit.is_empty():
+		return
+	_dungeon_walk_to(hit.get("grid", Vector2i()))
+
+
+## 走一步。撞墙不动；踩上宝箱就拾取并移除；踩上敌人就开战；碰到出口停下提示。
+func _dungeon_step(dx: int, dy: int) -> void:
+	if _world == null or _dungeon.is_empty():
+		return
+	var result: Dictionary = Dungeon.step(_dungeon, _dungeon_player, dx, dy)
+	if not bool(result["ok"]):
+		_status.text = "这里撞上了石壁。"
+		_refresh()
+		return
+	_dungeon_player = result["next"]
+	# 踩上任何一格先看看有没有宝箱：拾取并移除（一次性）
+	var t_index: int = Dungeon.treasure_index(_dungeon, _dungeon_player)
+	if t_index >= 0:
+		_dungeon_pick_treasure(t_index)
+	# 踩上敌人格：直接开战，不再继续走
+	var e_index: int = Dungeon.enemy_index(_dungeon, _dungeon_player)
+	if e_index >= 0:
+		_dungeon_pick_enemy(e_index)
+		return
+	if bool(result["atExit"]):
+		_status.text = "这是出口：按回车下潜到下一层，按 ESC 离开副本。"
+	_refresh()
+
+
+## 玩家要走向的最近可走路径（逐格逼近，直线优先）。撞到敌人/宝箱停下，让交互就近触发。
+func _dungeon_walk_to(target: Vector2i) -> void:
+	if _dungeon.is_empty():
+		return
+	var pos: Vector2i = _dungeon_player
+	var steps: int = 0
+	var limit: int = Dungeon.WIDTH * Dungeon.HEIGHT
+	while steps < limit and (pos.x != target.x or pos.y != target.y):
+		steps += 1
+		var next: Vector2i = pos
+		var dx: int = signi(target.x - pos.x)
+		var dy: int = signi(target.y - pos.y)
+		if dx != 0:
+			var rx: Dictionary = Dungeon.step(_dungeon, pos, dx, 0)
+			if bool(rx["ok"]):
+				next = rx["next"]
+		if next == pos and dy != 0:
+			var ry: Dictionary = Dungeon.step(_dungeon, pos, 0, dy)
+			if bool(ry["ok"]):
+				next = ry["next"]
+		if next == pos:
+			break
+		pos = next
+		_dungeon_player = pos
+		var t: int = Dungeon.treasure_index(_dungeon, pos)
+		if t >= 0:
+			_dungeon_pick_treasure(t)
+		var e: int = Dungeon.enemy_index(_dungeon, pos)
+		if e >= 0:
+			_dungeon_pick_enemy(e)
+			_refresh()
+			return
+	_dungeon_player = pos
+	if pos == target and _dungeon_player == Dungeon.EXIT:
+		_status.text = "你走到出口：按回车下潜，按 ESC 离开。"
+	_refresh()
+
+
+## 回车：站在出口就下潜，站在敌人旁就开战，否则给一句方向提示。
+func _dungeon_interact() -> void:
+	if _world == null or _dungeon.is_empty():
+		return
+	# 站在出口 → 下潜
+	if _dungeon_player == Dungeon.EXIT:
+		_dungeon_descend()
+		return
+	var e_index: int = Dungeon.enemy_index(_dungeon, _dungeon_player)
+	if e_index >= 0:
+		_dungeon_pick_enemy(e_index)
+		return
+	_status.text = "这里什么都没有。走到出口按回车可下潜，按 ESC 离开副本。"
+	_refresh()
+
+
+## 拾取一枚宝箱：物品直接进背包（够用即可，不走逐件挑选）。
+func _dungeon_pick_treasure(index: int) -> void:
+	if _world.avatar == null:
+		return
+	var layout: Dictionary = _dungeon
+	var treasures: Array = layout.get("treasures", [])
+	if index < 0 or index >= treasures.size():
+		return
+	if index >= _dungeon_loot.size():
+		return
+	var template_id: String = str(_dungeon_loot[index])
+	if template_id.is_empty():
+		_status.text = "这只宝箱里空空的，什么也没留下。"
+	else:
+		_loot_seq += 1
+		_creator.add_item(_world.avatar, template_id,
+			"%s-dunloot-%03d" % [_world.avatar.avatar_id, _loot_seq])
+		_status.text = "拾取了宝箱里的东西。"
+	treasures.remove_at(index)
+	_dungeon_loot.remove_at(index)
+	_refresh()
+
+
+## 撞上该层的敌人：开一场副本战斗。
+func _dungeon_pick_enemy(index: int) -> void:
+	if _world.avatar == null:
+		return
+	var enemies: Array = _dungeon.get("enemies", [])
+	if index < 0 or index >= enemies.size():
+		return
+	# 该格敌人已被打掉（开战即清），避免同一格反复触发
+	var cell: Dictionary = enemies[index]
+	enemies.remove_at(index)
+	_start_dungeon_combat(Vector2i(int(cell["x"]), int(cell["y"])))
+
+
+## 按层深挑一条对手并开战。对手强度随层数走高（dungeon.enemyTiers）。
+func _start_dungeon_combat(pos: Vector2i) -> void:
+	var avatar: PlayerAvatar = _world.avatar
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	_combat_seq += 1
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_combat_seq * 2246822519))
+	_combat = Combat.new(
+		_derived,
+		ContentLoader.get_balance_section("combat"),
+		ContentLoader.get_skills(),
+		ContentLoader.get_items(),
+		rng
+	)
+	var units: Array = [_player_unit_spec(avatar)]
+	_append_follower(units)
+	var spec: Dictionary = _dungeon_monster_spec(rules, _dungeon_depth, rng)
+	if spec.is_empty():
+		_combat = null
+		_status.text = "这一层找不到能拦路的凶物。"
+		_refresh()
+		return
+	units.append_array(_encounter_system.units_of(spec, OPPONENT_SPAWNS))
+	var started: Dictionary = _combat.start({
+		"sessionId": "dungeon-%s-d%d" % [str(_dungeon_seq), _dungeon_depth],
+		"units": units,
+		"obstacles": _battle_obstacles(),
+	})
+	if not bool(started.get("ok", false)):
+		_status.text = "战斗没能开始：%s" % str(started.get("reason", ""))
+		_combat = null
+		return
+
+	_dungeon_combat = true
+	_combat_menu_mode = CombatViewModel.MENU_MAIN
+	_combat_cursor = 0
+	_combat_pending = {}
+	_combat_cursor_tile = Vector2i.ZERO
+	_switch_view(VIEW_COMBAT)
+	_status.text = "在副本第 %d 层交手：%d 对 %d。" % [
+		_dungeon_depth + 1, 1, maxi(0, _combat.units.size() - 1)
+	]
+	_drive_enemies()
+
+
+## 按当前层深摇一场对手（复用遭遇生物表，但按 dungeon.enemyTiers 分档）。
+func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG) -> Dictionary:
+	# 层深分三档，取对应的 TL 区间
+	var tier: int = 0
+	var tier_depth: Array = rules.get("tierDepth", [4, 10])
+	if depth >= int(tier_depth[1]):
+		tier = 2
+	elif depth >= int(tier_depth[0]):
+		tier = 1
+	var lows: Array = rules.get("enemyTierMin", [1, 3, 6])
+	var highs: Array = rules.get("enemyTierMax", [4, 6, 10])
+	var tl_min: int = int(lows[clampi(tier, 0, lows.size() - 1)])
+	var tl_max: int = int(highs[clampi(tier, 0, highs.size() - 1)])
+	var pool: Array = []
+	for entry in ContentLoader.get_monsters():
+		if not (entry is Dictionary):
+			continue
+		var tl: int = int((entry as Dictionary).get("threatLevel", 0))
+		if tl >= tl_min and tl <= tl_max:
+			pool.append(entry)
+	if pool.is_empty():
+		return {}
+	# 层深越深，同层多放几个（靠得住前面的敌群规模）
+	var base: int = maxi(1, int(rules.get("enemyBase", 1)))
+	@warning_ignore("integer_division")
+	var per_depth: int = base + int(depth / maxi(1, int(rules.get("enemyPerDepthDivisor", 6))))
+	var count: int = clampi(per_depth, 1, maxi(1, int(rules.get("maxOpponents", 3))))
+	if count > 3:
+		count = 3
+	var picked: Dictionary = pool[rng.next_int(pool.size())]
+	var opponents: Array = []
+	# 数量多时给同一只的变体，但单位 id 各不相同
+	for i in range(count):
+		var name: String = str(picked.get("displayName", ""))
+		if count > 1:
+			name = "%s %d" % [name, i + 1]
+		opponents.append({
+			"unitId": "dungeon-%s-d%d-%d" % [_dungeon_seq, depth, i + 1],
+			"name": name,
+			"displayName": str(picked.get("displayName", "")),
+			"category": str(picked.get("category", "")),
+			"threatLevel": int(picked.get("threatLevel", 1)),
+			"attributes": (picked.get("attributes", {}) as Dictionary).duplicate(),
+			"hp": int(picked.get("hp", 0)),
+			"armor": int(picked.get("armor", 0)),
+			"magicResist": int(picked.get("magicResist", 0)),
+			"attack": int(picked.get("attack", 0)),
+			"attackRange": int(picked.get("attackRange", 1)),
+			"parleyable": false,
+			"isNpc": false,
+			"npcId": "",
+		})
+	return {"title": str(picked.get("displayName", "地下的凶物")), "opponents": opponents}
+
+
+## 副本战斗收尾：胜负都回到副本；赢了留在原地，输了离开副本回到地图。
+func _resolve_dungeon_combat() -> void:
+	_sync_combat_skills_to_avatar()
+	var won: bool = _combat.winner == Combat.RESULT_PLAYER
+	_dungeon_combat = false
+	if won:
+		_status.text = "你打退了守在这里的东西（第 %d 层）。" % (_dungeon_depth + 1)
+		_switch_view(VIEW_DUNGEON)
+	else:
+		_status.text = "你在地底失去了知觉，醒来时已回到地面。"
+		_leave_dungeon()
+
+
+## 战斗结束回到"从哪打起来"的上下文：副本回去副本，其它回地图。
+func _exit_combat_to_context() -> void:
+	if _dungeon_combat:
+		_switch_view(VIEW_DUNGEON)
+	else:
+		_switch_view(VIEW_MAP)
+
+
+## 下潜一层：重排一层新图、放回出生点、重掷宝箱内容。到底后再按出口只提示。
+func _dungeon_descend() -> void:
+	if _world == null:
+		return
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	var max_depth: int = maxi(1, int(rules.get("maxDepth", 20)))
+	if _dungeon_depth >= max_depth - 1:
+		_status.text = "再往下已经到头，这里就是这座地下最深的尽头。按 ESC 出去吧。"
+		_refresh()
+		return
+	_dungeon_depth += 1
+	_dungeon_player = Dungeon.SPAWN
+	_dungeon_loot = _dungeon_roll_loot(Dungeon.layout(
+		"dungeon-%04d" % _dungeon_seq, _dungeon_depth), _dungeon_rng())
+	_switch_view(VIEW_DUNGEON)
+	_status.text = "你下到第 %d 层。地面上的光已经照不进来了。" % (_dungeon_depth + 1)
+
+
+## 离开副本：回到世界地图，清空这次探索会话。
+func _leave_dungeon() -> void:
+	_dungeon = {}
+	_dungeon_view = {}
+	_dungeon_player = Vector2i.ZERO
+	_dungeon_depth = 0
+	_dungeon_combat = false
+	_dungeon_loot = []
+	_switch_view(VIEW_MAP)
+
+
+# --- 游方商人（M21：地图商人奇遇）---
+
+## 野外没被拦、也没撞见地下入口时，再掷一次"迎面来了一架商车"。
+func _merchant_discover_check() -> void:
+	if _world.avatar == null or not _merchant_view.is_empty():
+		return
+	var rules: Dictionary = ContentLoader.get_balance_section("merchant")
+	var chance: int = maxi(0, int(rules.get("discoverChanceBp", 0)))
+	if chance <= 0:
+		return
+	_merchant_seq += 1
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_merchant_seq * 733977134))
+	if rng.next_int(10000) >= chance:
+		return
+	_enter_merchant()
+
+
+## 打开游方商人的车。独立货架 + 独立报价，与商店毫无瓜葛。
+func _enter_merchant() -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var merchant: Merchant = Merchant.create(_world)
+	merchant.stock_for("merchant-%04d" % _merchant_seq)
+	_merchant_view = {"merchant": merchant}
+	_merchant_cursor = 0
+	_merchant_side = Merchant.SIDE_BUY
+	_switch_view(VIEW_MERCHANT)
+	_status.text = "迎面来了一架商车——行商的路与你的路在这里打了个照面。想买想卖都随你。"
+
+
+func _refresh_merchant() -> void:
+	if _world == null:
+		_merchant_view = {}
+		return
+	var merchant: Merchant = _merchant_view.get("merchant", null)
+	if not (merchant is Merchant) or merchant.stock_left().is_empty():
+		# 货全光了就一直保留 board，让玩家能卖完货再走；但若压根没有车就清空
+		if _merchant_view.get("merchant", null) == null:
+			_merchant_view = {}
+			return
+	var avatar: PlayerAvatar = _world.avatar
+	var money: int = 0 if avatar == null else avatar.money
+	_merchant_view = MerchantViewModel.build(
+		merchant,
+		_lookups,
+		avatar,
+		_merchant_side,
+		_merchant_cursor,
+		money
+	)
+	_merchant_cursor = int(_merchant_view.get("cursor", 0))
+
+
+func _merchant_input(key_event: InputEventKey) -> void:
+	if _merchant_view.is_empty():
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_merchant_move_cursor(-1)
+		KEY_DOWN, KEY_S:
+			_merchant_move_cursor(1)
+		KEY_TAB:
+			_merchant_switch_side()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_merchant_confirm()
+		KEY_ESCAPE, KEY_T:
+			_leave_merchant()
+		KEY_F5:
+			_save()
+		KEY_F9:
+			_load()
+
+
+func _merchant_click(point: Vector2) -> void:
+	var hit: Dictionary = MerchantPanel.hit_test(_merchant_view, _content_rect(), point)
+	match str(hit.get("kind", "")):
+		"button":
+			match str(hit.get("id", "")):
+				"side":
+					_merchant_switch_side()
+				"deal":
+					_merchant_confirm()
+				_:
+					_leave_merchant()
+		"row":
+			var index: int = int(hit["index"])
+			if index == _merchant_cursor:
+				_merchant_confirm()
+				return
+			_merchant_cursor = index
+			_refresh()
+
+
+func _merchant_move_cursor(delta: int) -> void:
+	var count: int = maxi(1, int(_merchant_view.get("rowCount", 0)))
+	_merchant_cursor = posmod(_merchant_cursor + delta, count)
+	_refresh()
+
+
+## 买 ⇄ 卖。光标归零：两边的列表是两份不同的东西。
+func _merchant_switch_side() -> void:
+	_merchant_side = Merchant.SIDE_SELL \
+		if _merchant_side == Merchant.SIDE_BUY else Merchant.SIDE_BUY
+	_merchant_cursor = 0
+	_refresh()
+
+
+## 成交。买走货架上的新货，或把背包里具体那一件卖给行商。
+func _merchant_confirm() -> void:
+	if not bool(_merchant_view.get("canTrade", false)):
+		_status.text = str(_merchant_view.get("blockedReason", "现在做不成这笔买卖。"))
+		_refresh()
+		return
+	var merchant: Merchant = _merchant_view.get("merchant", null)
+	if not (merchant is Merchant):
+		return
+	var row: Dictionary = _merchant_view.get("selected", {})
+	var avatar: PlayerAvatar = _world.avatar
+	if avatar == null:
+		return
+	var template_id: String = str(row.get("templateId", ""))
+	if _merchant_side == Merchant.SIDE_BUY:
+		var price: int = int(row.get("price", 0))
+		if avatar.money < price:
+			_status.text = "钱不够。"
+			_refresh()
+			return
+		avatar.money -= price
+		_loot_seq += 1
+		_creator.add_item(avatar, template_id,
+			"%s-mercbuy-%03d" % [avatar.avatar_id, _loot_seq])
+		merchant.buy_off_stock(template_id)
+		_status.text = "买下 %s，付了 %s；身上还剩 %s。" % [
+			str(row.get("label", "")),
+			AvatarViewModel.money_label(price),
+			AvatarViewModel.money_label(avatar.money),
+		]
+	else:
+		var instance_id: String = str(row.get("instanceId", ""))
+		if instance_id.is_empty() or not avatar.item_instances.has(instance_id):
+			_status.text = "这件货不在你身上。"
+			_refresh()
+			return
+		var price: int = int(row.get("price", 0))
+		avatar.money += price
+		_gear.unequip_if_worn(avatar, instance_id)
+		avatar.inventory.erase(instance_id)
+		avatar.item_instances.erase(instance_id)
+		merchant.add_to_stock(template_id)
+		_status.text = "卖给行商 %s，到手 %s；身上还剩 %s。" % [
+			str(row.get("label", "")),
+			AvatarViewModel.money_label(price),
+			AvatarViewModel.money_label(avatar.money),
+		]
+	_refresh()
+
+
+## 离开：回到地图。行商载着他的车继续赶路。
+func _leave_merchant() -> void:
+	_merchant_view = {}
+	_merchant_cursor = 0
+	_merchant_side = Merchant.SIDE_BUY
+	_switch_view(VIEW_MAP)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if _world == null:
 		return
@@ -3783,6 +4364,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_npc_input(key_event)
 		VIEW_CITY_SPACE:
 			_city_space_input(key_event)
+		VIEW_DUNGEON:
+			_dungeon_input(key_event)
+		VIEW_MERCHANT:
+			_merchant_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -4420,6 +5005,10 @@ func _draw() -> void:
 			NpcInteractionPanel.draw(self, _npc_view, _content_rect(), _hover, _npc_gift_candidates())
 		VIEW_CITY_SPACE:
 			CitySpacePanel.draw(self, _city_space_view, _content_rect(), _hover)
+		VIEW_DUNGEON:
+			DungeonPanel.draw(self, _dungeon_view, _content_rect(), _hover)
+		VIEW_MERCHANT:
+			MerchantPanel.draw(self, _merchant_view, _content_rect(), _hover)
 		_:
 			_draw_map()
 	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。
@@ -4449,7 +5038,7 @@ func _is_secondary_view(view: int) -> bool:
 	return view == VIEW_CITY or view == VIEW_TRADE or view == VIEW_SMUGGLING \
 		or view == VIEW_QUEST or view == VIEW_EVENT or view == VIEW_AVATAR \
 		or view == VIEW_CRAFTING or view == VIEW_HISTORY or view == VIEW_NPC \
-		or view == VIEW_CITY_SPACE
+		or view == VIEW_CITY_SPACE or view == VIEW_DUNGEON or view == VIEW_MERCHANT
 
 
 ## 侧栏入口按下。所有入口共用切视图这一条路，「返回世界地图」（VIEW_MAP）也在列。

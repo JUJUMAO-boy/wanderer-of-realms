@@ -201,6 +201,34 @@
     "cityNpcAttributeMin": 8,
     "cityNpcAttributeMax": 14
   },
+  "dungeon": {
+    "_comment": "随机临时副本（M21，对应「地图奇遇」）。世界地图上野外交互时可能撞见一道隐蔽入口，进入一座按当前世界种子 + 独立序号确定性生成的临时地牢（Dungeon 规则层，纯几何、可无头测试）。这里只放触发与深度的规则侧数值，内容与结构在 Dungeon 里。",
+    "_comment_discoverChanceBp": "野外每判一次撞见地下入口的概率，基点。比普通遭遇略低：它是「惊喜」，不该频繁打断赶路，但常到玩家会期待它。",
+    "discoverChanceBp": 700,
+    "_comment_maxDepth": "临时地牢最深能下到多少层。越深敌人越凶（见 enemies 段的档位），宝箱越肥。封在 20 之内，给「下一层还是回头」留出可感知的张力。",
+    "maxDepth": 20,
+    "_comment_enemyTiers": "按层深分档的对手 TL 上下限（闭区间），与《数值框架》TL 分层对齐。前几层平凡，中后层精锐，最深处逼近凶险——深度浅时玩家一眼能打赢，深了开始掂量要不要继续。",
+    "enemyTierMin": [1, 3, 6],
+    "enemyTierMax": [4, 6, 10],
+    "_comment_tierDepth": "相邻两档的分界层深：第一档涵盖 1..tierDepth[0]，第二档 tierDepth[0]+1..tierDepth[1]，再往上归第三档。",
+    "tierDepth": [4, 10],
+    "_comment_treasureMin": "每层宝箱数量下限与上限。宝箱给一次性的半随机战利品，数量太少找不着、太多把拾取变得麻木。",
+    "treasureMin": 2,
+    "treasureMax": 4,
+    "_comment_enemyCountPerDepth": "每层敌人数量 = 保底 + 深度区间缩放。深度越大裂得越多，但保底至少一个让人永远有对手。",
+    "enemyBase": 1,
+    "enemyPerDepth": 1,
+    "enemyPerDepthDivisor": 6
+  },
+  "merchant": {
+    "_comment": "游方商人（M21 地图商人奇遇）。行商不隶属任何一座城，野外交互有概率撞见，就地开一架车的买卖。与商铺（Economy）的区别是它没有城市上下文——价只由入货与跑腿决定，不该被玩家脚下的城勾兑，所以这里只放这类初值。",
+    "_comment_discoverChanceBp": "野外每判一次撞见游方商人的概率，基点。与副本入口（dungeon.discoverChanceBp）分开判，互不占据：赶路既可能撞到一处地下入口，也可能迎面碰上一架商车。",
+    "discoverChanceBp": 600,
+    "_comment_buyRatio": "商人卖给你的价 = 基准价 × buyRatio。比商铺里的公式价略高（少了一堆城市因子的折扣），但胜在随遇随买、不用专程进城。",
+    "buyRatio": 1.5,
+    "stockCountMin": 3,
+    "stockCountMax": 6
+  },
   "quests": {
     "_comment": "《世界模拟量化规则》10.2 / 10.3 与 6 章。委托板不落盘：它由城市六维与 worldFlags 推导（QuestBoard），所以「城市状态越差、对应类型的委托越多」是结构上的必然，而不是定期刷新的结果。",
     "_comment_boardRefreshMonths": "板子按这个月数分桶，同一桶内报价不变，玩家才有时间决定要不要接；状态与标记的变化照样立刻反映（推导时读的是当前值）。",
