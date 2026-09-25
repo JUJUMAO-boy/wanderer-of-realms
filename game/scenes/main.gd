@@ -322,6 +322,9 @@ var _dungeon_depth: int = 0
 var _dungeon_seq: int = 0
 ## 这一场是不是从副本打起来的（战斗收尾要走副本那条结算）。
 var _dungeon_combat: bool = false
+## 这一场是不是训练战（M-B，D-135）：打赢给熟练度溢价、打输学费不退，
+## 不进遭遇/委托那套掉落与世界标记结算。
+var _sparring_active: bool = false
 ## 副本宝箱内容（templateId 数组，与 layout.treasures 对齐）；下楼层时重新生成。
 var _dungeon_loot: Array = []
 ## 当前层是不是补给型主题（小镇哨站）：把这一层清完可以在哨站歇脚回满一口气。
@@ -2370,6 +2373,97 @@ func _threat_level(attributes: Dictionary, skills: Dictionary) -> int:
 	return clampi(level, 1, 40)
 
 
+## 受训（训练师实体，M-B D-135）：付「铜币+业力」后开一场陪练战。
+## 对手复用 _opponent_specs 的陪练曲线；打赢给熟练度溢价、打输学费不退。
+## 这一场不挂 _quest/_event/_encounter 任何标签，_settle_combat 单独走 _resolve_sparring。
+func _start_sparring(city_id: String) -> void:
+	if _world == null or _world.avatar == null or _combat != null:
+		return
+	var ask: Dictionary = TrainingGate.quote(_world)
+	if not bool(ask.get("ok", false)):
+		_status.text = str(ask.get("reason", "训练师没收下你。"))
+		_refresh()
+		return
+	var paid: Dictionary = TrainingGate.pay(_world)
+	if not bool(paid.get("ok", false)):
+		_status.text = str(paid.get("reason", "训练师没收下你。"))
+		_refresh()
+		return
+	# 先落账再进场：训练是"先付的价"，胜败都是银货两讫。
+	_note_events(["你付了 %d 铜与一丝业力，站进训练师的场地。" % int(paid["copper"])])
+
+	_sparring_active = true
+	_combat_seq += 1
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_combat_seq * 2246822519))
+	_combat = Combat.new(
+		_derived,
+		ContentLoader.get_balance_section("combat"),
+		ContentLoader.get_skills(),
+		ContentLoader.get_items(),
+		rng
+	)
+	var units: Array = [_player_unit_spec(_world.avatar)]
+	units.append_array(_named_opponents(_opponent_specs(city_id, rng), "陪练"))
+	var started: Dictionary = _combat.start({
+		"sessionId": "sparring-%04d" % _combat_seq,
+		"units": units,
+		"obstacles": _battle_obstacles(),
+	})
+	if not bool(started.get("ok", false)):
+		_status.text = "没能开练：%s" % str(started.get("reason", ""))
+		_combat = null
+		_sparring_active = false
+		_refresh()
+		return
+
+	_combat_menu_mode = CombatViewModel.MENU_MAIN
+	_combat_cursor = 0
+	_combat_pending = {}
+	_combat_cursor_tile = Vector2i.ZERO
+	_switch_view(VIEW_COMBAT)
+	_status.text = "训练场：%d 对 %d。打赢长本事，打输学费不退。" % [
+		1, maxi(0, _combat.units.size() - 1)
+	]
+	_drive_enemies()
+
+
+## 训练战收尾（M-B，D-135）。只发熟练度溢价；胜败都不退学费、不产掉落、不写世界标记。
+func _resolve_sparring() -> void:
+	_sparring_active = false
+	if _combat == null:
+		return
+	_sync_combat_skills_to_avatar()
+	var won: bool = _combat.winner == Combat.RESULT_PLAYER
+	if won:
+		_grant_sparring_reward()
+	_status.text = "训练结束（%d 轮）：%s（学费不退）" % [
+		_combat.round, "你讨到了新招式" if won else "你被放倒了"
+	]
+	_refresh()
+
+
+## 训练胜的熟练度溢价：把 balance.training.skillGain 加到用得最多的那项技能上。
+## 训练本身的"用进不废退"成长已经由 _sync_combat_skills_to_avatar 落了账，
+## 这是训练师额外点拨的那一点——让"受训"比寻常打架更能涨。
+func _grant_sparring_reward() -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var gain: int = int(ContentLoader.get_balance_section("training").get("skillGain", 0))
+	if gain <= 0:
+		return
+	var best_id: String = ""
+	var best: int = -1
+	for skill_id in _world.avatar.skills:
+		var lvl: int = int(_world.avatar.skills[skill_id])
+		if lvl > best:
+			best = lvl
+			best_id = str(skill_id)
+	if best_id.is_empty():
+		return
+	_world.avatar.skills[best_id] = clampi(best + gain, 0, 100)
+	_note_events(["训练师点拨了一下：%s 的熟练度又涨了点。" % best_id])
+
+
 ## 从同城成年居民里等距取几个当陪练。等距而不是随机：随机取会在同一城里
 ## 反复抽到同一批人，等距让不同时候按 B 遇到的面孔不一样。
 func _opponent_specs(city_id: String, rng: DeterministicRNG) -> Array:
@@ -2668,6 +2762,11 @@ func _settle_combat() -> void:
 	if _combat == null or _world.avatar == null:
 		return
 	_settle_follower_casualty()
+	if _sparring_active:
+		# 训练战（M-B，D-135）：只结熟练度溢价，不产掉落、不写世界标记，
+		# 免得"陪练被放倒"在世界上留一道代价。
+		_resolve_sparring()
+		return
 	if not _quest_combat.is_empty():
 		# 委托战斗的收尾不走上面那条路：战果要变成委托交付（分支后果、世界标记、
 		# 城市维度变更），而不是把敌人的东西塞进背包了事。
@@ -4017,10 +4116,21 @@ func _city_space_interact() -> void:
 		return
 	var npc_id: String = CitySpace.near_npc(layout, pos)
 	if not npc_id.is_empty():
+		# 训练师是个站在场地旁的人：走近按回车就受训（M-B，D-135），
+		# 其余居民才走"看居民"的列表。
+		if _is_trainer_npc(npc_id):
+			_start_sparring(str(_city_space["city_id"]))
+			return
 		_enter_residents(str(_city_space["city_id"]))
 		return
 	_status.text = "旁边没有可互动的建筑或居民。"
 	_refresh()
+
+
+## 这座城里按 positionId 找训练师（职务由 professions.json 的 trainer 职位补上）。
+func _is_trainer_npc(npc_id: String) -> bool:
+	var npc: SimNpc = _world.get_npc(npc_id) if _world != null else null
+	return npc != null and npc.position_id == "trainer"
 
 
 ## 袭店（I 键）：站在店铺格旁才砸得动，把店主拉进一场遭遇战斗。

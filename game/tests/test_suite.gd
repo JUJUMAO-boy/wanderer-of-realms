@@ -244,6 +244,11 @@ func run_all() -> int:
 	_test_world_memory_guard_boosted()
 	_test_world_memory_shopkeeper()
 	_test_world_memory_guard_is()
+	print("=== M27 罪犯态 · 训练师双币种 ===")
+	_test_criminal_state_threshold()
+	_test_criminal_state_economy()
+	_test_training_gate()
+	_test_trainer_entity()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -8436,3 +8441,121 @@ func _test_world_memory_guard_is() -> void:
 	shopkeeper.profession_id = "merchant"
 	shopkeeper.is_named = true
 	_check(not WorldMemory._is_guard_npc(shopkeeper), "店主非守备")
+
+
+## M27：罪犯态判定（D-134）。善恶 ≤ 门槛即罪犯；无化身或世界未挂上时恒否。
+func _test_criminal_state_threshold() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	_check(not CriminalState.is_criminal(world), "无化身不算罪犯")
+	_eq(CriminalState.karma_threshold(), -30, "罪犯态门槛取 balance 的 -30")
+	var avatar := PlayerAvatar.new()
+	world.avatar = avatar
+	avatar.karma = -29
+	_check(not CriminalState.is_criminal(world), "-29 尚非罪犯")
+	avatar.karma = -30
+	_check(CriminalState.is_criminal(world), "-30 正是罪犯门槛")
+	avatar.karma = -100
+	_check(CriminalState.is_criminal(world), "深度业力仍是罪犯")
+
+
+## M27：罪犯态拒卖集成进 Economy（D-134）。商铺拒卖、黑市豁免，且与按城声望
+## 的拒卖（reputation）互不干扰——分两条轴，不在一个档里彼此覆盖。
+func _test_criminal_state_economy() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	_set_all_dimensions(world, "port_thorne", 50)
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-criminal"
+	avatar.money = 100000
+	world.avatar = avatar
+	# 名声尚可、业力已恶：只有罪犯态这一轴挡着商铺
+	avatar.set_reputation("port_thorne", 50)
+	avatar.karma = -31
+	var shop: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_SHOP
+	)
+	_check(bool(shop["refused"]), "声望尚可、业力已恶，商铺照样拒卖")
+	_check(bool(shop["criminal"]), "报价里带出罪犯态标记")
+	var black: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_BLACK_MARKET
+	)
+	_check(not bool(black["refused"]), "黑市豁免罪犯态，恒不问名声")
+	# 名字坏透、业力却不恶：走的是商铺声望那一路的拒卖，criminal 标记为假
+	avatar.karma = 0
+	avatar.set_reputation("port_thorne", -80)
+	var repo: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_SHOP
+	)
+	_check(bool(repo["refused"]), "声望坏透但业力不恶，商铺仍拒卖（声望那一路）")
+	_check(not bool(repo["criminal"]), "criminal 标记与声望两路分开")
+
+
+## M27：训练师双币种（D-135）。学费 = 铜币 + 业力，两样都够才肯教；业力会扣
+## 穿 -100 下限（HIDDEN_ATTR_MIN）就再透支不起，且失败不落任何账。
+func _test_training_gate() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-trainer"
+	avatar.money = 200
+	avatar.karma = 0
+	world.avatar = avatar
+	var ask: Dictionary = TrainingGate.quote(world)
+	_check(bool(ask["ok"]), "钱与业力都足时能受训")
+	_eq(int(ask["copper"]), 200, "学费取自 balance.training.copper")
+	_eq(int(ask["karmaCost"]), 2, "业力代价取自 balance.training.karmaCost")
+	_eq(int(ask["skillGain"]), 6, "熟练度溢价取自 balance.training.skillGain")
+	var paid: Dictionary = TrainingGate.pay(world)
+	_check(bool(paid["ok"]), "付款成功")
+	_eq(avatar.money, 0, "学费扣掉 200 铜")
+	_eq(avatar.karma, -2, "业力扣掉 2 点")
+	# 钱不够：拒绝且不落账
+	avatar.money = 100
+	var karma_at: int = avatar.karma
+	var poor: Dictionary = TrainingGate.quote(world)
+	_check(not bool(poor["ok"]), "钱不够拒绝受训")
+	_eq(avatar.money, 100, "拒绝时不扣钱")
+	_eq(avatar.karma, karma_at, "拒绝时不扣业力")
+	# 业力不足（会扣穿 -100 下限）：拒绝，且不落账
+	avatar.money = 200
+	avatar.set_karma(-99)
+	var drained: Dictionary = TrainingGate.quote(world)
+	_check(not bool(drained["ok"]), "业力薄到会扣穿下限时拒绝受训")
+	_eq(avatar.karma, -99, "拒绝时业力原样")
+	_eq(avatar.money, 200, "拒绝时钱原样")
+
+
+## M27：训练师实体（D-135）。建城后凡城里存在合格的佣兵（非长者），训练师职位
+## 就会指派成具名 NPC；空缺只应发生在这座城恰好一个合格佣兵都没有时——职位
+## 机制不背锅，城市人口数据背锅（greenwade 在固定世界种子下恰为 0 佣兵）。
+func _test_trainer_entity() -> void:
+	var built: Dictionary = _new_sim(true)
+	var world: WorldState = built["world"]
+	var trainer_cities: int = 0
+	for city_id in world.get_city_ids():
+		var cid: String = str(city_id)
+		var trainer: SimNpc = null
+		var eligible: int = 0
+		for npc in world.get_city_npcs(cid):
+			if str(npc.position_id) == "trainer":
+				trainer = npc
+			if npc.profession_id == "mercenary" and npc.age < npc.lifespan - 15:
+				eligible += 1
+		if eligible > 0:
+			_check(trainer != null, "有合格佣兵的城必派训练师：" + cid)
+		else:
+			_check(trainer == null, "没一个合格佣兵的城自然空缺训练师：" + cid)
+		if trainer != null:
+			trainer_cities += 1
+			_check(trainer.is_named, "持职位的训练师同时是具名 NPC：" + cid)
+			_eq(trainer.profession_id, "mercenary", "训练师出身佣兵：" + cid)
+	_check(trainer_cities >= 1, "至少一座城有训练师（职位机制生效）")
+	# 正例锚点：艾德兰既有合格佣兵又该被派任，逐个验证具体身份
+	var anchor: SimNpc = null
+	for npc in world.get_city_npcs("aedran"):
+		if str(npc.position_id) == "trainer":
+			anchor = npc
+	_check(anchor != null and anchor.is_named and anchor.profession_id == "mercenary",
+		"艾德兰有具名的佣兵训练师")

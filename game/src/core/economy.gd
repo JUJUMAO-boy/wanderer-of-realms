@@ -255,10 +255,15 @@ func get_price(
 	var premium: float = maxf(0.0, city.price_premium)
 
 	var reputation: int = 0
+	var criminal: bool = false
 	if world != null and world.avatar != null:
 		reputation = world.avatar.get_reputation(city_id)
-	var refused: bool = channel == CHANNEL_SHOP and reputation <= _refuse_at
-	# 黑市不问名声：敌视的城在商铺买不到东西，在黑市照样能销赃（D-43）
+		# 罪犯态（M-B，D-134）：善恶低到门槛，正常巷子的店主看都不看你。
+		# 它走的是全局善恶（karma）这一轴，与按城的声望拒卖（reputation）是
+		# 两回事——所以分两句并进 refused，而不是把阈值塞进声望那一个档。
+		criminal = CriminalState.is_criminal(world)
+	var refused: bool = channel == CHANNEL_SHOP and (reputation <= _refuse_at or criminal)
+	# 黑市不问名声：敌视/罪犯态在商铺买不到东西，在黑市照样能销赃（D-43）
 	var reputation_factor: float = 1.0
 	if channel == CHANNEL_SHOP:
 		if reputation >= _respect_threshold:
@@ -304,6 +309,7 @@ func get_price(
 		"securityValue": city.security,
 		"premiumFactor": premium,
 		"reputation": reputation,
+		"criminal": criminal,
 		"reputationFactor": reputation_factor,
 		"channelBuyFactor": buy_factor,
 		"channelSellFactor": sell_factor,

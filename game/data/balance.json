@@ -22,6 +22,16 @@
     "_comment_lairMinDistance": "窝点最近的落地离所有城中心的曼哈顿距离。也让它有 margin 给游荡半径，既不占城门口、也不会越界游出图。",
     "lairMinDistance": 6
   },
+  "criminal": {
+    "_comment": "罪犯态（M-B 剩余，D-134）：善恶(karma)低到门槛即罪犯态，正常巷子里的店主看都不看你——普通商铺拒卖，而有黑市的城（十字路/赤沙/索恩港）黑市渠道恒不问名声，是罪犯唯一的操作通道。变装绕过留后续。",
+    "karmaThreshold": -30
+  },
+  "training": {
+    "_comment": "训练师双币种（M-B 剩余，D-135）：受训花铜币 + 从灵魂刨一丝业力（karma 递减，不透透支死就还能练）。校验用 PlayerAvatar 的 karma 下限，因此 karmaCost 别大到一次扣穿 -100。",
+    "copper": 200,
+    "karmaCost": 2,
+    "skillGain": 6
+  },
   "cityEvolution": {
     "_comment": "《世界模拟量化规则》2.2 节月度演化公式的系数。2.2 节里的「贸易」项不在这里：路线收益属于 Economy 的职责（接口 I-14），由 Economy.settleRoutes 按 9.4 节的数值结算，放在这里会变成两处各加一遍。",
     "birthRate": 0.008,
