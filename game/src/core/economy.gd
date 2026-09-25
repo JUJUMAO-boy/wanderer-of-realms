@@ -256,13 +256,19 @@ func get_price(
 
 	var reputation: int = 0
 	var criminal: bool = false
+	var disguised: bool = false
 	if world != null and world.avatar != null:
 		reputation = world.avatar.get_reputation(city_id)
 		# 罪犯态（M-B，D-134）：善恶低到门槛，正常巷子的店主看都不看你。
 		# 它走的是全局善恶（karma）这一轴，与按城的声望拒卖（reputation）是
 		# 两回事——所以分两句并进 refused，而不是把阈值塞进声望那一个档。
 		criminal = CriminalState.is_criminal(world)
-	var refused: bool = channel == CHANNEL_SHOP and (reputation <= _refuse_at or criminal)
+		# 变装绕过（M-B 收口，D-137）：披上「改头换面」斗篷的一段白昼里，店主
+		# 认不出你，这条轴被豁免；DisguiseGate.is_active 只读布尔、不含当天(Clock)。
+		disguised = DisguiseGate.is_active(world)
+	var refused: bool = channel == CHANNEL_SHOP and (
+		reputation <= _refuse_at or (criminal and not disguised)
+	)
 	# 黑市不问名声：敌视/罪犯态在商铺买不到东西，在黑市照样能销赃（D-43）
 	var reputation_factor: float = 1.0
 	if channel == CHANNEL_SHOP:
@@ -310,6 +316,7 @@ func get_price(
 		"premiumFactor": premium,
 		"reputation": reputation,
 		"criminal": criminal,
+		"disguised": disguised,
 		"reputationFactor": reputation_factor,
 		"channelBuyFactor": buy_factor,
 		"channelSellFactor": sell_factor,
@@ -357,6 +364,10 @@ func is_available(city: City, template: Dictionary, channel: String = CHANNEL_SH
 	# 只能靠采集/制造/掉落——不然"不采就没高级货"这句就落空了。
 	if str(template.get("category", "")) == "material" \
 		and not bool(template.get("baseMaterial", false)):
+		return false
+	# M-B 收口（D-137）：标了 blackMarketOnly 的货（如「改头换面」斗篷）只在黑市上架——
+	# 正常巷子的店主不会进罪犯家的生意。
+	if bool(template.get("blackMarketOnly", false)) and channel != CHANNEL_BLACK_MARKET:
 		return false
 	var rarity: String = str(template.get("rarity", ""))
 	if rarity == RARITY_DRAGONFORGED and city.city_id != _dragonforged_city:

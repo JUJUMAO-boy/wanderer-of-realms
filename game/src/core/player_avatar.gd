@@ -85,6 +85,13 @@ var inventory: Array[String] = []
 var item_instances: Dictionary = {}   ## instanceId -> {templateId, durability, enhancement, modifiers}
 var money: int = 0
 
+## 变装状态（M-B 收口，D-137）：`is_disguised` 是「此刻算不算伪装中」的单一布尔，
+## `disguise_until_day` 是它失效的绝对自然日。放化身上而不放灵魂上是有意的——
+## 伪装是「身体这件皮」的事，转世换体自然清零。main 在每日边界用
+## DisguiseGate.sync 按 `disguise_until_day` 对照当天派生 `is_disguised`。
+var is_disguised: bool = false
+var disguise_until_day: int = -1
+
 ## 负债（铜币）。两个来源都落在这里：出身的初始债务（含天赋「债台高筑」），
 ## 以及随机转生时继承的宿主债务。之所以给债务一个一等字段而不是塞进标记里，
 ## 是因为它要参与界面显示、交易判定与后续委托奖励的抵扣。
@@ -159,6 +166,8 @@ func to_dict() -> Dictionary:
 		"inventory": inventory.duplicate(),
 		"itemInstances": item_instances.duplicate(true),
 		"money": money,
+		"isDisguised": is_disguised,
+		"disguiseUntilDay": disguise_until_day,
 		"debtCopper": debt_copper,
 		"legacy": legacy.duplicate(true),
 		"dragonization": dragonization,
@@ -198,6 +207,8 @@ static func from_dict(data: Dictionary) -> PlayerAvatar:
 		a.inventory.append(str(item))
 	a.item_instances = data.get("itemInstances", {}).duplicate(true)
 	a.money = int(data.get("money", 0))
+	a.is_disguised = bool(data.get("isDisguised", false))
+	a.disguise_until_day = int(data.get("disguiseUntilDay", -1))
 	a.debt_copper = int(data.get("debtCopper", 0))
 	a.legacy = data.get("legacy", {}).duplicate(true)
 	a.dragonization = int(data.get("dragonization", 0))

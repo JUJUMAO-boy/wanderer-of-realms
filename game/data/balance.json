@@ -32,6 +32,23 @@
     "karmaCost": 2,
     "skillGain": 6
   },
+  "steal": {
+    "_comment": "偷窃通道（M-B 收口，D-136）：罪犯被商铺拒卖后的另一条进项。总概率(%) = base + Weather.night_steal_modifier(karma,luck,hour) + (dex-10)*dexPerPoint - city.security*securityPerPoint，再钳 [minPct,maxPct]。得手给铜、成败都扣 karma（偷是罪的底色），败还被逮现行扣该城声誉。",
+    "basePct": 40,
+    "dexPerPoint": 1.0,
+    "securityPerPoint": 0.25,
+    "copperMin": 20,
+    "copperMax": 80,
+    "karmaOnSuccess": 2,
+    "repOnCaught": 8,
+    "karmaOnCaught": 2,
+    "minPct": 5,
+    "maxPct": 95
+  },
+  "disguise": {
+    "_comment": "变装绕过（M-B 收口，D-137）：披上「改头换面」斗篷后这段自然白昼里商铺认不出罪犯态，正常交易。斗篷只在黑市上架（items.json 的 blackMarketOnly）。",
+    "durationDays": 3
+  },
   "cityEvolution": {
     "_comment": "《世界模拟量化规则》2.2 节月度演化公式的系数。2.2 节里的「贸易」项不在这里：路线收益属于 Economy 的职责（接口 I-14），由 Economy.settleRoutes 按 9.4 节的数值结算，放在这里会变成两处各加一遍。",
     "birthRate": 0.008,

@@ -249,6 +249,12 @@ func run_all() -> int:
 	_test_criminal_state_economy()
 	_test_training_gate()
 	_test_trainer_entity()
+	print("=== M28 偷窃通道 · 变装绕过 ===")
+	_test_steal_gate_pct()
+	_test_steal_gate_attempt()
+	_test_disguise_gate()
+	_test_disguise_economy()
+	_test_disguise_item_stock()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -8559,3 +8565,201 @@ func _test_trainer_entity() -> void:
 			anchor = npc
 	_check(anchor != null and anchor.is_named and anchor.profession_id == "mercenary",
 		"艾德兰有具名的佣兵训练师")
+
+
+## M28：偷窃概率（D-136）。夜比昼高 20、业力越恶越好偷、DEX 越高越好偷、治安越高越难，
+## 且 totalPct 钳在 [minPct,maxPct]。
+func _test_steal_gate_pct() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-thief"
+	avatar.set_attribute(PlayerAvatar.ATTR_DEXTERITY, 10)
+	avatar.karma = 0
+	avatar.luck = 0
+	world.avatar = avatar
+	var city: City = world.get_city("port_thorne")
+	city.security = 0
+	# 无化身：接口拒
+	var bare: WorldState = WorldState.new()
+	_check(StealGate.success_pct(bare, "port_thorne", 22).is_empty(), "无化身时无可取概率")
+	# 夜比昼高 20
+	var n: Dictionary = StealGate.success_pct(world, "port_thorne", 22)
+	var d: Dictionary = StealGate.success_pct(world, "port_thorne", 10)
+	_check(bool(n["ok"]) and bool(d["ok"]), "有化身时能取概率")
+	_eq(int(n["totalPct"]) - int(d["totalPct"]), 20, "夜比昼好偷 +20")
+	# 业力越恶越好偷
+	avatar.karma = -100
+	var evil: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	avatar.karma = 100
+	var saint: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	_check(evil > saint, "恶比善更好偷")
+	# DEX 越高越好偷
+	avatar.karma = 0
+	avatar.set_attribute(PlayerAvatar.ATTR_DEXTERITY, 10)
+	var low_dex: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	avatar.set_attribute(PlayerAvatar.ATTR_DEXTERITY, 20)
+	var high_dex: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	_check(high_dex > low_dex, "毒手越巧越好偷")
+	# 治安越高越难
+	var calm: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	city.security = 80
+	var guarded: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	_check(guarded < calm, "治安越高越难偷")
+	# 钳制：把概率推爆/推到负，落在 [minPct,maxPct]
+	avatar.karma = -100
+	avatar.luck = 100
+	avatar.set_attribute(PlayerAvatar.ATTR_DEXTERITY, 99)
+	city.security = 0
+	var blown: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	_eq(blown, 95, "概率推爆钳在 maxPct(95)")
+	avatar.karma = 100
+	avatar.luck = -100
+	avatar.set_attribute(PlayerAvatar.ATTR_DEXTERITY, 1)
+	city.security = 100
+	var sunk: int = int(StealGate.success_pct(world, "port_thorne", 22)["totalPct"])
+	_eq(sunk, 5, "概率砸穿钳在 minPct(5)")
+
+
+## M28：扒窃一次的执行（D-136）。成败由种子 rng 定；得手给铜+扣业力，被逮扣声誉+扣业力。
+func _test_steal_gate_attempt() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-thief-run"
+	avatar.set_attribute(PlayerAvatar.ATTR_DEXTERITY, 10)
+	avatar.karma = 0
+	avatar.luck = 0
+	avatar.money = 100
+	avatar.set_reputation("port_thorne", 0)
+	world.avatar = avatar
+	var city: City = world.get_city("port_thorne")
+	city.security = 0
+	var rng := DeterministicRNG.new(20260925)
+	var successes: int = 0
+	var caught: int = 0
+	var money_before: int = avatar.money
+	var karma_before: int = avatar.karma
+	var rep_before: int = avatar.get_reputation("port_thorne")
+	# 白天(18 点)、概率适中：30 次里成与败都该出现，且每次一定处理完
+	for i in range(30):
+		var res: Dictionary = StealGate.attempt(world, "port_thorne", rng, 18)
+		_check(bool(res.get("ok", false)), "第 %d 次扒窃一定处理完" % i)
+		match str(res.get("outcome", "")):
+			"success":
+				successes += 1
+			"caught":
+				caught += 1
+			_:
+				_check(false, "结果必须有明确成败")
+	_check(successes > 0 and caught > 0, "30 次里成与败都出现（分支都覆盖）")
+	# 业力每次扒窃都沉 2（成败同价），30 次共 60
+	_eq(avatar.karma, karma_before - 60, "30 次扒窃业力共沉 60")
+	_check(avatar.money > money_before, "得手过就进铜")
+	# 声誉按被逮次数扣，但被 set_reputation 钳在 [-100,100]；此处必然被抓紧而砸穿下限
+	var expected_rep: int = clampi(rep_before - 8 * caught, PlayerAvatar.REPUTATION_MIN, PlayerAvatar.REPUTATION_MAX)
+	_eq(avatar.get_reputation("port_thorne"), expected_rep, "声誉按被逮次数扣（且钳下限）")
+	# 没下手的场合：无化身拒
+	var empty: Dictionary = StealGate.attempt(WorldState.new(), "port_thorne", rng, 18)
+	_check(not bool(empty.get("ok", false)), "无化身下不了手")
+
+
+## M28：变装时效（D-137）。apply 扣斗篷设时效与标志；sync 按当天过期自动剥下。
+func _test_disguise_gate() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-cloak"
+	world.avatar = avatar
+	# 没有斗篷时披不上
+	_check(not DisguiseGate.has_disguise_item(world), "初始没带斗篷")
+	var no_item: Dictionary = DisguiseGate.apply(world, 10)
+	_check(not bool(no_item.get("ok", false)), "没斗篷披不上")
+	# 给一件再披
+	_give(avatar, "consumable_disguise", "cloak-1")
+	_check(DisguiseGate.has_disguise_item(world), "带了一件斗篷")
+	_eq(DisguiseGate.balance_duration(), 3, "时效取自 balance.disguise.durationDays")
+	var applied: Dictionary = DisguiseGate.apply(world, 10)
+	_check(bool(applied.get("ok", false)), "披上斗篷")
+	_eq(int(applied["untilDay"]), 13, "第 10 天披上管到第 13 天")
+	_check(not DisguiseGate.has_disguise_item(world), "披上即扣掉那件斗篷")
+	_check(DisguiseGate.is_active(world), "披着即伪装中")
+	# 到日子没到：仍伪装中；过了：自动剥下
+	DisguiseGate.sync(world, 13)
+	_check(DisguiseGate.is_active(world), "第 13 天仍伪装中")
+	DisguiseGate.sync(world, 14)
+	_check(not DisguiseGate.is_active(world), "第 14 天伪装过期剥下")
+	_eq(world.avatar.disguise_until_day, -1, "过期后时效归 -1")
+	# 主动脱下
+	_give(avatar, "consumable_disguise", "cloak-2")
+	DisguiseGate.apply(world, 20)
+	_check(DisguiseGate.is_active(world), "重新披上")
+	DisguiseGate.remove(world)
+	_check(not DisguiseGate.is_active(world), "主动脱下后不算伪装中")
+
+
+## M28：变装绕过拒卖（D-137）。罪犯+未变装店铺拒卖；罪犯+变装店铺不拒；
+## 变装剥下再拒；黑市恒豁免；报价带 disguised 标记；声誉那条轴不被变装豁免。
+func _test_disguise_economy() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	_set_all_dimensions(world, "port_thorne", 50)
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-criminal-cloak"
+	avatar.money = 100000
+	world.avatar = avatar
+	avatar.set_reputation("port_thorne", 50)
+	avatar.karma = -31
+	# 未变装的罪犯：商铺拒卖
+	var shop: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_SHOP
+	)
+	_check(bool(shop["refused"]), "变装前的罪犯进不去商铺")
+	_check(bool(shop["criminal"]), "仍是罪犯态")
+	_check(not bool(shop["disguised"]), "未变装则 disguised 为假")
+	# 变装后：商铺不拒
+	avatar.is_disguised = true
+	var cloaked: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_SHOP
+	)
+	_check(not bool(cloaked["refused"]), "变装中的罪犯能正常进商铺")
+	_check(bool(cloaked["disguised"]), "报价带出 disguised 标记")
+	_check(bool(cloaked["criminal"]), "业力仍是恶的，只是被变装豁免")
+	# 剥下后再拒
+	avatar.is_disguised = false
+	var unmasked: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_SHOP
+	)
+	_check(bool(unmasked["refused"]), "变装剥下后商铺又拒")
+	# 黑市恒豁免：变不变装都放行
+	var black: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_BLACK_MARKET
+	)
+	_check(not bool(black["refused"]), "黑市恒豁免罪犯态")
+	# 变装豁免的是"业力"这条轴，声誉坏透那条（reputation）不吃变装
+	avatar.is_disguised = true
+	avatar.karma = 0
+	avatar.set_reputation("port_thorne", -80)
+	var bad_rep: Dictionary = sim.economy.get_price(
+		world, "port_thorne", "consumable_healing_potion", Economy.CHANNEL_SHOP
+	)
+	_check(bool(bad_rep["refused"]), "变装挡不住声望坏透的拒卖（轴不分家）")
+
+
+## M28：「改头换面」只上黑市（D-137）。blackMarketOnly 门控：商铺货架没有、黑市有。
+func _test_disguise_item_stock() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	# 拉高发展度，fine 稀有度的货能通过稀有度门槛
+	_set_all_dimensions(world, "port_thorne", 80)
+	var shop_stock: Array = sim.economy.list_stock(world, "port_thorne", Economy.CHANNEL_SHOP)
+	for q in shop_stock:
+		_check(str(q.get("templateId", "")) != "consumable_disguise", "商铺货架不该有斗篷")
+	var black_stock: Array = sim.economy.list_stock(world, "port_thorne", Economy.CHANNEL_BLACK_MARKET)
+	var found: bool = false
+	for q in black_stock:
+		if str(q.get("templateId", "")) == "consumable_disguise":
+			found = true
+	_check(found, "黑市货架里有「改头换面」斗篷")

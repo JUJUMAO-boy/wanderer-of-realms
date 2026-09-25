@@ -154,11 +154,13 @@ func add_to_stock(template_id: String) -> void:
 	_stock.append({"templateId": template_id, "template": template})
 
 
-## 从可交易货池里抽一车。货池只取武器/防具/消耗品（行商卖得动的）。
+## 从可交易货池里抽一车。货池只取武器/防具/消耗品（行商卖得动的）；
+## 标了 blackMarketOnly 的货（如「改头换面」斗篷，M-B D-137）只进黑市，行商不拉。
 func _tradable_pool() -> Array:
 	var pool: Array = []
 	for template in ContentLoader.get_items():
-		if STOCK_CATEGORIES.has(str(template.get("category", ""))):
+		if STOCK_CATEGORIES.has(str(template.get("category", ""))) \
+			and not bool(template.get("blackMarketOnly", false)):
 			pool.append(template)
 	return pool
 

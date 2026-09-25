@@ -325,6 +325,8 @@ var _dungeon_combat: bool = false
 ## 这一场是不是训练战（M-B，D-135）：打赢给熟练度溢价、打输学费不退，
 ## 不进遭遇/委托那套掉落与世界标记结算。
 var _sparring_active: bool = false
+## 扒窃会话号（M-B 收口，D-136）：混进种子，同一座城同一时序完全可复现。
+var _steal_seq: int = 0
 ## 副本宝箱内容（templateId 数组，与 layout.treasures 对齐）；下楼层时重新生成。
 var _dungeon_loot: Array = []
 ## 当前层是不是补给型主题（小镇哨站）：把这一层清完可以在哨站歇脚回满一口气。
@@ -534,6 +536,9 @@ func _on_period_reached(period: String, elapsed_months: int, _tick_in_month: int
 	if _sim == null:
 		return
 	match period:
+		ClockCore.PERIOD_DAY:
+			# 变装时效（M-B 收口，D-137）：过一天就照着当天判一次，过期自动剥下。
+			DisguiseGate.sync(_world, Clock.now().day)
 		ClockCore.PERIOD_MONTH:
 			var report: Dictionary = _sim.settle_month(elapsed_months)
 			_last_deltas = report["cityDeltas"]
@@ -4146,6 +4151,55 @@ func _run_city_space_raid() -> void:
 	_start_shop_raid(str(_city_space.get("city_id", "")))
 
 
+## 扒窃（P 键，M-B 收口 D-136）：挨着居民才下得了手。成败由 StealGate 判定，
+## 得手给铜、成败都扣业力、被逮还掉这座城的声誉——都是当场落账。
+func _city_space_steal() -> void:
+	if _world == null or _world.avatar == null or _city_space.is_empty() or _combat != null:
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var npc_id: String = CitySpace.near_npc(layout, _city_space["player"])
+	if npc_id.is_empty():
+		_status.text = "旁边没有可下手的居民。"
+		_refresh()
+		return
+	var city_id: String = str(_city_space.get("city_id", ""))
+	_steal_seq += 1
+	var rng := DeterministicRNG.new((_world.world_seed ^ (_steal_seq * 1597334677)) & 0xFFFFFFFF)
+	var result: Dictionary = StealGate.attempt(_world, city_id, rng, Clock.now().hour)
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("reason", "下手落空了。"))
+		_refresh()
+		return
+	if str(result.get("outcome", "")) == "success":
+		_status.text = "你神不知鬼不觉地顺走 %d 铜。夜里下手，回报更厚。" % int(result["copper"])
+		_note_events(["你在%s里摸空了一只钱袋，净赚 %d 铜，业力也随之沉了些。" % [
+			_world.get_city(city_id).display_name if _world.get_city(city_id) != null else city_id,
+			int(result["copper"])
+		]])
+	else:
+		_status.text = "被逮个正着：%s 的人都记住你这张脸了。" % str(
+			_world.get_city(city_id).display_name if _world.get_city(city_id) != null else city_id
+		)
+		_note_events(["你在%s扒窃被逮，被斥为贼徒，业力与声名双沉。" % city_id])
+	_refresh()
+
+
+## 变装（X 键，M-B 收口 D-137）：披上「改头换面」斗篷，这段时间罪犯态也能进商铺。
+func _use_disguise() -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var result: Dictionary = DisguiseGate.apply(_world, Clock.now().day)
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("reason", "你没有可披的斗篷。"))
+		_refresh()
+		return
+	_status.text = "你披上「改头换面」斗篷，换了个面貌。之后 %d 天内，巷子里的店主认不出你。" % int(
+		result["duration"]
+	)
+	_note_events(["你披上斗篷换了个面貌，这段白昼商铺不再拒你于门外。"])
+	_refresh()
+
+
 ## 按建筑功能分流到既有视图。投资类回城市总览去投（M12 的投资就在那里）。
 func _city_space_open_kind(kind: String) -> void:
 	var city_id: String = str(_city_space.get("city_id", ""))
@@ -4201,6 +4255,10 @@ func _city_space_input(key_event: InputEventKey) -> void:
 			_switch_view(VIEW_CITY)
 		KEY_I:
 			_run_city_space_raid()
+		KEY_P:
+			_city_space_steal()
+		KEY_X:
+			_use_disguise()
 		KEY_ESCAPE:
 			_leave_city_space()
 		KEY_F5:
