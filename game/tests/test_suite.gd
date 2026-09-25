@@ -232,6 +232,11 @@ func run_all() -> int:
 	_test_world_seen_lair()
 	_test_world_seen_words()
 	_test_world_seen_era_seed()
+	print("=== M31 大地图随机人物（WandererPool）===")
+	_test_wanderer_fill_spec()
+	_test_wanderer_trouble()
+	_test_wanderer_hire()
+	_test_wanderer_advance()
 	print("=== M25 神系与昼夜天候 ===")
 	_test_gods_config()
 	_test_god_blessing_devotion()
@@ -8281,6 +8286,73 @@ func _test_world_seen_era_seed() -> void:
 	var a: Dictionary = _seen_built(s0)
 	var b: Dictionary = _seen_built(s1)
 	_check(not (_seen_snapshot(a["seen"]) == _seen_snapshot(b["seen"])), "纪年不同整张图纸不同")
+
+# --- M31 大地图随机人物（WandererPool）---
+
+## fill_spec：同 (world_seed, slot, gen) 逐位一致；不同名额/不同代际 → 不同身份；39 名额三型齐。
+func _test_wanderer_fill_spec() -> void:
+	var seed: int = 20260922
+	var f0: Dictionary = WandererPool.fill_spec(seed, 5, 0)
+	var f1: Dictionary = WandererPool.fill_spec(seed, 5, 0)
+	_eq(str(f0["name"]), str(f1["name"]), "同世界同名额同代际，名字确定")
+	_eq(str(f0["archetype"]), str(f1["archetype"]), "同世界同名额同代际，职业确定")
+	_eq(f0, f1, "整张 spec 逐位一致")
+	var g0: Dictionary = WandererPool.fill_spec(seed, 4, 0)
+	_check(str(g0["name"]) != str(f0["name"]), "不同名额是不同人")
+	var n0: Dictionary = WandererPool.fill_spec(seed, 5, 1)
+	_check(str(n0["name"]) != str(f0["name"]), "同一个名额换一代，姓名跟着变（走了接替）")
+	# 名额编号定职业（warrior/archer/mage 循环），39 名里三种都必然出现
+	var types := {}
+	for slot in range(WandererPool.capacity()):
+		types[str(WandererPool.fill_spec(seed, slot, 0)["archetype"])] = true
+	_eq(types.size(), 3, "39 个名额把战士/弓手/术师三种职业铺满")
+	_eq(WandererPool.capacity(), 39, "人口池容量 39")
+
+## trouble：能查到个人麻烦文案；未知 id 返回空；麻烦池够抽。
+func _test_wanderer_trouble() -> void:
+	_check(WandererPool.trouble_of("debt").has("label"), "能按 id 取到个人麻烦文案")
+	_check(not WandererPool.trouble_of("no-such-id").has("label"), "未知麻烦 id 返回空")
+	_check(WandererPool.trouble_defs().size() >= 4, "麻烦池够抽")
+
+## hire_contract：契约 7 天、unitId 带名额号；combat_spec 能吃到 fill_spec 的冒险者为随从。
+func _test_wanderer_hire() -> void:
+	var ct: Dictionary = WandererPool.hire_contract(5, 120)
+	_eq(int(ct["daysLeft"]), 7, "雇佣契约 7 天")
+	_eq(str(ct["unitId"]), "wanderer-005", "unitId 带名额号，与模拟居民(npId)隔离")
+	var spec: Dictionary = WandererPool.fill_spec(20260922, 5, 0)
+	var cs: Dictionary = WandererPool.combat_spec(spec)
+	_eq(str(cs["name"]), str(spec["name"]), "战斗随从规格带上冒险者名字")
+	_eq(str(cs["side"]), Combat.SIDE_PLAYER, "冒险者随从是我方单位")
+	_check(int(cs["weaponAttack"]) > 0, "随从带武器值")
+	_check(int(cs["threatLevel"]) >= 1, "随从带威胁等级")
+
+## advance：空缺必补满；送医到期回流或递补；事件产出一条；满额守恒。
+func _test_wanderer_advance() -> void:
+	var seed: int = 20260922
+	# 只有 1 条在野 → 空缺一个月内补满，身份未被换走（slot 0 仍是 gen 0）
+	var sparse: Array = [ _wand_entry(seed, 0, 0) ]
+	var r_ok: Array = WandererPool.advance(sparse, seed, 1, DeterministicRNG.new(777))
+	_eq((r_ok[0] as Array).size(), WandererPool.capacity(), "名册空缺一个月补满")
+	_eq(int((r_ok[0] as Array)[0]["gen"]), 0, "在野者不因补缺而换人")
+	# 全部送医到期：无论回流还是递补，到期者当天离开医院、名册仍满、且确有事件
+	var sick: Array = []
+	for slot in range(3):
+		sick.append(_wand_entry(seed, slot, slot, WandererPool.STATUS_HOSPITAL, 5))
+	var r_hosp: Array = WandererPool.advance(sick, seed, 5, DeterministicRNG.new(99))
+	var out_hosp: Array = r_hosp[0]
+	_eq(out_hosp.size(), WandererPool.capacity(), "送医到期当月名额仍满")
+	for e in out_hosp:
+		_check(str(e["status"]) != WandererPool.STATUS_HOSPITAL, "到期者本月离开医院")
+	_check((r_hosp[1] as Array).size() >= 1, "名册流转有事件沉淀")
+
+## 构造一条名册条目的简化 helper（按种子派生细节）。
+func _wand_entry(seed: int, slot: int, gen: int, status: String = WandererPool.STATUS_ROAMING, until: int = 0) -> Dictionary:
+	var spec: Dictionary = WandererPool.fill_spec(seed, slot, gen)
+	return {
+		"slot": slot, "gen": gen, "archetype": spec["archetype"], "name": spec["name"],
+		"gender": spec["gender"], "age": spec["age"], "troubleId": spec["troubleId"],
+		"hireCost": spec["hireCost"], "status": status, "hospitalUntil": until,
+	}
 
 # --- M25 神系与昼夜天候 ---
 

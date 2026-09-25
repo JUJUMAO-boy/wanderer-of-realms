@@ -144,6 +144,8 @@ static func bootstrap(p_world: WorldState) -> Array:
 		sim._sync_city_npcs(str(city_id), true)
 		events.append_array(sim._assign_positions(str(city_id), 0))
 		p_world.record_history(p_world.get_city(str(city_id)))
+	# 冒险者名册（M-E）：新世界开局补满 39 名可见冒险者占满名额。
+	p_world.ensure_wanderer_roster(0)
 	return events
 
 
@@ -300,6 +302,14 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 			chronicle.record(world, chronicle.fallen_entry(world, npc, "随从%s的契约期满，好聚好散。" % npc.given_name, month))
 		world.active_hires.erase(hire_id)
 		notable.append(event("", month, EVENT_NPC, "随从%s解约离队" % name))
+
+	# 冒险者名册（M-E）：每月推进——空额必补、送医到期回流或永久离开腾额、离开由新人接替。
+	world.ensure_wanderer_roster(month)
+	var w_rng := DeterministicRNG.new((world.world_seed ^ (month * 733977134)) & 0xFFFFFFFF)
+	var w_result: Array = WandererPool.advance(world.wanderer_roster, world.world_seed, month, w_rng)
+	world.wanderer_roster = w_result[0]
+	for w_event: String in (w_result[1] as Array):
+		notable.append(event("", month, EVENT_NPC, w_event))
 
 	if detail:
 		_record_history()

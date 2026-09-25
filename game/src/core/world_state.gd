@@ -81,6 +81,25 @@ var npc_talk_cooldowns: Dictionary = {}
 var active_hires: Dictionary = {}
 var hire_seq: int = 0
 
+## 可见冒险者名册（M-E）：Array[{slot, gen, archetype, name, gender, age, troubleId, hireCost,
+## status, hospitalUntil}]。管『谁占名额、在野/医院、雇到哪天』，细节由种子派生（WandererPool），
+## 这里只存生命周期状态，随世界落盘（D-142）。名册永远满 `WandererPool.capacity()` 条，空缺即补。
+var wanderer_roster: Array = []
+
+## 补满冒险者名册到满额（空缺即补，M-E）。首次建新世界与读档后由世界模拟/主场景调用；
+## 之后的名额流转（送医/离开/接替）随 `WandererPool.advance` 按月推进。
+func ensure_wanderer_roster(month: int) -> void:
+	while wanderer_roster.size() < WandererPool.capacity():
+		var slot: int = wanderer_roster.size()
+		var spec: Dictionary = WandererPool.fill_spec(world_seed, slot, 0)
+		wanderer_roster.append({
+			"slot": slot, "gen": 0, "archetype": str(spec.get("archetype", "warrior")),
+			"name": str(spec.get("name", "无名冒险者")), "gender": str(spec.get("gender", "male")),
+			"age": int(spec.get("age", 20)), "troubleId": str(spec.get("troubleId", "")),
+			"hireCost": int(spec.get("hireCost", 150)),
+			"status": WandererPool.STATUS_ROAMING,
+		})
+
 
 static func create(world_seed_value: int) -> WorldState:
 	var w := WorldState.new()
@@ -509,8 +528,28 @@ func to_dict() -> Dictionary:
 		"npcTalkCooldowns": npc_talk_cooldowns.duplicate(true),
 		"activeHires": hire_out,
 		"hireSeq": hire_seq,
+		"wandererRoster": _wanderer_out(),
 		"playerAvatar": avatar.to_dict() if avatar != null else {},
 	}
+
+
+## 把冒险者名册深拷贝一份用于存档（只留序列化字段，拒绝塞进不该落盘的派生值）。
+func _wanderer_out() -> Array:
+	var out: Array = []
+	for e: Dictionary in wanderer_roster:
+		out.append({
+			"slot": int(e.get("slot", 0)),
+			"gen": int(e.get("gen", 0)),
+			"archetype": str(e.get("archetype", "warrior")),
+			"name": str(e.get("name", "无名冒险者")),
+			"gender": str(e.get("gender", "male")),
+			"age": int(e.get("age", 20)),
+			"troubleId": str(e.get("troubleId", "")),
+			"hireCost": int(e.get("hireCost", 150)),
+			"status": str(e.get("status", WandererPool.STATUS_ROAMING)),
+			"hospitalUntil": int(e.get("hospitalUntil", 0)),
+		})
+	return out
 
 
 ## 把存档的可变状态合并到由配置构造好的世界对象上。
@@ -649,3 +688,22 @@ func apply_dict(data: Dictionary) -> void:
 			"monthsLeft": int(rec.get("monthsLeft", 0)),
 			"contractSeq": int(rec.get("contractSeq", 0)),
 		}
+	# 可见冒险者名册（M-E）。旧档没有该键（迁移零步），名单由世界模拟按名额补齐。
+	wanderer_roster.clear()
+	var roster_in: Array = data.get("wandererRoster", []) as Array
+	for raw_entry in roster_in:
+		if not (raw_entry is Dictionary):
+			continue
+		var e: Dictionary = raw_entry
+		wanderer_roster.append({
+			"slot": int(e.get("slot", 0)),
+			"gen": int(e.get("gen", 0)),
+			"archetype": str(e.get("archetype", "warrior")),
+			"name": str(e.get("name", "无名冒险者")),
+			"gender": str(e.get("gender", "male")),
+			"age": int(e.get("age", 20)),
+			"troubleId": str(e.get("troubleId", "")),
+			"hireCost": int(e.get("hireCost", 150)),
+			"status": str(e.get("status", WandererPool.STATUS_ROAMING)),
+			"hospitalUntil": int(e.get("hospitalUntil", 0)),
+		})

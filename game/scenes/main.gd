@@ -3084,6 +3084,11 @@ func _encounter_advance(steps: int) -> void:
 		else:
 			_trigger_visible_dungeon(hit["node"])
 		return
+	# M-E：走上在野冒险者 → 揭示他带着什么「个人麻烦」。送医中的不在地图上，seen 优先。
+	var wanderer_hit: Dictionary = _wanderer_at(pos)
+	if not wanderer_hit.is_empty():
+		_reveal_wanderer(wanderer_hit)
+		return
 	# 野外随机遭遇已被可见怪物取代，不再按步数掷对打。游方商车的随机偶遇保留，
 	# 但照旧按 stepInterval 定价节奏走（不至于每走一步都迎面一辆车）。
 	_encounter_steps += maxi(0, steps)
@@ -5871,6 +5876,9 @@ func _draw_map() -> void:
 	# 自己消失、窝点里的怪还在小范围游荡；图上看得见的才是这世界当下正在发生的。
 	if not _seen.is_empty():
 		_draw_seen_markers()
+	# M-E：大地图随机人物——39 名在野冒险者（明黄菱形），与怪/遗构同台但更亮。
+	if not _world.wanderer_roster.is_empty():
+		_draw_wanderer_markers()
 
 	# 化身：青色小圆。行走中就画在插值出来的位置上，并把后续路线高亮出来。
 	if _world.avatar != null:
@@ -5907,6 +5915,81 @@ func _draw_seen_markers() -> void:
 		var mark: Vector2 = MAP_ORIGIN + Vector2(p.x * TILE, p.y * TILE)
 		draw_circle(mark, 2.0, Color(0.87, 0.36, 0.38))
 		draw_circle(mark, 0.9, Color(0.35, 0.08, 0.08))
+
+
+# --- M31 大地图随机人物（M-E）---
+#
+# 39 名可见冒险者（战士/弓手/术师）人在地图上游走：明黄菱形标记、随游荡桶挪位，
+# 走上一位会揭示他带着什么「个人麻烦」。身份/职业/麻烦由世界种子确定性派生
+# （WandererPool），名册生命周期落盘 world.wanderer_roster（空缺即补，D-142）。
+# 黄金牌雇佣/放倒的完整界面走随从系统，留待后续衔接；规则层 hire_contract/combat_spec
+# 已可无头钉测（D-143）。
+
+const _WANDERER_ARCHETYPE_LABELS: Dictionary = {
+	"warrior": "战士", "archer": "弓手", "mage": "术师",
+}
+
+
+## 某名冒险者此刻在小地图的落点：身份盐 ⊕ 游荡桶 → 确定性挪动（跟怪一样看得见在动），
+## 落在网格内、避开城市格。只服务绘制/命中，不落盘（细节由种子派生）。
+func _wanderer_pos(entry: Dictionary) -> Vector2i:
+	if _world == null or _grid == null:
+		return Vector2i(1, 1)
+	var seed: int = WandererPool.slot_seed(
+		int(_world.world_seed), int(entry.get("slot", 0)),
+		int(entry.get("gen", 0)) + _seen_bucket)
+	var rng := DeterministicRNG.new(seed & 0xFFFFFFFF)
+	for attempt in range(24):
+		var x: int = rng.range_int(1, _grid.width - 2)
+		var y: int = rng.range_int(1, _grid.height - 2)
+		if _grid.get_city_id_at(x, y).is_empty():
+			return Vector2i(x, y)
+	return Vector2i(1, 1)
+
+
+## 格子是否站着一名（在野）冒险者。送医中的不在地图上，不算。
+func _wanderer_at(pos: Vector2i) -> Dictionary:
+	if _world == null:
+		return {}
+	for e: Dictionary in _world.wanderer_roster:
+		if str(e.get("status", "")) == WandererPool.STATUS_HOSPITAL:
+			continue
+		if _wanderer_pos(e) == pos:
+			return e
+	return {}
+
+
+## 走近一名在野冒险者：揭示他是谁、哪一型、带着什么「个人麻烦」。事件入地图日志。
+func _reveal_wanderer(entry: Dictionary) -> void:
+	if entry.is_empty() or _world == null:
+		return
+	var spec: Dictionary = WandererPool.fill_spec(
+		int(_world.world_seed), int(entry.get("slot", 0)), int(entry.get("gen", 0)))
+	var trouble: Dictionary = WandererPool.trouble_of(str(spec.get("troubleId", "")))
+	var label: String = str(trouble.get("label", "这人没话可说"))
+	_note_events(["遇上冒险者「%s」——%s，%s" % [
+		str(spec.get("name", "某冒险者")),
+		str(_WANDERER_ARCHETYPE_LABELS.get(str(spec.get("archetype", "")), "游民")),
+		label]])
+
+
+## 画大地图可见的冒险者（M-E）：在野者是明黄菱形 + 亮核（比绯红怪点更亮——人是活的，
+## 怪的凶是冷的）。送医中的不画——被放倒的人不在这片大地上。
+func _draw_wanderer_markers() -> void:
+	if _world == null or _grid == null:
+		return
+	for e: Dictionary in _world.wanderer_roster:
+		if str(e.get("status", "")) == WandererPool.STATUS_HOSPITAL:
+			continue
+		var p := _wanderer_pos(e)
+		var mark: Vector2 = MAP_ORIGIN + Vector2(p.x * TILE, p.y * TILE)
+		var half := Vector2(2.4, 2.4)
+		var corners := PackedVector2Array([
+			mark + Vector2(0, -half.y), mark + Vector2(half.x, 0),
+			mark + Vector2(0, half.y), mark + Vector2(-half.x, 0),
+		])
+		draw_colored_polygon(corners, Color(0.93, 0.78, 0.38))
+		draw_circle(mark, 1.1, Color(0.45, 0.30, 0.05))
 
 
 ## 把 _walk 里尚未走到的路线用柔金细线 + 圆点画出来（从化身当前位置串到终点）。

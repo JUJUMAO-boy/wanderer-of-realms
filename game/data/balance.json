@@ -534,5 +534,36 @@
       "commerce": "guard",
       "knowledge": "ranged"
     }
+  },
+  "wanderer": {
+    "_comment": "大地图随机人物（M-E）：39 名可见冒险者（战士/弓手/术师）的人口池。名册(world.wanderer_roster)落盘管『谁占名额、roaming/医院、雇到哪天』，细节（名字/外表/麻烦/卖相）由世界种子⊕名额⊕月份确定性派生不落盘——空缺即补、送医回流、走了接替。",
+    "capacity": 39,
+    "archetypes": ["warrior", "archer", "mage"],
+    "givenNames": ["织温", "鸦羽", "孤崖", "苔刻", "秤砣", "灯芯", "榫眼", "灰绳", "栎影", "柳末", "磬尘", "苔原", "鹿角", "霜刃", "桐油", "野荻"],
+    "familyNames": ["陈", "秦", "洛", "苏", "木", "闻", "方", "祝", "荆", "祁", "冯", "苗"],
+    "hireCost": 150,
+    "hireCostArcherMult": 1.1,
+    "hireCostMageMult": 1.3,
+    "hireDays": 7,
+    "armor": 3,
+    "leavePct": 0.25,
+    "weaponByArchetype": {
+      "warrior": { "attack": 8, "range": 1 },
+      "archer": { "attack": 6, "range": 3 },
+      "mage": { "attack": 9, "range": 2 }
+    },
+    "skillByArchetype": { "warrior": "guard", "archer": "ranged", "mage": "ranged" },
+    "tendencyByArchetype": { "warrior": "guard", "archer": "ranged", "mage": "guard" },
+    "tendencyDefault": "guard",
+    "troubles": [
+      { "id": "debt", "label": "欠了一笔说不清来历的账", "desc": "他逢人就打听哪里能快些还上那笔账，可账主到底是谁，他自己也说不清。" },
+      { "id": "rival", "label": "被一个名字追着跑", "desc": "只要有人提起那个名字，他脸上的表情就像被冰水泼过——却又偏要假装没听见。" },
+      { "id": "sick", "label": "带病上路，整夜咳", "desc": "远远听着露宿处传来一整夜的咳嗽，那声响不像是从一个自称『只是着了凉』的人嘴里出来的。" },
+      { "id": "hollow", "label": "梦里总回到同一座塌了的城", "desc": "他说那座城还在，只是谁也不信；他记得每一条街的走向，却没有一张地图能对上。" },
+      { "id": "cursed", "label": "身上带着一件不敢摘的东西", "desc": "他睡觉都要搂着那只旧匣子。有人劝他扔掉，他只说『它还压着我，它也护着我』。" },
+      { "id": "lost", "label": "在找一件早就找不回来的信物", "desc": "他反复盘问每一个行商，有没有见过一枚缺了角的旧扣。答没有的人越多，他问得越勤。" },
+      { "id": "fued", "label": "和某座城过不去", "desc": "凡提到那座城，他总先沉默很长一会儿，再岔开说点旁的话——偏又绕不开那城的货价。" },
+      { "id": "pregnant", "label": "带着一个不能说的晚辈", "desc": "他身边常跟着一个半大孩子，说是亲戚家的。可孩子管他叫的辈分，他每次都答得不一致。" }
+    ]
   }
 }
