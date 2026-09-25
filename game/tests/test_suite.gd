@@ -264,6 +264,11 @@ func run_all() -> int:
 	print("=== M29 副本 BOSS · 修正词条 ===")
 	_test_dungeon_modifiers()
 	_test_dungeon_boss()
+	print("=== M32 副本纵深：隐藏暗室 · 专属遗物 · 叙事碎片 ===")
+	_test_dungeon_hidden()
+	_test_dungeon_relics()
+	_test_dungeon_story()
+	_test_dungeon_panel_hatch()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -4294,7 +4299,8 @@ func _test_equipment_slots() -> void:
 	for item in ContentLoader.get_items():
 		var template_id: String = str(item.get("templateId", ""))
 		var category: String = str(item.get("category", ""))
-		if category != "weapon" and category != "armor":
+		var equip: bool = category == "weapon" or category == "armor" or category == "relic"
+		if not equip:
 			# 消耗品与工具（如修补工具）都不占槽位——它们不是穿在身上的东西
 			_eq(str(item.get("slot", "")), "", "非装备不声明槽位：" + template_id)
 			continue
@@ -8925,3 +8931,160 @@ func _test_dungeon_boss() -> void:
 		_check(item_ids.has(str(tid)), "BOSS 掉落模板存在：%s" % str(tid))
 	_check(loot.has("material_gem"), "BOSS 必掉宝石")
 	_check(loot.has("material_boss_corpse"), "BOSS 必掉尸体")
+
+
+## M32 隐藏暗室规则层（DungeonHidden）。
+func _test_dungeon_hidden() -> void:
+	# 太浅的楼层不值得藏东西：minDepth 之下绝不砌房。
+	var shallow: Dictionary = Dungeon.layout("hide-shallow", 1)
+	DungeonHidden.place(shallow, "hide-shallow", 1, {"minDepth": 3, "chanceBp": 10000})
+	_eq(DungeonHidden.rooms(shallow).size(), 0, "minDepth 之下的浅层无暗室")
+
+	# 深层 + 命中：扫几个种子收集至少一间能砌成的房，做结构/封门/揭示校验。
+	var any_hit: bool = false
+	for s in range(40):
+		var key: String = "hide-seed-%d" % s
+		var l: Dictionary = Dungeon.layout(key, 5)
+		DungeonHidden.place(l, key, 5, {"minDepth": 0, "chanceBp": 10000})
+		var rooms: Array = DungeonHidden.rooms(l)
+		if rooms.is_empty():
+			continue
+		any_hit = true
+		var r: Dictionary = rooms[0]
+		_check(str(r.get("kind", "")) in ["treasure", "passage", "fragment"],
+			"暗室 kind 在房型池内：%s" % str(r.get("kind", "")))
+		_check(str(r.get("key", "")).begins_with("hidden-"), "暗室 key 以 hidden- 开头")
+		_check(not bool(r.get("opened", false)), "暗室初始未开")
+		# 封门：暗门与内室各格开前都不可走。
+		var hatch: Dictionary = r.get("hatch", {})
+		_check(not Dungeon.walkable(l, int(hatch["x"]), int(hatch["y"])), "暗门开前不可走")
+		var interior_blocked: bool = true
+		for cell in r.get("interior", []):
+			if Dungeon.walkable(l, int(cell["x"]), int(cell["y"])):
+				interior_blocked = false
+		_check(interior_blocked, "内室各格开前都封在墙里")
+		# reveal：翻开暗门，内室/暗门变为可走，kind 回传，且幂等（二次 reveal 视为已开）。
+		var res: Dictionary = DungeonHidden.reveal(l, str(r.get("key", "")))
+		_check(bool(res.get("opened", false)), "reveal 返回 opened=true")
+		_eq(str(res.get("kind", "")), str(r.get("kind", "")), "reveal 回传同 kind")
+		_check(Dungeon.walkable(l, int(hatch["x"]), int(hatch["y"])), "暗门开后可走")
+		var any_walk: bool = false
+		for cell in r.get("interior", []):
+			if Dungeon.walkable(l, int(cell["x"]), int(cell["y"])):
+				any_walk = true
+		_check(any_walk, "内室开后可走")
+		var twice: Dictionary = DungeonHidden.reveal(l, str(r.get("key", "")))
+		_check(not bool(twice.get("opened", false)), "重复 reveal 幂等（已开不再开）")
+
+		# 确定性：同一 seed_key/depth 对内容相同的 layout 派生同一间（key 一致）。
+		var l2: Dictionary = Dungeon.layout(key, 5).duplicate(true)
+		DungeonHidden.place(l2, key, 5, {"minDepth": 0, "chanceBp": 10000})
+		var rooms2: Array = DungeonHidden.rooms(l2)
+		if not rooms2.is_empty():
+			_eq(str((rooms2[0] as Dictionary).get("key", "")), str(r.get("key", "")),
+				"同 seed/depth 派生同 key 的暗室")
+
+	_check(any_hit, "深层高概率下至少有一个种子砌成暗室")
+
+	# treasure 房落 treasureCell，passage 房落 passageExit，fragment 房落 fragmentId。
+	var l3: Dictionary = Dungeon.layout("hide-kinds", 6)
+	l3["hiddenRooms"] = [
+		{"key": "tk", "kind": "treasure", "hatch": {"x": 3, "y": 4}, "interior": [{"x": 4, "y": 4}], "treasureCell": {"x": 4, "y": 4}, "opened": true},
+		{"key": "pk", "kind": "passage", "hatch": {"x": 5, "y": 4}, "interior": [{"x": 6, "y": 4}], "passageExit": {"x": 6, "y": 4}, "opened": true},
+		{"key": "fk", "kind": "fragment", "hatch": {"x": 7, "y": 4}, "interior": [{"x": 8, "y": 4}], "fragmentId": "frag-1", "opened": true},
+	]
+	_check(DungeonHidden.has_room_kind(l3, "treasure"), "has_room_kind(treasure) 命中")
+	_check(DungeonHidden.has_room_kind(l3, "fragment", false), "has_room_kind 含未开判定")
+	var phatch: Dictionary = DungeonHidden.passage_hatch(l3)
+	_eq(int(phatch.get("x", -1)), 6, "passage 房密道口格读取正确")
+	_eq(DungeonHidden.fragment_id(l3), "frag-1", "fragment 房碎片 id 读取正确")
+
+
+## M32 副本专属遗物规则层（DungeonRelics）。
+func _test_dungeon_relics() -> void:
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	var pool: Array = DungeonRelics.templates()
+	_check(pool.size() >= 1, "存在遗物模板池")
+	for item in pool:
+		_eq(str(item.get("category", "")), "relic", "池内条目皆为 relic 类别")
+		_check(bool(item.get("dungeonOnly", false)), "遗物标 dungeonOnly（只出副本）")
+
+	# 深度方向：同 rng 种子下，深层掷签命中次数不低于浅层。
+	if not pool.is_empty():
+		var deep_hits: int = 0
+		var shallow_hits: int = 0
+		for i in range(200):
+			var rd: DeterministicRNG = DeterministicRNG.new(i)
+			if not DungeonRelics.roll_for(20, rd, {}).is_empty():
+				deep_hits += 1
+			var rs: DeterministicRNG = DeterministicRNG.new(i)
+			if not DungeonRelics.roll_for(2, rs, {}).is_empty():
+				shallow_hits += 1
+		_check(deep_hits >= shallow_hits, "深层宝箱遗物命中率不低于浅层 (%d vs %d)" % [deep_hits, shallow_hits])
+
+	# guaranteed：必在池内抽一件 templateId。
+	var rng: DeterministicRNG = DeterministicRNG.new(99)
+	var gid: String = DungeonRelics.guaranteed(rng, {})
+	_check(not gid.is_empty(), "guaranteed 必掉一件遗物")
+	var ids: Dictionary = {}
+	for item in pool:
+		ids[str(item.get("templateId", ""))] = true
+	_check(ids.has(gid), "guaranteed 抽到的模板存在：%s" % gid)
+
+
+## M32 层内叙事碎片规则层（DungeonStory）。
+func _test_dungeon_story() -> void:
+	var rules: Dictionary = { "story": {
+		"scatterChanceBp": 10000,
+		"fragments": [
+			{"text": "其一"}, {"text": "其二"}, {"text": "其三"},
+		]}}
+	_eq(DungeonStory.total(rules), 3, "碎片总数等于池大小")
+	# 满概率：每层必有一块刻痕石。
+	var f0: Dictionary = DungeonStory.fragment_for("s", 2, rules)
+	_check(not f0.is_empty(), "scatterChanceBp=10000 时 f2 层必有碎片")
+	_eq(int(f0.get("idx", -1)), int(2 % 3), "f2 的碎片段 idx=2%total")
+	_eq(int(f0.get("total", -1)), 3, "碎片携带 total")
+	_check(str(f0.get("text", "")).length() > 0, "碎片带正文")
+	# 确定性：同 seed/depth 取同一段。
+	var f0b: Dictionary = DungeonStory.fragment_for("s", 2, rules)
+	_eq(str(f0b.get("id", "")), str(f0.get("id", "")), "同 seed/depth 碎片 id 一致")
+	# 不同层读不同段（能补完）。
+	var f3: Dictionary = DungeonStory.fragment_for("s", 3, rules)
+	_check(int(f3.get("idx", -1)) == 0 and int(f3.get("idx", -1)) != int(f0.get("idx", -1)),
+		"depth 递增切换碎片段")
+	# 集齐拼全：assemble 按池序返回全部段。
+	var allf: Array = DungeonStory.assemble(rules)
+	_eq(allf.size(), 3, "assemble 拼出全部段")
+	_eq(int((allf[2] as Dictionary).get("idx", -1)), 2, "assemble 段序对齐池序")
+
+
+## M32 暗室在面板上的命中与绘制。
+func _test_dungeon_panel_hatch() -> void:
+	var l: Dictionary = Dungeon.layout("panel-hatch", 4)
+	# 不依赖随机：手钉一间未开的 treasure 暗室在固定格。
+	l["hiddenRooms"] = [{
+		"key": "hp", "kind": "treasure", "opened": false,
+		"treasureCell": {"x": 4, "y": 5},
+		"hatch": {"x": 3, "y": 5},
+		"interior": [{"x": 4, "y": 5}],
+	}]
+	l["blocked"]["3,5"] = true
+	l["blocked"]["4,5"] = true
+	# 避免该格本来就放了敌人/宝箱（那会抢占 hatch 命中），清掉与暗室重合的物什。
+	l["enemies"] = l["enemies"].filter(func(t): return not (int(t["x"]) == 3 and int(t["y"]) == 5))
+	l["treasures"] = l["treasures"].filter(func(t): return not (int(t["x"]) == 3 and int(t["y"]) == 5))
+	var rect: Rect2 = Rect2(Vector2(60, 60), Vector2(360, 288))
+	var view: Dictionary = DungeonViewModel.build(l, Vector2i(l["spawn"]), rect)
+	var hatches: Array = view.get("hiddenHatches", [])
+	_check(hatches.size() == 1, "未开暗室出现在视图清单")
+	var hit: Dictionary = DungeonPanel.hit_test(view, rect, view["origin"] + Vector2(3.5, 5.5) * 16.0)
+	_eq(str(hit.get("kind", "")), DungeonPanel.HIT_HATCH, "点暗门命中 hatch")
+	# 翻开后：暗门消失，改显遗物标记（treasure 房）。
+	var rr: Dictionary = DungeonHidden.reveal(l, "hp")
+	_check(bool(rr.get("opened", false)), "面板流程里 reveal 成功")
+	var view2: Dictionary = DungeonViewModel.build(l, Vector2i(l["spawn"]), rect)
+	_eq(view2.get("hiddenHatches", []).size(), 0, "开后暗门不再画")
+	_check(not view2.get("relicMarks", []).is_empty(), "开后 treasure 房显示遗物标记")
+	var hit2: Dictionary = DungeonPanel.hit_test(view2, rect, view2["origin"] + Vector2(3.5, 5.5) * 16.0)
+	_eq(str(hit2.get("kind", "")), DungeonPanel.HIT_CELL, "开后原位回落到普通格")

@@ -52,6 +52,33 @@ static func build(layout: Dictionary, player: Vector2i, rect: Rect2, labels: Dic
 			"rect": cell_rect(origin, int(e["x"]), int(e["y"])),
 		})
 
+	# M32 纵深：隐藏暗室（未开的暗门）+ 遗物 / 刻痕石落点标记。
+	var hatches: Array = []
+	var relic_marks: Array = []
+	var frag_mark: Dictionary = {}
+	for room in layout.get("hiddenRooms", []):
+		if not (room is Dictionary):
+			continue
+		var r: Dictionary = room as Dictionary
+		var opened: bool = bool(r.get("opened", false))
+		var hatch: Dictionary = r.get("hatch", {})
+		var hatch_rect: Rect2 = cell_rect(origin, int(hatch.get("x", -9)), int(hatch.get("y", -9)))
+		if opened and str(r.get("kind", "")) == "treasure":
+			var tc: Dictionary = r.get("treasureCell", {})
+			if not tc.is_empty():
+				relic_marks.append({
+					"rect": cell_rect(origin, int(tc["x"]), int(tc["y"]))})
+		else:
+			hatches.append({
+				"rect": hatch_rect,
+				"kind": str(r.get("kind", "")),
+				"opened": opened,
+			})
+	var scatter: Dictionary = layout.get("fragScatter", {})
+	if not scatter.is_empty() and not bool(scatter.get("read", false)):
+		frag_mark = {
+			"rect": cell_rect(origin, int(scatter.get("x", -9)), int(scatter.get("y", -9)))}
+
 	var theme: Dictionary = layout.get("theme", {})
 	return {
 		"layout": layout,
@@ -61,6 +88,9 @@ static func build(layout: Dictionary, player: Vector2i, rect: Rect2, labels: Dic
 		"walls": walls,
 		"treasures": treasures,
 		"enemies": enemies,
+		"hiddenHatches": hatches,
+		"relicMarks": relic_marks,
+		"fragMark": frag_mark,
 		"exit": {
 			"rect": cell_rect(origin, layout["exit"].x, layout["exit"].y),
 			"center": origin + Vector2(layout["exit"].x * DUNGEON_TILE + DUNGEON_TILE * 0.5,

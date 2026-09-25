@@ -337,6 +337,11 @@ var _dungeon_words: Array = []
 var _dungeon_modifiers: Dictionary = {}
 ## 当前层是不是 BOSS 层（M-D / D-139）：最下层沉睡一头《书名号》巨兽。
 var _dungeon_boss_floor: bool = false
+## 本层隐藏暗室清单（M32 纵深·A / D-144）：DungeonHidden.place 产出，投影到 _dungeon.
+## hiddenRooms，便于交互查询。
+var _dungeon_hidden_rooms: Array = []
+## 会话内已读的叙事碎片 idx（M32 纵深·D / D-146）：集齐 total 段拼结局，不落盘。
+var _dungeon_fragments: Array = []
 
 # 游方商人（M21：地图商人奇遇）
 var _merchant_view: Dictionary = {}
@@ -4395,13 +4400,19 @@ func _enter_dungeon() -> void:
 	_dungeon_player = Dungeon.SPAWN
 	_dungeon_combat = false
 	_dungeon_boss_floor = false
+	_dungeon_fragments = []
 	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
 	_dungeon_modifiers = DungeonModifiers.apply(_dungeon_words, _dungeon_depth, rules)
 	var dungeon_theme: Dictionary = _dungeon_theme_cfg(_dungeon_modifiers)
 	_dungeon = Dungeon.layout("dungeon-%04d" % _dungeon_seq, _dungeon_depth,
 		{"theme": dungeon_theme})
+	_dungeon_hidden_rooms = []
+	_dungeon = DungeonHidden.place(_dungeon, _dungeon_frag_seed(), _dungeon_depth,
+		(rules.get("hidden", {}) as Dictionary))
+	_dungeon_hidden_rooms = (_dungeon.get("hiddenRooms", []) as Array).duplicate()
 	_dungeon_loot = _dungeon_roll_loot(_dungeon, _dungeon_rng())
 	_dungeon_supply_ready = bool(_dungeon.get("theme", {}).get("hasSupply", false))
+	_dungeon_prepare_fragments(rules)
 	_switch_view(VIEW_DUNGEON)
 	_status.text = "你发现了一道向下延伸的入口，决定进去看看。按回车触碰出口可下潜，越深越凶。"
 
@@ -4468,7 +4479,12 @@ func _dungeon_roll_loot(layout: Dictionary, rng: DeterministicRNG) -> Array:
 		return out
 	for _i in range(count):
 		var item: Dictionary = pool[rng.next_int(pool.size())]
-		out.append(str(item.get("templateId", "")))
+		# M32 纵深·C：普通宝箱有小概率抽成副本专属遗物（浅层低、深处高）。
+		var relic_id: String = DungeonRelics.roll_for(_dungeon_depth, rng, _dungeon_modifiers)
+		if not relic_id.is_empty():
+			out.append(relic_id)
+		else:
+			out.append(str(item.get("templateId", "")))
 	return out
 
 
@@ -4525,6 +4541,7 @@ func _dungeon_step(dx: int, dy: int) -> void:
 		_refresh()
 		return
 	_dungeon_player = result["next"]
+	_dungeon_after_move()
 	# 踩上任何一格先看看有没有宝箱：拾取并移除（一次性）
 	var t_index: int = Dungeon.treasure_index(_dungeon, _dungeon_player)
 	if t_index >= 0:
@@ -4563,6 +4580,8 @@ func _dungeon_walk_to(target: Vector2i) -> void:
 			break
 		pos = next
 		_dungeon_player = pos
+		if _dungeon_take_passage():
+			pos = _dungeon_player
 		var t: int = Dungeon.treasure_index(_dungeon, pos)
 		if t >= 0:
 			_dungeon_pick_treasure(t)
@@ -4585,12 +4604,182 @@ func _dungeon_interact() -> void:
 	if _dungeon_player == Dungeon.EXIT:
 		_dungeon_descend()
 		return
+	# M32 纵深：站在某间未开暗室的暗门前 → 推开暗门
+	var hatch_room: Dictionary = _dungeon_adjacent_hatch()
+	if not hatch_room.is_empty():
+		_dungeon_reveal_hidden(hatch_room)
+		return
 	var e_index: int = Dungeon.enemy_index(_dungeon, _dungeon_player)
 	if e_index >= 0:
 		_dungeon_pick_enemy(e_index)
 		return
+	# M32 纵深：站在刻痕石上 / 密道口上，回车也可以读或直接走
+	if _dungeon_read_fragment_here():
+		return
+	if _dungeon_take_passage():
+		return
 	_status.text = "这里什么都没有。走到出口按回车可下潜，按 ESC 离开副本。"
 	_refresh()
+
+
+## 本层隐藏暗室的派生种子键（与世界种子挂钩，读档重派生一致）。
+func _dungeon_frag_seed() -> String:
+	return "dungeon-%04d" % _dungeon_seq
+
+
+## 站在某间未开暗室的暗门前（曼哈顿距离 1 且未翻开）？返回该房或 {}。
+func _dungeon_adjacent_hatch() -> Dictionary:
+	for room in _dungeon_hidden_rooms:
+		if not (room is Dictionary):
+			continue
+		var r: Dictionary = room as Dictionary
+		if bool(r.get("opened", false)):
+			continue
+		var hatch: Dictionary = r.get("hatch", {})
+		var hx: int = int(hatch.get("x", -99))
+		var hy: int = int(hatch.get("y", -99))
+		if absi(_dungeon_player.x - hx) + absi(_dungeon_player.y - hy) == 1:
+			return r
+	return {}
+
+
+## 翻开一间暗室并按房型给收获（treasure 必掉遗物 / fragment 读刻痕 / passage 密道）。
+func _dungeon_reveal_hidden(room: Dictionary) -> void:
+	var res: Dictionary = DungeonHidden.reveal(_dungeon, str(room.get("key", "")))
+	if not bool(res.get("opened", false)):
+		_status.text = "这堵墙看起来很可疑，但暂时推不开。"
+		_refresh()
+		return
+	# 让 _dungeon_hidden_rooms 里的 opened 标记同步（reveal 改的是 _dungeon 的 hiddenRooms）
+	_dungeon_hidden_rooms = (_dungeon.get("hiddenRooms", []) as Array).duplicate()
+	var kind: String = str(res.get("kind", ""))
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	match kind:
+		"treasure":
+			var tc: Dictionary = room.get("treasureCell", {})
+			if not tc.is_empty():
+				_dungeon.get("treasures", [] as Array).append(
+					{"x": int(tc["x"]), "y": int(tc["y"])})
+				_dungeon_loot.append(DungeonRelics.guaranteed(_dungeon_rng(), _dungeon_modifiers))
+			_status.text = "你推开暗门，里面锁着一只绘着奇异纹路的箱子，隐隐有潮气渗出来。"
+		"fragment":
+			_dungeon_read_fragment(_dungeon_fragment_state(rules))
+		"passage":
+			_status.text = "你推开暗门，一条斜穿石壁的密道通向出口方向——走进里面再说。"
+	_refresh()
+
+
+## 本层应收的叙事碎片段：已读过则空（不重复）。优先走 DungeonStory 确定性派生，
+## 兜底永远有）取 depth 映射的一段，保证 fragment 房从不会空读。
+func _dungeon_fragment_state(rules: Dictionary) -> Dictionary:
+	var frag: Dictionary = DungeonStory.fragment_for(_dungeon_frag_seed(), _dungeon_depth, rules)
+	if frag.is_empty():
+		var pool: Array = DungeonStory.fragment_pool(rules)
+		if pool.is_empty():
+			return {}
+		var idx: int = _dungeon_depth % pool.size()
+		frag = {"idx": idx, "total": pool.size(),
+			"text": str((pool[idx] as Dictionary).get("text", ""))}
+	if _dungeon_fragments.has(int(frag.get("idx", -1))):
+		return {}
+	return frag
+
+
+## 把一层的一块刻痕石预派生到某格上（读档重派生）。未读的段才会散在地上。
+func _dungeon_prepare_fragments(rules: Dictionary) -> void:
+	var frag: Dictionary = _dungeon_fragment_state(rules)
+	if frag.is_empty():
+		_dungeon["fragScatter"] = {}
+		return
+	_dungeon["fragScatter"] = _dungeon_fragment_marker(frag)
+
+
+## 挑一个确定性空地放刻痕石（避开出生/出口/墙/既有物）。
+func _dungeon_fragment_marker(frag: Dictionary) -> Dictionary:
+	var cell: Vector2i = _dungeon_pick_open_cell()
+	if cell.x < 0:
+		return {}
+	return {
+		"x": cell.x, "y": cell.y,
+		"idx": int(frag.get("idx", 0)),
+		"total": int(frag.get("total", 0)),
+		"text": str(frag.get("text", "")),
+		"read": false,
+	}
+
+
+## 站在刻痕石格上，回车读取；读到新段记进 _dungeon_fragments，集齐拼结局。
+func _dungeon_read_fragment_here() -> bool:
+	var mark: Dictionary = _dungeon.get("fragScatter", {})
+	if mark.is_empty() or bool(mark.get("read", false)):
+		return false
+	if _dungeon_player.x != int(mark.get("x", -99)) or _dungeon_player.y != int(mark.get("y", -99)):
+		return false
+	_dungeon_read_fragment(mark)
+	return true
+
+
+## 记录一段叙事碎片（按唯一 idx 去重），并处理集齐结局。
+func _dungeon_read_fragment(frag: Dictionary) -> void:
+	var idx: int = int(frag.get("idx", -1))
+	var total: int = int(frag.get("total", 0))
+	if idx < 0:
+		return
+	if _dungeon_fragments.has(idx):
+		_status.text = "这段刻痕你早就读过，字迹还是一样烫手。"
+		_refresh()
+		return
+	_dungeon_fragments.append(idx)
+	var collected: int = _dungeon_fragments.size()
+	if total > 0 and collected >= total:
+		var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+		var words: Array = []
+		for piece in DungeonStory.assemble(rules):
+			if (piece is Dictionary) and not str((piece as Dictionary).get("text", "")).is_empty():
+				words.append(str((piece as Dictionary).get("text", "")))
+		_status.text = "整座遗构的身世被你拼全了：%s" % " ".join(words)
+	else:
+		_status.text = "石壁上刻着：%s（%d/%d）" % [str(frag.get("text", "")), collected, total]
+	_refresh()
+
+
+## 密道口：站在已开的 passage 房密道口，回车直接跳到出口旁。
+func _dungeon_take_passage() -> bool:
+	var p: Dictionary = DungeonHidden.passage_hatch(_dungeon)
+	if p.is_empty():
+		return false
+	if _dungeon_player.x == int(p.get("x", -9)) and _dungeon_player.y == int(p.get("y", -9)):
+		_dungeon_player = Vector2i(Dungeon.EXIT.x, 2)
+		_status.text = "密道里风一吹，你睁眼已经站在出口的石阶旁。"
+		_refresh()
+		return true
+	return false
+
+
+## 走一步后统一处理：密道口传送、读刻痕。
+func _dungeon_after_move() -> void:
+	if _dungeon_take_passage():
+		return
+	if _dungeon_read_fragment_here():
+		return
+
+
+## 挑一个确定性可站空地（扫描，不吃随机流）。用于刻痕石落点。
+func _dungeon_pick_open_cell() -> Vector2i:
+	for gy in range(Dungeon.HEIGHT - 3, 2, -1):
+		for gx in range(Dungeon.WIDTH - 2, 2, -1):
+			if gx == Dungeon.EXIT.x or gx == Dungeon.SPAWN.x:
+				continue
+			if not Dungeon.walkable(_dungeon, gx, gy):
+				continue
+			if Dungeon.treasure_index(_dungeon, Vector2i(gx, gy)) >= 0:
+				continue
+			if Dungeon.enemy_index(_dungeon, Vector2i(gx, gy)) >= 0:
+				continue
+			if _dungeon_player.x == gx and _dungeon_player.y == gy:
+				continue
+			return Vector2i(gx, gy)
+	return Vector2i(-1, -1)
 
 
 ## 拾取一枚宝箱：物品直接进背包（够用即可，不走逐件挑选）。
@@ -4815,8 +5004,13 @@ func _dungeon_descend() -> void:
 	_dungeon_boss_floor = DungeonBoss.is_boss_floor(_dungeon_depth, max_depth)
 	_dungeon = Dungeon.layout("dungeon-%04d" % _dungeon_seq, _dungeon_depth,
 		{"theme": _dungeon_theme_cfg(_dungeon_modifiers)})
+	_dungeon_hidden_rooms = []
+	_dungeon = DungeonHidden.place(_dungeon, _dungeon_frag_seed(), _dungeon_depth,
+		(rules.get("hidden", {}) as Dictionary))
+	_dungeon_hidden_rooms = (_dungeon.get("hiddenRooms", []) as Array).duplicate()
 	_dungeon_loot = _dungeon_roll_loot(_dungeon, _dungeon_rng())
 	_dungeon_supply_ready = bool(_dungeon.get("theme", {}).get("hasSupply", false))
+	_dungeon_prepare_fragments(rules)
 	_switch_view(VIEW_DUNGEON)
 	if _dungeon_boss_floor:
 		_status.text = "你下到最深处。空气里飘着腥气——一头《巨兽》沉睡在此。按回车迎战，按 ESC 还能撤退。"
@@ -4836,6 +5030,8 @@ func _leave_dungeon() -> void:
 	_dungeon_words = []
 	_dungeon_modifiers = {}
 	_dungeon_boss_floor = false
+	_dungeon_hidden_rooms = []
+	_dungeon_fragments = []
 	_switch_view(VIEW_MAP)
 
 

@@ -23,6 +23,9 @@ const COLOR_ENEMY: Color = Color(0.82, 0.34, 0.32)
 const COLOR_PLAYER: Color = Color(0.40, 0.88, 0.55)
 const COLOR_TEXT: Color = Color(0.92, 0.94, 0.97)
 const COLOR_DIM: Color = Color(0.55, 0.58, 0.62)
+const COLOR_HATCH: Color = Color(0.62, 0.42, 0.80)
+const COLOR_RELIC: Color = Color(0.95, 0.62, 0.24)
+const COLOR_FRAG: Color = Color(0.55, 0.82, 0.95)
 
 const SIZE_LABEL: int = 10
 const SIZE_LEGEND: int = 12
@@ -31,6 +34,7 @@ const SIZE_LEGEND: int = 12
 const HIT_EXIT: String = "exit"
 const HIT_TREASURE: String = "treasure"
 const HIT_ENEMY: String = "enemy"
+const HIT_HATCH: String = "hatch"
 const HIT_CELL: String = "cell"
 
 
@@ -75,6 +79,16 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 		var hit: bool = str(hover.get("kind", "")) == HIT_ENEMY \
 			and int(hover.get("index", -1)) == i
 		_draw_obj(canvas, enemies[i]["rect"], COLOR_ENEMY, "敌", hit)
+	# M32 纵深处：未开的暗门（紫）、遗物（橙）、刻痕石（淡青）。
+	for h in view.get("hiddenHatches", []):
+		canvas.draw_rect(h.get("rect", Rect2()), COLOR_HATCH)
+		_text_center(canvas, font, h["rect"].get_center() + Vector2(0, 4),
+			"暗门", Color(0.06, 0.05, 0.10), SIZE_LABEL)
+	for r in view.get("relicMarks", []):
+		_draw_obj(canvas, r["rect"], COLOR_RELIC, "遗物", false)
+	var frag_mark: Dictionary = view.get("fragMark", {})
+	if not frag_mark.is_empty():
+		_draw_obj(canvas, frag_mark["rect"], COLOR_FRAG, "刻痕", false)
 	# 玩家。
 	canvas.draw_rect(view.get("playerRect", Rect2()), COLOR_PLAYER)
 	# 底部图例：告诉玩家这层怎么走、怎么出。
@@ -157,6 +171,11 @@ static func hit_test(view: Dictionary, rect: Rect2, point: Vector2) -> Dictionar
 	for i in range(enemies.size()):
 		if enemies[i]["rect"].has_point(point):
 			return {"kind": HIT_ENEMY, "index": i, "grid": Vector2i(gx, gy)}
+	var hatches: Array = view.get("hiddenHatches", [])
+	for i in range(hatches.size()):
+		var hrect: Rect2 = hatches[i].get("rect", Rect2())
+		if hrect.has_area() and hrect.has_point(point):
+			return {"kind": HIT_HATCH, "index": i, "grid": Vector2i(gx, gy)}
 	return {"kind": HIT_CELL, "index": -1, "grid": Vector2i(gx, gy)}
 
 

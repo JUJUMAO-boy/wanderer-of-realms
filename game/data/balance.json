@@ -282,6 +282,28 @@
       "gemTemplateId": "material_gem",
       "corpseTemplateId": "material_boss_corpse",
       "equipmentRarityFloor": "rare"
+    },
+    "_comment_hidden": "隐藏暗室与密道（M32 纵深·A / D-144）：楼层几层里随机砌一间被封死的暗室，走近按回车推开暗门。treasure 房必掉一件副本专属遗物，passage 房内密道口直通出口，fragment 房埋一段层内叙事碎片。chanceBp=每层出现概率（基点），minDepth=多深才值得藏东西，kinds=房型池。",
+    "hidden": {
+      "minDepth": 2,
+      "chanceBp": 2500,
+      "kinds": ["treasure", "passage", "fragment"]
+    },
+    "_comment_relics": "副本专属遗物（M32 纵深·C / D-145）：relic 类别装备只出副本——宝箱(chanceBp 随 depth 抬升)/隐藏暗室/BOSS 口，别处没有。tierDepth 分档：<tierDepth[0] 走浅档、tierDepth[0]..<tierDepth[1] 走中档、再深走末档，chanceBp 取对应档。",
+    "relics": {
+      "tierDepth": [6, 12],
+      "chanceBp": [300, 700, 1500]
+    },
+    "_comment_story": "层内叙事碎片（M32 纵深·D / D-146）：fragments 是这座遗构身世的若干段刻痕。scatterChanceBp=每层散落一块刻痕石的概率(基点)。'读了几块'的进度是会话态，读档重派生。",
+    "story": {
+      "scatterChanceBp": 2200,
+      "fragments": [
+        { "text": "第 388 个春天，他们把灯芯埋进山脚，说那是太阳的胆子。" },
+        { "text": "塌方前夜，有人凿空了每一堵墙，只留一根顶梁柱——撑着的不知是顶，还是账本。" },
+        { "text": "这里的柱础不对缝。砌墙那人心事太重，把地基当成了某个不存在的房间的量角器。" },
+        { "text": "最后一次清点是七只箱子、一具石棺，还有被锯短的梯子。账目到此为止。" },
+        { "text": "风从第五层往上吹。地上的住户说，井里没水，井里住着替他们数夜的人。" }
+      ]
     }
   },
   "merchant": {

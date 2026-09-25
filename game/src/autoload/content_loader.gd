@@ -46,15 +46,17 @@ const SKILL_TIERS: Array = ["novice", "skilled", "expert", "master", "grandmaste
 ## 伤害类型（《数值框架》6.5 节元素克制表）
 const DAMAGE_TYPES: Array = ["physical", "fire", "water", "wind", "earth", "holy", "dark", "soul", "none"]
 
-## 物品分类与稀有度（《数值框架》8 节）。material 为 M14 生产技能新增的原料类别。
-const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material"]
+## 物品分类与稀有度（《数值框架》8 节）。material 为 M14 生产技能新增的原料类别，
+## relic 为 M32 副本专属遗物类别（只出副本，见技术设计文档 D-145）。
+const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material", "relic"]
 const ITEM_RARITIES: Array = [
 	"common", "fine", "rare", "epic", "legendary", "dragonforged",
 ]
 
 ## 会占装备槽的类别（其余类别不得声明 slot）。槽位名本身来自
-## balance.equipment.slots，不在这里写死——见 D-50。
-const ITEM_EQUIP_CATEGORIES: Array = ["weapon", "armor"]
+## balance.equipment.slots，不在这里写死——见 D-50。relic（M32 副本专属遗物）
+## 与 weapon/armor 同属装备：占槽、可穿戴，只出在副本里（D-145）。
+const ITEM_EQUIP_CATEGORIES: Array = ["weapon", "armor", "relic"]
 
 ## 词缀的作用目标（《技术设计文档》3.3 节 Modifier[]）。前三个加在装备自身
 ## 的数值上，后七个是七维、加在佩戴者身上。这张表是词缀配置与
@@ -1589,9 +1591,12 @@ func _validate_affixes(root: Dictionary) -> void:
 					path, str(category), ", ".join(PackedStringArray(ITEM_EQUIP_CATEGORIES))
 				])
 	# 武器或防具的池子都不能空：空了的话那一类的货永远摇不出词缀，
-	# 而"没有词缀"和"白板货"在界面上长得一模一样
+	# 而"没有词缀"和"白板货"在界面上长得一模一样。
+	# relic（M32）暂不要求词缀池：遗物类还没上词缀配置，D-145 只说它只出副本。
 	_affixes = root
 	for category in ITEM_EQUIP_CATEGORIES:
+		if category == "relic":
+			continue
 		if affixes_for(str(category)).is_empty():
 			_errors.append("词缀配置没有任何适用于 %s 的词缀，该类装备永远拿不到词缀" % str(category))
 
