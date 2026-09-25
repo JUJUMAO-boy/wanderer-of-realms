@@ -2692,6 +2692,7 @@ func _settle_combat() -> void:
 			_combat.wear_player_attacks, _combat.wear_player_taken,
 			DeterministicRNG.new(_world.world_seed ^ (_wear_seq * 2862933555777941757))
 		)
+	_apply_world_memory()
 	if _encounter_combat:
 		# 遭遇打起来的：掉落与世界标记先落（上面两圈），再补一条结算文案。
 		# 与委托、事件同一条次序——战斗模块只产出结果，把它变成世界上的东西
@@ -2702,8 +2703,104 @@ func _settle_combat() -> void:
 		_resolve_dungeon_combat()
 		return
 	_status.text = "交手结束（%d 轮）：%s" % [
-		_combat.round, "你赢了" if _combat.winner == Combat.RESULT_PLAYER else "你输了"
-	]
+			_combat.round, "你赢了" if _combat.winner == Combat.RESULT_PLAYER else "你输了"
+		]
+
+
+## 世界记忆结算（M-B，D-127/D-128）。玩家胜场里把"谁被怎么了"结进世界：
+## 本城守卫被击杀 → 守备升级；本城店主被击杀 → 店主倒下 + 掉一件神器。
+## 委托/事件战斗在更早的 return 已分流，这里只处理遭遇/副本这类"正面撞上"的战斗。
+func _apply_world_memory() -> void:
+	if _combat == null or _world == null:
+		return
+	if _combat.winner != Combat.RESULT_PLAYER:
+		return
+	for unit in _combat.units:
+		if str(unit.get("side", "")) != Combat.SIDE_ENEMY:
+			continue
+		if not bool(unit.get("dead", false)):
+			continue
+		# 人形对手的 unitId 就是 NPC 的 id（见 EncounterSystem._npc_profile），
+		# units_of 会剥掉 isNpc/npcId，但 unitId 保留——从这里追到人身上。
+		var npc: SimNpc = _world.get_npc(str(unit.get("unitId", "")))
+		if npc == null:
+			continue
+		if npc.position_id == "shopkeeper":
+			if not WorldMemory.shopkeeper_fallen(_world, npc.city_id):
+				WorldMemory.record_shopkeeper_fallen(_world, npc.city_id)
+				_grant_shop_hoard()
+				_note_events([WorldMemory.shopkeeper_label(_world, npc.city_id)])
+		elif WorldMemory._is_guard_npc(npc):
+			var boost: Dictionary = WorldMemory.guard_boost(_world, npc.city_id)
+			WorldMemory.record_guard_claimed(_world, npc.city_id)
+			if int(boost.get("count", 0)) < WorldMemory.BOOST_CAP:
+				_note_events([str(boost.get("label", ""))])
+
+
+## 击杀店主后掉落的"神器"：从货里硬挑一件 dragonforged/legendary 亲手塞进背包。
+## 店主守着全城的铺子，身上那件是这条"代价"里最重的一枚。
+func _grant_shop_hoard() -> void:
+	for rarity in ["dragonforged", "legendary"]:
+		for item in ContentLoader.get_items():
+			if not (item is Dictionary):
+				continue
+			if str(item.get("rarity", "")) != rarity:
+				continue
+			_loot_seq += 1
+			_creator.add_item(_world.avatar, str(item.get("templateId", "")),
+				"%s-loot-%03d" % [_world.avatar.avatar_id, _loot_seq])
+			_note_events(["你从倒下的店主身上搜出一件神造之物。"])
+			return
+
+
+## 找这座城的店主职位实体（M-B 店主实体化：每城一个书店铺的具名店主，落盘生成）。
+func _shopkeeper_of(city_id: String) -> SimNpc:
+	var city: City = _world.get_city(city_id)
+	if city == null:
+		return null
+	for npc_id in city.npc_ids:
+		var npc: SimNpc = _world.get_npc(str(npc_id))
+		if npc != null and npc.position_id == "shopkeeper":
+			return npc
+	return null
+
+
+## 袭店：把店主作为一位可交手的人形对手，走同一场遭遇战斗（_start_encounter_combat）。
+## 店主身上没有世界模拟属性，在这一层现抽——与陪练/守卫同一条口径。击杀的后果由
+## _apply_world_memory 结进世界（店主倒下 + 掉神器）。
+func _start_shop_raid(city_id: String) -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var shopkeeper: SimNpc = _shopkeeper_of(city_id)
+	if shopkeeper == null:
+		_status.text = "这城没有可找的店主。"
+		_refresh()
+		return
+	if WorldMemory.shopkeeper_fallen(_world, city_id):
+		_status.text = WorldMemory.shopkeeper_label(_world, city_id)
+		_refresh()
+		return
+	_combat_seq += 1
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_combat_seq * 2246822519))
+	var attributes: Dictionary = _random_attributes(rng, 8, 13)
+	var weapon: Dictionary = _common_template("weapon")
+	_encounter = {
+		"encounterId": "shop-raid-%s" % city_id,
+		"opponents": [{
+			"unitId": shopkeeper.npc_id,
+			"name": shopkeeper.display_name(),
+			"displayName": shopkeeper.display_name(),
+			"category": ContentLoader.MONSTER_PARLEYABLE_CATEGORY,
+			"attributes": attributes,
+			"threatLevel": _threat_level(attributes, {}),
+			"hp": _derived.max_hp(attributes, _derived.power_level(attributes, {})),
+			"armor": int(_common_template("armor").get("armor", 0)),
+			"attack": int(weapon.get("attack", 0)),
+			"attackRange": 1,
+		}],
+	}
+	_encounter_view = {"contextLabel": "袭击%s的铺子" % _city_label_or_wilds(city_id)}
+	_start_encounter_combat()
 
 
 ## 随从战殁解约：如果本场带在身边的随从真的阵亡（dead，不是倒地），就解除契约
@@ -3107,6 +3204,8 @@ func _start_encounter_combat() -> void:
 	var units: Array = [_player_unit_spec(avatar)]
 	_append_follower(units)
 	units.append_array(_encounter_system.units_of(_encounter, OPPONENT_SPAWNS))
+	# 世界记忆：本城若有守卫被击杀过，新拉出来的这队守备明显更狠
+	units = WorldMemory.boost_guard_units(units, _world)
 	var started: Dictionary = _combat.start({
 		"sessionId": "encounter-%s" % str(_encounter.get("encounterId", "")),
 		"units": units,
@@ -3924,11 +4023,28 @@ func _city_space_interact() -> void:
 	_refresh()
 
 
+## 袭店（I 键）：站在店铺格旁才砸得动，把店主拉进一场遭遇战斗。
+func _run_city_space_raid() -> void:
+	if _world == null or _city_space.is_empty():
+		return
+	var layout: Dictionary = _city_space["layout"]
+	var near_b: Dictionary = CitySpace.near_building(layout, _city_space["player"])
+	if near_b.is_empty() or str(near_b.get("kind", "")) != CitySpace.KIND_SHOP:
+		_status.text = "旁边没有铺子可砸。"
+		_refresh()
+		return
+	_start_shop_raid(str(_city_space.get("city_id", "")))
+
+
 ## 按建筑功能分流到既有视图。投资类回城市总览去投（M12 的投资就在那里）。
 func _city_space_open_kind(kind: String) -> void:
 	var city_id: String = str(_city_space.get("city_id", ""))
 	match kind:
 		CitySpace.KIND_SHOP:
+			if WorldMemory.shopkeeper_fallen(_world, city_id):
+				_status.text = WorldMemory.shopkeeper_label(_world, city_id)
+				_refresh()
+				return
 			_enter_trade(city_id)
 		CitySpace.KIND_EVENT:
 			_enter_event(city_id)
@@ -3973,6 +4089,8 @@ func _city_space_input(key_event: InputEventKey) -> void:
 			_city_space_interact()
 		KEY_T:
 			_switch_view(VIEW_CITY)
+		KEY_I:
+			_run_city_space_raid()
 		KEY_ESCAPE:
 			_leave_city_space()
 		KEY_F5:

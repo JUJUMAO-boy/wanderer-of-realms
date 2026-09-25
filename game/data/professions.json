@@ -29,6 +29,7 @@
   "specialtyWeightMultiplier": 4.0,
   "positionTemplates": [
     { "positionId": "guard_captain", "displayName": "守卫队长", "fromProfession": "guard", "countPerCity": 1 },
-    { "positionId": "high_priest", "displayName": "大祭司", "fromProfession": "priest", "countPerCity": 1 }
+    { "positionId": "high_priest", "displayName": "大祭司", "fromProfession": "priest", "countPerCity": 1 },
+    { "positionId": "shopkeeper", "displayName": "店主", "fromProfession": "merchant", "countPerCity": 1 }
   ]
 }

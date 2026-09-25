@@ -239,6 +239,11 @@ func run_all() -> int:
 	_test_weather_entry()
 	_test_weather_night_and_mult()
 	_test_weather_steal_interface()
+	print("=== M26 世界记忆 · 店主实体 ===")
+	_test_world_memory_guard()
+	_test_world_memory_guard_boosted()
+	_test_world_memory_shopkeeper()
+	_test_world_memory_guard_is()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -8359,3 +8364,75 @@ func _test_weather_steal_interface() -> void:
 	var lucky: int = Weather.night_steal_modifier(-100, 100, 22)
 	var hapless: int = Weather.night_steal_modifier(-100, -100, 22)
 	_check(lucky > hapless, "吉星助偷")
+
+
+## 守卫死后更强重生：击杀计数累积、封顶，计数 0 时无叠层、无文案。
+func _test_world_memory_guard() -> void:
+	var world: WorldState = WorldState.new()
+	_eq(WorldMemory.guard_kills(world, "aedran"), 0, "初始无击杀")
+	var boost0: Dictionary = WorldMemory.guard_boost(world, "aedran")
+	_eq(boost0.get("count", -1), 0, "无击杀 count=0")
+	_eq(boost0.get("hpMult", 0.0), 1.0, "无击杀命不涨")
+	_eq(boost0.get("attackMult", 0.0), 1.0, "无击杀攻不涨")
+	_check(str(boost0.get("label", "")).is_empty(), "无击杀无文案")
+	_eq(WorldMemory.record_guard_claimed(world, "aedran"), 1, "击杀一次计数 1")
+	_eq(WorldMemory.guard_kills(world, "aedran"), 1, "读取一致")
+	var boost1: Dictionary = WorldMemory.guard_boost(world, "aedran")
+	_eq(boost1.get("count", 0), 1, "击杀一次档位 1")
+	_check(float(boost1.get("hpMult", 0.0)) > 1.0, "击杀后命更硬")
+	_check(float(boost1.get("attackMult", 0.0)) > 1.0, "击杀后攻更狠")
+	_check(not str(boost1.get("label", "")).is_empty(), "击杀后有文案")
+	for _i in range(10):
+		WorldMemory.record_guard_claimed(world, "aedran")
+	_eq(WorldMemory.guard_boost(world, "aedran").get("count", 0), WorldMemory.BOOST_CAP,
+		"击杀数封顶到 BOOST_CAP")
+
+
+## 叠层作用到守卫生成单位：命与攻按倍率放大，其余字段不动。
+func _test_world_memory_guard_boosted() -> void:
+	var unit: Dictionary = {
+		"hp": 100, "maxHp": 100, "attack": 40, "unitId": "u", "name": "守卫"
+	}
+	var world: WorldState = WorldState.new()
+	WorldMemory.record_guard_claimed(world, "aedran")
+	var boost: Dictionary = WorldMemory.guard_boost(world, "aedran")
+	var out: Dictionary = WorldMemory.guard_boosted_unit(unit, boost)
+	_eq(out.get("unitId", ""), "u", "单位标识不动")
+	_eq(out.get("maxHp", 0), int(ceil(100.0 * float(boost.get("hpMult", 1.0)))), "命按倍率放")
+	_eq(out.get("attack", 0), int(ceil(40.0 * float(boost.get("attackMult", 1.0)))), "攻按倍率放")
+	# 零叠层：单位原样（幂等，不产生第二个强度真相）。用初始字典——guard_boosted_unit 会就地改。
+	var baseline: Dictionary = {"hp": 100, "maxHp": 100, "attack": 40, "unitId": "u", "name": "守卫"}
+	var plain: Dictionary = WorldMemory.guard_boosted_unit(baseline, WorldMemory.guard_boost(world, "frostspeak_keep"))
+	_eq(plain.get("hp", 0), 100, "无击杀不改属性")
+
+
+## 店主倒下：落盘一次、幂等、文案前后两句。
+func _test_world_memory_shopkeeper() -> void:
+	var world: WorldState = WorldState.new()
+	_check(not WorldMemory.shopkeeper_fallen(world, "aedran"), "店主初始未倒")
+	_check(WorldMemory.shopkeeper_label(world, "aedran").contains("柜台"),
+		"店主在时有柜台这句")
+	WorldMemory.record_shopkeeper_fallen(world, "aedran")
+	_check(WorldMemory.shopkeeper_fallen(world, "aedran"), "店主已倒")
+	_check(WorldMemory.shopkeeper_label(world, "aedran").contains("店主不在了"),
+		"店主倒下后店门紧闭这句")
+	WorldMemory.record_shopkeeper_fallen(world, "aedran")
+	_check(WorldMemory.shopkeeper_fallen(world, "aedran"), "重复落盘幂等仍为倒")
+
+
+## 守卫身份判定：守卫职业且非具名才算，具名（如店主/队长）与平民不算。
+func _test_world_memory_guard_is() -> void:
+	var guard := SimNpc.new()
+	guard.profession_id = "guard"
+	_check(WorldMemory._is_guard_npc(guard), "守卫职业算守备")
+	var named_guard := SimNpc.new()
+	named_guard.profession_id = "guard"
+	named_guard.is_named = true
+	_check(not WorldMemory._is_guard_npc(named_guard), "具名守卫不被误判成普通守备")
+	var farmer := SimNpc.new()
+	farmer.profession_id = "farmer"
+	_check(not WorldMemory._is_guard_npc(farmer), "平民不是守备")
+	var shopkeeper := SimNpc.new()
+	shopkeeper.profession_id = "merchant"
+	shopkeeper.is_named = true
+	_check(not WorldMemory._is_guard_npc(shopkeeper), "店主非守备")
