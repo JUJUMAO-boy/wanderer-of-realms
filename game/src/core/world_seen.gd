@@ -107,6 +107,14 @@ static func node_seq(node: Dictionary) -> int:
 	return int(str(node.get("key", "")).hash()) & 0xFFFFFFFF
 
 
+## 把纪元年份折进派生种子（M-C 收口·地壳变动）：同世界同纪元逐位一致，纪元变即有
+## 整张图纸被"震"得重排——大地图上看得见的遗构与怪物窝点随之换位、回收重长。
+## era == 0 返回原种子，即新手期（第 1 年）就是世界本原；倍数沿袭 DWORLD 系折盐
+## 惯例（2654435761），只取低 32 位以规整可能为负的世界种子。
+static func era_seed(world_seed: int, era: int) -> int:
+	return (world_seed ^ (era * 2654435761)) & 0xFFFFFFFF
+
+
 ## 派生全部图纸：先铺遗构，再铺窝点；都避开城市中心与彼此重叠格。
 func _derive() -> void:
 	if grid == null:

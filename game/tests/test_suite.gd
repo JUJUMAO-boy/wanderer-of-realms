@@ -231,6 +231,7 @@ func run_all() -> int:
 	_test_world_seen_placement()
 	_test_world_seen_lair()
 	_test_world_seen_words()
+	_test_world_seen_era_seed()
 	print("=== M25 神系与昼夜天候 ===")
 	_test_gods_config()
 	_test_god_blessing_devotion()
@@ -8264,6 +8265,22 @@ func _test_world_seen_words() -> void:
 		_check(words.size() <= danger, "危险度越高词条越多（≤ danger）")
 		for w in words:
 			_check(not str(w.get("label", "")).is_empty(), "词条都有名")
+
+
+## 纪年折盐（M-C 收口·地壳变动）：era 0 = 原种子；纪年变了图纸整体重排；
+## 同世界同纪元逐位一致——"第几年看到哪张图"可复现。
+func _test_world_seen_era_seed() -> void:
+	var seed: int = 20260922
+	_eq(WorldSeen.era_seed(seed, 0), seed & 0xFFFFFFFF, "era 0 = 世界原种子")
+	var s0: int = WorldSeen.era_seed(seed, 0)
+	var s1: int = WorldSeen.era_seed(seed, 1)
+	var s2: int = WorldSeen.era_seed(seed, 1)
+	_check(s1 != s0, "纪年走一年种子变（图纸会重排）")
+	_eq(s1, s2, "同纪年种子确定")
+	# 整张图纸随纪年变化：第 1 年与第 2 年派生出的遗构/窝点在范围上不同
+	var a: Dictionary = _seen_built(s0)
+	var b: Dictionary = _seen_built(s1)
+	_check(not (_seen_snapshot(a["seen"]) == _seen_snapshot(b["seen"])), "纪年不同整张图纸不同")
 
 # --- M25 神系与昼夜天候 ---
 

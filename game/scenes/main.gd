@@ -555,7 +555,8 @@ func _on_period_reached(period: String, elapsed_months: int, _tick_in_month: int
 		ClockCore.PERIOD_YEAR:
 			var yearly: Dictionary = _sim.settle_year(elapsed_months)
 			_note_events(yearly["notableEvents"])
-			_status.text = "第 %d 年结算完成：%d 名居民过世" % [
+			_tectonic_shift()
+			_status.text = "第 %d 年结算完成：%d 名居民过世；地壳变动，大地上的遗构与怪物窝点换了一批" % [
 				Clock.now().year, int(yearly["deaths"])
 			]
 
@@ -3006,8 +3007,31 @@ func _reset_encounter_session() -> void:
 	_rebuild_seen()
 
 
+## 当前纪年的可见实体派生纪元（M-C 收口·地壳变动）：世界纪年走路即在走——
+## 第 1 年 = 纪元 0 = 世界本原种子，之后每年踏过纪年边界，地图就被"震"一回。
+## 取 year-1 让新手期回到原种子（零行为变化），且绑定持久的世界年份而非会话，
+## 读档回到"离场时那一年"的图纸（D-140）。
+func _current_seen_era() -> int:
+	return maxi(0, Clock.now().year - 1)
+
+
+## 当前纪年的可见实体派生种子。
+func _current_seen_seed() -> int:
+	return WorldSeen.era_seed(int(_world.world_seed), _current_seen_era())
+
+
+## 地壳变动（M-C 收口）：整片大地的遗构与怪物窝点被震得换位重长。纪年每走一年
+## 由 PERIOD_YEAR 结算触一次——清掉的窝点随重排回来（回收生命周期），挖空的
+## 遗构换到新的坑位。只重排图纸与留一条事件，念给玩家听的话由年份分支合并给出。
+func _tectonic_shift() -> void:
+	_seen_bucket = 0
+	_rebuild_seen()
+	_note_events(["地壳变动：整片大地的遗构与怪物窝点被震得换了位置，旧日的坑被翻出来重长。"])
+
+
 ## 重建大地图可见实体图纸（M-C）。每会话一次；窝点存活态随图纸重建而重置——
 ## 于是"读档回来打得只剩几只的怪会重新站满大地图"符合"能派生就不落盘"的铁则。
+## 图纸随纪年折盐（_current_seen_seed），同一世界在第 N 年重派生回到第 N 年的图。
 func _rebuild_seen() -> void:
 	_seen = {}
 	if _world == null or _grid == null:
@@ -3021,7 +3045,7 @@ func _rebuild_seen() -> void:
 	if _encounter_system != null:
 		# 危险度前缀要贴近地理真实：离城越远越凶，与遭遇分层同源
 		opts["tierAt"] = _encounter_system.tier_at
-	var seen := WorldSeen.build(_world.world_seed, _grid, city_coords, opts)
+	var seen := WorldSeen.build(_current_seen_seed(), _grid, city_coords, opts)
 	var alive: Dictionary = {}
 	for lair in seen.lairs():
 		alive[str(lair.get("key", ""))] = lair
