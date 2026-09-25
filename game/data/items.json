@@ -63,6 +63,8 @@
     { "templateId": "material_leather", "displayName": "皮革", "category": "material", "subtype": "skin", "rarity": "fine", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 2, "price": 60, "effectText": "中间材料，兽皮×1 鞣得；缝皮甲用" },
     { "templateId": "material_charcoal", "displayName": "碳", "category": "material", "subtype": "charcoal", "rarity": "fine", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 1, "price": 50, "effectText": "中间材料，木材×1 烧得；锻造燃料" },
     { "templateId": "material_enchant_dust", "displayName": "附魔粉尘", "category": "material", "subtype": "enchant", "rarity": "rare", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 0, "price": 120, "effectText": "附魔材料，铁矿石精炼可得（附魔配方主耗材）" },
+    { "templateId": "material_gem", "displayName": "遗构宝石", "category": "material", "subtype": "gem", "rarity": "epic", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 0, "price": 500, "effectText": "副本最深处 BOSS 的心头结晶，泛着不属于这个世界的光；高价，或留作附魔原料" },
+    { "templateId": "material_boss_corpse", "displayName": "巨兽尸骸", "category": "material", "subtype": "corpse", "rarity": "rare", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 20, "price": 180, "effectText": "副本 BOSS 倒下后留下的残骸，皮坚骨硬，是锻造与炼药的上佳原料" },
     { "templateId": "tool_repair_portable", "displayName": "修补工具", "category": "tool", "subtype": "repair", "rarity": "common", "attack": 0, "armor": 0, "magicResist": 0, "attackRange": 0, "hands": 0, "weight": 1, "price": 40, "repairTool": "portable", "effectText": "野外就地修一件装备：每次回至上限的 50%，最多到九成；不区分武器护甲，也修不了满", "getMethod": "铁匠铺可购，遭遇战掉落可得" }
   ]
 }

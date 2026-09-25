@@ -255,6 +255,9 @@ func run_all() -> int:
 	_test_disguise_gate()
 	_test_disguise_economy()
 	_test_disguise_item_stock()
+	print("=== M29 副本 BOSS · 修正词条 ===")
+	_test_dungeon_modifiers()
+	_test_dungeon_boss()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -8763,3 +8766,73 @@ func _test_disguise_item_stock() -> void:
 		if str(q.get("templateId", "")) == "consumable_disguise":
 			found = true
 	_check(found, "黑市货架里有「改头换面」斗篷")
+
+
+## M29 修正词条规则层（DungeonModifiers.apply）。
+func _test_dungeon_modifiers() -> void:
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	# 无词条：全部退到 1× / 0 偏置 / 空类别
+	var flat: Dictionary = DungeonModifiers.apply([], 0, rules)
+	_eq(flat.get("enemyCountMult"), 1.0, "无词条敌群倍率=1")
+	_eq(flat.get("enemyStrengthMult"), 1.0, "无词条敌强倍率=1")
+	_eq(flat.get("treasureCountMult"), 1.0, "无词条宝箱倍率=1")
+	_eq(flat.get("lootRarityBias"), 0.0, "无词条稀有度偏置=0")
+	_eq(flat.get("monsterCategory"), "", "无词条怪物类别空")
+
+	# 单条 locked：宝箱少、稀有度上移
+	var locked: Dictionary = DungeonModifiers.apply([{"id": "locked"}], 0, rules)
+	_check(float(locked.get("treasureCountMult", 1.0)) < 1.0, "locked 宝箱倍率<1")
+	_check(float(locked.get("lootRarityBias", 0.0)) > 0.0, "locked 稀有度偏置>0")
+	_eq(locked.get("enemyCountMult"), 1.0, "locked 不影响敌群数量")
+
+	# stirred：敌群与敌强都上升
+	var stirred: Dictionary = DungeonModifiers.apply([{"id": "stirred"}], 0, rules)
+	_check(float(stirred.get("enemyCountMult", 1.0)) > 1.0, "stirred 敌群倍率>1")
+	_check(float(stirred.get("enemyStrengthMult", 1.0)) > 1.0, "stirred 敌强倍率>1")
+
+	# depth 叠深：同一词条越深倍率越偏离 1
+	var shallow: Dictionary = DungeonModifiers.apply([{"id": "stirred"}], 0, rules)
+	var deep: Dictionary = DungeonModifiers.apply([{"id": "stirred"}], 10, rules)
+	_check(float(deep.get("enemyCountMult", 1.0)) > float(shallow.get("enemyCountMult", 1.0)),
+		"stirred 深层敌群倍率>浅层")
+	_check(float(deep.get("enemyStrengthMult", 1.0)) > float(shallow.get("enemyStrengthMult", 1.0)),
+		"stirred 深层敌强倍率>浅层")
+
+	# 叠深封顶：depth 极大也不超过 MAX_DEPTH_MULT（3×）
+	var abyss: Dictionary = DungeonModifiers.apply([{"id": "stirred"}], 100, rules)
+	_check(float(abyss.get("enemyStrengthMult", 1.0)) <= 3.0, "叠深敌强不超 3× 封顶")
+
+
+## M29 BOSS 规则层（DungeonBoss）。
+func _test_dungeon_boss() -> void:
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	var rng: DeterministicRNG = DeterministicRNG.new(42)
+	var mod: Dictionary = DungeonModifiers.apply([], 19, rules)
+
+	# is_boss_floor 边界
+	_check(DungeonBoss.is_boss_floor(19, 20), "depth=19 maxDepth=20 是 BOSS 层")
+	_check(not DungeonBoss.is_boss_floor(18, 20), "depth=18 maxDepth=20 不是 BOSS 层")
+	_check(not DungeonBoss.is_boss_floor(0, 20), "depth=0 不是 BOSS 层")
+
+	# boss_spec：单只、书名号、数值放大
+	var spec: Dictionary = DungeonBoss.boss_spec(rules, 19, rng, mod)
+	_check(not spec.is_empty(), "BOSS spec 非空")
+	var opponents: Array = spec.get("opponents", [])
+	_eq(opponents.size(), 1, "BOSS 单只")
+	var boss: Dictionary = opponents[0]
+	var name: String = str(boss.get("name", ""))
+	_check(name.begins_with("《"), "BOSS 名字以《开头")
+	_check(name.ends_with("》"), "BOSS 名字以》结尾")
+	_check(int(boss.get("hp", 0)) > 0, "BOSS HP 放大后>0")
+	_check(int(boss.get("threatLevel", 0)) >= 3, "BOSS TL≥基底+2")
+
+	# boss_loot：三件套非空且模板存在
+	var loot: Array = DungeonBoss.boss_loot(rules, rng, mod)
+	_check(loot.size() >= 3, "BOSS 掉落至少三件（宝石+尸体+装备）")
+	var item_ids: Dictionary = {}
+	for item in ContentLoader.get_items():
+		item_ids[str(item.get("templateId", ""))] = true
+	for tid in loot:
+		_check(item_ids.has(str(tid)), "BOSS 掉落模板存在：%s" % str(tid))
+	_check(loot.has("material_gem"), "BOSS 必掉宝石")
+	_check(loot.has("material_boss_corpse"), "BOSS 必掉尸体")

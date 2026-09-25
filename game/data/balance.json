@@ -259,14 +259,30 @@
     "enemyBase": 1,
     "enemyPerDepth": 1,
     "enemyPerDepthDivisor": 6,
-    "_comment_theme": "副本主题层（M23, A）：每 every 层出一次特殊层（第 every/2×every... 层）。主题只加文本与宝箱/敌人数量倍率，不改几何（walkable/step/连通性都不受影响）。themes 每条给显示名与是否清怪后补给，具体结构由 Dungeon 规则层消费（Dungeon.theme_for）。",
+    "_comment_theme": "副本主题层（M23, A）：每 every 层出一次特殊层（第 every/2×every... 层）。主题只加文本与宝箱/敌人数量倍率，不改几何（walkable/step/连通性都不受影响）。themes 每条给显示名与是否清怪后补给，具体结构由 Dungeon 规则层消费（Dungeon.theme_for）。M-D 起每条主题再加 monsterCategory（该主题层怪物池只取此类别，空=全池）与 lootCategoryBias（宝箱掉落偏向类别，空=不偏）。",
     "themeEvery": 5,
     "themeTreasureMult": 1.5,
     "themeEnemyMult": 1.2,
     "themes": [
-      { "id": "outpost", "label": "小镇哨站", "hasSupply": true },
-      { "id": "treasure_room", "label": "宝藏房", "hasSupply": false }
-    ]
+      { "id": "outpost", "label": "小镇哨站", "hasSupply": true, "monsterCategory": "humanoid", "lootCategoryBias": "armor" },
+      { "id": "treasure_room", "label": "宝藏房", "hasSupply": false, "monsterCategory": "beast", "lootCategoryBias": "consumable" }
+    ],
+    "_comment_modifiers": "修正词条（M-D / D-138）：大地图遗构上 0–2 条词条从纯文案变成每层叠深的真实规则。depthScale=每层放大系数，MAX 3×。每条词条的倍率字段（1.0=不变）与稀有度偏置（0=不偏）按深度叠深；monsterCategory 让词条决定怪物池类别（取首个非空）。",
+    "modifiers": {
+      "depthScale": 0.1,
+      "locked": { "treasureCountMult": 0.6, "lootRarityBias": 0.3, "_comment": "加了锁的：宝箱少但好物锁得深" },
+      "stirred": { "enemyCountMult": 1.3, "enemyStrengthMult": 1.2, "lootRarityBias": 0.2, "_comment": "吵醒过的东西：更凶更多、掉得更肥" },
+      "misaligned": { "enemyStrengthMult": 1.25, "treasureCountMult": 1.3, "_comment": "塌错方向的地脉：更凶、宝箱更多" },
+      "swallowed": { "lootRarityBias": 0.5, "enemyCountMult": 0.7, "_comment": "吞了别的世界的账：少而精、稀有度上移" }
+    },
+    "_comment_boss": "副本 BOSS（M-D / D-139）：最下层沉睡着一头《书名号》巨兽。templates 是候选基底怪（从 monsters.json 抽），statMult 把数值放大，击杀必掉宝石+尸体+保底稀有装备。",
+    "boss": {
+      "templates": ["mon_elemental_dragon", "mon_death_knight", "mon_lich"],
+      "statMult": { "hp": 2.0, "attack": 1.5, "armor": 1.3, "magicResist": 1.3 },
+      "gemTemplateId": "material_gem",
+      "corpseTemplateId": "material_boss_corpse",
+      "equipmentRarityFloor": "rare"
+    }
   },
   "merchant": {
     "_comment": "游方商人（M21 地图商人奇遇）。行商不隶属任何一座城，野外交互有概率撞见，就地开一架车的买卖。与商铺（Economy）的区别是它没有城市上下文——价只由入货与跑腿决定，不该被玩家脚下的城勾兑，所以这里只放这类初值。",

@@ -331,6 +331,12 @@ var _steal_seq: int = 0
 var _dungeon_loot: Array = []
 ## 当前层是不是补给型主题（小镇哨站）：把这一层清完可以在哨站歇脚回满一口气。
 var _dungeon_supply_ready: bool = false
+## 遗构词条（M-D / D-138）：大地图遗构派生的 0–2 条修正词条，进副本时从 node.words 取。
+var _dungeon_words: Array = []
+## 当前层的修正词条倍率（DungeonModifiers.apply 的产出，每层重算）。
+var _dungeon_modifiers: Dictionary = {}
+## 当前层是不是 BOSS 层（M-D / D-139）：最下层沉睡一头《书名号》巨兽。
+var _dungeon_boss_floor: bool = false
 
 # 游方商人（M21：地图商人奇遇）
 var _merchant_view: Dictionary = {}
@@ -3150,6 +3156,7 @@ func _trigger_visible_dungeon(node: Dictionary) -> void:
 	if _world.avatar == null:
 		return
 	_dungeon_seq = WorldSeen.node_seq(node)
+	_dungeon_words = (node.get("words", []) as Array).duplicate()
 	_enter_dungeon()
 	var words: String = _seen_words_text(node)
 	_status.text = "你踏进%s一处遗构%s。按回车触碰出口可下潜，越深越凶。" % [
@@ -4358,7 +4365,10 @@ func _enter_dungeon() -> void:
 	_dungeon_depth = 0
 	_dungeon_player = Dungeon.SPAWN
 	_dungeon_combat = false
-	var dungeon_theme: Dictionary = _dungeon_theme_cfg()
+	_dungeon_boss_floor = false
+	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	_dungeon_modifiers = DungeonModifiers.apply(_dungeon_words, _dungeon_depth, rules)
+	var dungeon_theme: Dictionary = _dungeon_theme_cfg(_dungeon_modifiers)
 	_dungeon = Dungeon.layout("dungeon-%04d" % _dungeon_seq, _dungeon_depth,
 		{"theme": dungeon_theme})
 	_dungeon_loot = _dungeon_roll_loot(_dungeon, _dungeon_rng())
@@ -4376,27 +4386,53 @@ func _dungeon_rng() -> DeterministicRNG:
 ## 组装主题配置（M23, A）：把 dungeon 段的 themeEvery / themeTreasureMult /
 ## themeEnemyMult / themes 映射成 Dungeon.theme_for 认的 every / treasureMult /
 ## enemyMult / themes。满了 themeEvery 层才触发，回非主题层取不到键也不报错。
-func _dungeon_theme_cfg() -> Dictionary:
+## M-D 起把修正词条倍率（DungeonModifiers.apply）并入：theme 倍率 × modifier 倍率，
+## 二者相乘让主题层与词条效果叠加。
+func _dungeon_theme_cfg(modifiers: Dictionary = {}) -> Dictionary:
 	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+	var t_mult: float = float(rules.get("themeTreasureMult", 1.5)) \
+		* float(modifiers.get("treasureCountMult", 1.0))
+	var e_mult: float = float(rules.get("themeEnemyMult", 1.2)) \
+		* float(modifiers.get("enemyCountMult", 1.0))
 	return {
 		"every": maxi(1, int(rules.get("themeEvery", 5))),
-		"treasureMult": float(rules.get("themeTreasureMult", 1.5)),
-		"enemyMult": float(rules.get("themeEnemyMult", 1.2)),
+		"treasureMult": t_mult,
+		"enemyMult": e_mult,
 		"themes": (rules.get("themes", []) as Array).duplicate(),
 	}
 
 
 ## 为某一层生成与宝箱数量等长的战利品清单（templateId 数组）。
+## M-D 起按修正词条的 lootRarityBias 与主题的 lootCategoryBias 加权：
+## 稀有度偏置把高稀有度模板多垫几份进池（偏置 0.3 → 稀有以上每件多 0.3 份权重），
+## 类别偏置把对应类别每件多垫一份（让宝藏房偏消耗品、哨站偏防具）。
 func _dungeon_roll_loot(layout: Dictionary, rng: DeterministicRNG) -> Array:
 	var out: Array = []
 	var count: int = (layout.get("treasures", []) as Array).size()
 	if count <= 0:
 		return out
+	var rarity_bias: float = float(_dungeon_modifiers.get("lootRarityBias", 0.0))
+	var category_bias: String = str(layout.get("theme", {}).get("lootCategoryBias", ""))
+	var order: Array = ["common", "fine", "rare", "epic", "legendary", "dragonforged"]
 	# 只从玩家真能用的类别里挑：武器 / 护甲 / 消耗品。材料与工具不进副本宝箱。
 	var pool: Array = []
 	for item in ContentLoader.get_items():
-		if str(item.get("category", "")) in ["weapon", "armor", "consumable"]:
-			pool.append(item)
+		if not (item is Dictionary):
+			continue
+		var tpl: Dictionary = item as Dictionary
+		var cat: String = str(tpl.get("category", ""))
+		if not (cat in ["weapon", "armor", "consumable"]):
+			continue
+		pool.append(tpl)
+		# 稀有度偏置：rare 以上每件多垫 floor(bias * rarity_rank) 份。
+		var ridx: int = order.find(str(tpl.get("rarity", "common")))
+		if rarity_bias > 0.0 and ridx >= order.find("rare"):
+			var extra: int = maxi(1, roundi(rarity_bias * float(ridx - order.find("rare") + 1)))
+			for _n in range(extra):
+				pool.append(tpl)
+		# 类别偏置：对应类别每件多垫一份。
+		if not category_bias.is_empty() and cat == category_bias:
+			pool.append(tpl)
 	if pool.is_empty():
 		for _i in range(count):
 			out.append("")
@@ -4565,6 +4601,8 @@ func _dungeon_pick_enemy(index: int) -> void:
 
 
 ## 按层深挑一条对手并开战。对手强度随层数走高（dungeon.enemyTiers）。
+## M-D 起：BOSS 层改用 DungeonBoss.boss_spec（单只《书名号》巨兽），普通层走
+## _dungeon_monster_spec 并叠 enemyStrengthMult。
 func _start_dungeon_combat(pos: Vector2i) -> void:
 	var avatar: PlayerAvatar = _world.avatar
 	var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
@@ -4579,15 +4617,22 @@ func _start_dungeon_combat(pos: Vector2i) -> void:
 	)
 	var units: Array = [_player_unit_spec(avatar)]
 	_append_follower(units)
-	var spec: Dictionary = _dungeon_monster_spec(rules, _dungeon_depth, rng)
+	var spec: Dictionary
+	if _dungeon_boss_floor:
+		spec = DungeonBoss.boss_spec(rules, _dungeon_depth, rng, _dungeon_modifiers)
+	else:
+		spec = _dungeon_monster_spec(rules, _dungeon_depth, rng)
 	if spec.is_empty():
 		_combat = null
 		_status.text = "这一层找不到能拦路的凶物。"
 		_refresh()
 		return
 	units.append_array(_encounter_system.units_of(spec, OPPONENT_SPAWNS))
+	var session_id: String = "dungeon-%s-d%d" % [str(_dungeon_seq), _dungeon_depth]
+	if _dungeon_boss_floor:
+		session_id += "-boss"
 	var started: Dictionary = _combat.start({
-		"sessionId": "dungeon-%s-d%d" % [str(_dungeon_seq), _dungeon_depth],
+		"sessionId": session_id,
 		"units": units,
 		"obstacles": _battle_obstacles(),
 	})
@@ -4602,13 +4647,18 @@ func _start_dungeon_combat(pos: Vector2i) -> void:
 	_combat_pending = {}
 	_combat_cursor_tile = Vector2i.ZERO
 	_switch_view(VIEW_COMBAT)
-	_status.text = "在副本第 %d 层交手：%d 对 %d。" % [
-		_dungeon_depth + 1, 1, maxi(0, _combat.units.size() - 1)
-	]
+	if _dungeon_boss_floor:
+		_status.text = "副本最深处：《%s》向你扑来！" % str(spec.get("title", "巨兽"))
+	else:
+		_status.text = "在副本第 %d 层交手：%d 对 %d。" % [
+			_dungeon_depth + 1, 1, maxi(0, _combat.units.size() - 1)
+		]
 	_drive_enemies()
 
 
 ## 按当前层深摇一场对手（复用遭遇生物表，但按 dungeon.enemyTiers 分档）。
+## M-D 起：主题层的 monsterCategory 会收窄怪物池（池空退回全池）；
+## 修正词条的 enemyStrengthMult 叠到每只怪的 hp/attack/armor/magicResist 上。
 func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG) -> Dictionary:
 	# 层深分三档，取对应的 TL 区间
 	var tier: int = 0
@@ -4621,13 +4671,29 @@ func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG)
 	var highs: Array = rules.get("enemyTierMax", [4, 6, 10])
 	var tl_min: int = int(lows[clampi(tier, 0, lows.size() - 1)])
 	var tl_max: int = int(highs[clampi(tier, 0, highs.size() - 1)])
+	# 主题层收窄怪物池类别（哨站→人形、宝藏房→野兽）；词条也可能指定 monsterCategory，取主题优先。
+	var category_filter: String = str(_dungeon.get("theme", {}).get("monsterCategory", ""))
+	if category_filter.is_empty():
+		category_filter = str(_dungeon_modifiers.get("monsterCategory", ""))
 	var pool: Array = []
 	for entry in ContentLoader.get_monsters():
 		if not (entry is Dictionary):
 			continue
 		var tl: int = int((entry as Dictionary).get("threatLevel", 0))
-		if tl >= tl_min and tl <= tl_max:
-			pool.append(entry)
+		if tl < tl_min or tl > tl_max:
+			continue
+		if not category_filter.is_empty() \
+			and str((entry as Dictionary).get("category", "")) != category_filter:
+			continue
+		pool.append(entry)
+	# 类别过滤后池空：退回全 TL 池（不该让主题层无怪可打）。
+	if pool.is_empty():
+		for entry in ContentLoader.get_monsters():
+			if not (entry is Dictionary):
+				continue
+			var tl: int = int((entry as Dictionary).get("threatLevel", 0))
+			if tl >= tl_min and tl <= tl_max:
+				pool.append(entry)
 	if pool.is_empty():
 		return {}
 	# 层深越深，同层多放几个（靠得住前面的敌群规模）
@@ -4638,6 +4704,7 @@ func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG)
 	if count > 3:
 		count = 3
 	var picked: Dictionary = pool[rng.next_int(pool.size())]
+	var str_mult: float = float(_dungeon_modifiers.get("enemyStrengthMult", 1.0))
 	var opponents: Array = []
 	# 数量多时给同一只的变体，但单位 id 各不相同
 	for i in range(count):
@@ -4651,10 +4718,10 @@ func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG)
 			"category": str(picked.get("category", "")),
 			"threatLevel": int(picked.get("threatLevel", 1)),
 			"attributes": (picked.get("attributes", {}) as Dictionary).duplicate(),
-			"hp": int(picked.get("hp", 0)),
-			"armor": int(picked.get("armor", 0)),
-			"magicResist": int(picked.get("magicResist", 0)),
-			"attack": int(picked.get("attack", 0)),
+			"hp": maxi(1, roundi(float(int(picked.get("hp", 0))) * str_mult)),
+			"armor": maxi(0, roundi(float(int(picked.get("armor", 0))) * str_mult)),
+			"magicResist": maxi(0, roundi(float(int(picked.get("magicResist", 0))) * str_mult)),
+			"attack": maxi(1, roundi(float(int(picked.get("attack", 0))) * str_mult)),
 			"attackRange": int(picked.get("attackRange", 1)),
 			"parleyable": false,
 			"isNpc": false,
@@ -4664,15 +4731,30 @@ func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG)
 
 
 ## 副本战斗收尾：胜负都回到副本；赢了留在原地，输了离开副本回到地图。
+## M-D 起：BOSS 战胜利时追加三件套（宝石/尸体/装备）并清场标记副本通关。
 func _resolve_dungeon_combat() -> void:
 	_sync_combat_skills_to_avatar()
 	var won: bool = _combat.winner == Combat.RESULT_PLAYER
 	_dungeon_combat = false
 	if won:
-		_status.text = "你打退了守在这里的东西（第 %d 层）。" % (_dungeon_depth + 1)
-		# 补给型主题（小镇哨站）：这一层的凶物都清光了，就在哨站歇脚回满一口气。
-		if _dungeon_supply_ready and _dungeon.get("enemies", [] as Array).is_empty():
-			_status.text = "这一层的哨站守住了防线，你在营地里歇了歇脚，精神完全恢复。"
+		if _dungeon_boss_floor:
+			# BOSS 击杀：三件套必掉（走 combat.loot 之外，因为那是概率掉落）。
+			var rules: Dictionary = ContentLoader.get_balance_section("dungeon")
+			var boss_items: Array = DungeonBoss.boss_loot(rules, _dungeon_rng(), _dungeon_modifiers)
+			for tid in boss_items:
+				if str(tid).is_empty():
+					continue
+				_loot_seq += 1
+				_creator.add_item(_world.avatar, str(tid),
+					"%s-dungeonboss-%03d" % [_world.avatar.avatar_id, _loot_seq])
+			_dungeon.get("enemies", [] as Array).clear()
+			_dungeon_boss_floor = false
+			_status.text = "你击败了沉睡在最深处的巨兽，它的财宝散落一地。按 ESC 离开副本。"
+		else:
+			_status.text = "你打退了守在这里的东西（第 %d 层）。" % (_dungeon_depth + 1)
+			# 补给型主题（小镇哨站）：这一层的凶物都清光了，就在哨站歇脚回满一口气。
+			if _dungeon_supply_ready and _dungeon.get("enemies", [] as Array).is_empty():
+				_status.text = "这一层的哨站守住了防线，你在营地里歇了歇脚，精神完全恢复。"
 		_switch_view(VIEW_DUNGEON)
 	else:
 		_status.text = "你在地底失去了知觉，醒来时已回到地面。"
@@ -4688,6 +4770,7 @@ func _exit_combat_to_context() -> void:
 
 
 ## 下潜一层：重排一层新图、放回出生点、重掷宝箱内容。到底后再按出口只提示。
+## M-D 起：每层重算修正词条倍率（叠深），若下到最下层则是 BOSS 层，公告并给撤退机会。
 func _dungeon_descend() -> void:
 	if _world == null:
 		return
@@ -4699,12 +4782,17 @@ func _dungeon_descend() -> void:
 		return
 	_dungeon_depth += 1
 	_dungeon_player = Dungeon.SPAWN
+	_dungeon_modifiers = DungeonModifiers.apply(_dungeon_words, _dungeon_depth, rules)
+	_dungeon_boss_floor = DungeonBoss.is_boss_floor(_dungeon_depth, max_depth)
 	_dungeon = Dungeon.layout("dungeon-%04d" % _dungeon_seq, _dungeon_depth,
-		{"theme": _dungeon_theme_cfg()})
+		{"theme": _dungeon_theme_cfg(_dungeon_modifiers)})
 	_dungeon_loot = _dungeon_roll_loot(_dungeon, _dungeon_rng())
 	_dungeon_supply_ready = bool(_dungeon.get("theme", {}).get("hasSupply", false))
 	_switch_view(VIEW_DUNGEON)
-	_status.text = "你下到第 %d 层。地面上的光已经照不进来了。" % (_dungeon_depth + 1)
+	if _dungeon_boss_floor:
+		_status.text = "你下到最深处。空气里飘着腥气——一头《巨兽》沉睡在此。按回车迎战，按 ESC 还能撤退。"
+	else:
+		_status.text = "你下到第 %d 层。地面上的光已经照不进来了。" % (_dungeon_depth + 1)
 
 
 ## 离开副本：回到世界地图，清空这次探索会话。
@@ -4716,6 +4804,9 @@ func _leave_dungeon() -> void:
 	_dungeon_combat = false
 	_dungeon_loot = []
 	_dungeon_supply_ready = false
+	_dungeon_words = []
+	_dungeon_modifiers = {}
+	_dungeon_boss_floor = false
 	_switch_view(VIEW_MAP)
 
 
