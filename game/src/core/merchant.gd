@@ -79,8 +79,11 @@ func stock_for(seed_key: String) -> Array:
 			continue
 		_stock.append({"templateId": template_id, "template": template})
 		_quotations[template_id] = _quote(template)
-	# 专属传说货：行商总带一件，没被随机抽中就补一件。
-	if not _legendary_template.is_empty() and not _already_in_stock(_legendary_template):
+	# 专属传说货：行商总带一件，没被随机抽中就补一件。补之前先看货架满没满——
+	# 否则随机 count 抽满 6 件后，"补一件"会顶到 7，突破 STOCK_COUNT_MAX 的货架上限
+	# （抽到 subclass 数据里多一件消耗品就会让这条路径第一次暴露）。
+	if not _legendary_template.is_empty() and not _already_in_stock(_legendary_template) \
+		and _stock.size() < STOCK_COUNT_MAX:
 		var legendary: Dictionary = _find_template(_legendary_template)
 		if not legendary.is_empty() and STOCK_CATEGORIES.has(str(legendary.get("category", ""))):
 			_stock.append({

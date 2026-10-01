@@ -309,6 +309,12 @@ func units_of(spec: Dictionary, spawns: Array) -> Array:
 			"threatLevel": int(opponent.get("threatLevel", 1)),
 			"hp": int(opponent.get("hp", 0)),
 			"maxHp": int(opponent.get("hp", 0)),
+			# 捕获/变体要判的源字段（M34）。combat 层用它判"这只能不能收：是生灵、
+			# 有声名《》、神性、还是超 TL"，以及收进笼里给容器记 species/变体标识。
+			"isNpc": bool(opponent.get("isNpc", false)),
+			"category": str(opponent.get("category", "")),
+			"isVariant": bool(opponent.get("isVariant", false)),
+			"monsterId": str(opponent.get("monsterId", "")),
 		})
 	return out
 
@@ -341,13 +347,18 @@ func _roll_monsters(context: String, encounter_id: String, rng: DeterministicRNG
 		return []
 
 	var picked: Dictionary = candidates[rng.next_int(candidates.size())]
+	# M34 变体（D-150）：整群掷一次变体判定，命中就整体放大并改书名号名。变体掷与
+	# 遭遇共一支随机源（同一场可复现）；变体后再经 _monster_profile 落成对手规格。
+	var variant_roll: Dictionary = MonsterVariant.roll(picked, rng, \
+		ContentLoader.get_balance_section("monsters"))
+	var rolled: Dictionary = MonsterVariant.apply(picked, variant_roll, 1.0)
 	var count: int = clampi(
-		rng.range_int(int(picked.get("groupMin", 1)), int(picked.get("groupMax", 1))),
+		rng.range_int(int(rolled.get("groupMin", 1)), int(rolled.get("groupMax", 1))),
 		1, maxi(1, int(_rules.get("maxOpponents", 3)))
 	)
 	var out: Array = []
 	for i in range(count):
-		out.append(_monster_profile(picked, i, count, encounter_id))
+		out.append(_monster_profile(rolled, i, count, encounter_id))
 	return out
 
 
@@ -362,6 +373,7 @@ func _monster_profile(monster: Dictionary, index: int, count: int, encounter_id:
 		"name": name,
 		"displayName": str(monster.get("displayName", "")),
 		"category": str(monster.get("category", "")),
+		"monsterId": str(monster.get("monsterId", "")),
 		"threatLevel": int(monster.get("threatLevel", 1)),
 		"attributes": (monster.get("attributes", {}) as Dictionary).duplicate(),
 		"hp": int(monster.get("hp", 0)),
@@ -372,6 +384,7 @@ func _monster_profile(monster: Dictionary, index: int, count: int, encounter_id:
 		"parleyable": str(monster.get("category", "")) == ContentLoader.MONSTER_PARLEYABLE_CATEGORY,
 		"isNpc": false,
 		"npcId": "",
+		"isVariant": bool(monster.get("isVariant", false)),
 	}
 
 

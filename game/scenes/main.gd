@@ -2588,7 +2588,7 @@ func _refresh_combat() -> void:
 		return
 	_combat_view = CombatViewModel.build(
 		_combat, _table("skillNames"), _combat_menu_mode, _combat_cursor,
-		_combat_pending, _combat_cursor_tile
+		_combat_pending, _combat_cursor_tile, _build_capture_view()
 	)
 	# 选落点时战场上的光标跟着菜单高亮走，不单独维护第二套光标状态
 	if _combat_menu_mode == CombatViewModel.MENU_TARGET_TILE:
@@ -2684,6 +2684,17 @@ func _confirm_combat_menu(menu: Array) -> void:
 			_combat_menu_mode = CombatViewModel.MENU_TARGET_UNIT
 			_combat_cursor = 0
 			_refresh()
+		"capture":
+			var cage_cfg: Dictionary = _capture_cfg()
+			_combat_pending = {
+				"kind": "capture",
+				"label": "捕捉",
+				"attackRange": MonsterCapture.throw_range(cage_cfg),
+				"apCost": MonsterCapture.ap_cost(cage_cfg),
+			}
+			_combat_menu_mode = CombatViewModel.MENU_TARGET_UNIT
+			_combat_cursor = 0
+			_refresh()
 		"downed":
 			_combat_menu_mode = CombatViewModel.MENU_DOWNED
 			_combat_pending = {}
@@ -2716,6 +2727,10 @@ func _actor_id() -> String:
 ## 提交一次指向单位的动作。键盘（在子菜单里选中目标后回车）与鼠标（直接点战场上
 ## 的敌人）走同一条路：用不用技能由 _combat_pending 决定，两处不必各判一次。
 func _submit_target_unit(target_id: String) -> void:
+	# M34 捕捉：进的是「掷笼」专用路径，不走普通攻击/技能那条提交线。
+	if str(_combat_pending.get("kind", "")) == "capture":
+		_do_capture(target_id)
+		return
 	var skill_id: String = str(_combat_pending.get("skillId", ""))
 	_submit_combat({
 		"actionType": Combat.ACTION_SKILL if not skill_id.is_empty() else Combat.ACTION_ATTACK,
@@ -2743,6 +2758,125 @@ func _submit_combat(action: Dictionary) -> void:
 	_combat_pending = {}
 	_combat_cursor = 0
 	_drive_enemies()
+
+
+# --- M34 / M-F 怪物捕捉（收容笼） ---
+
+## balance.monsters 段（变体与捕捉共用这份规则字典）。
+func _capture_cfg() -> Dictionary:
+	return ContentLoader.get_balance_section("monsters")
+
+## 玩家背包里还有没有收容笼。
+func _has_cage() -> bool:
+	if _world == null or _world.avatar == null:
+		return false
+	var tid: String = MonsterCapture.device_template(_capture_cfg())
+	for iid in _world.avatar.inventory:
+		var inst: Dictionary = _world.avatar.item_instances.get(iid, {})
+		if str(inst.get("templateId", "")) == tid:
+			return true
+	return false
+
+## 构造战斗视图要的捕捉信息：本回合单位有笼、且场上哪些敌方目标可收/残血/在笼程内。
+## 视图据此决定「捕捉」入口亮不亮、以及选目标菜单上每只的提示文案。
+func _build_capture_view() -> Dictionary:
+	if _combat == null or not _has_cage():
+		return {}
+	var cfg: Dictionary = _capture_cfg()
+	var throw_range: int = MonsterCapture.throw_range(cfg)
+	var actor: Dictionary = _combat.unit_by_id(_combat.current_unit_id())
+	var infos: Array = []
+	for unit in _combat.units:
+		if str(unit["side"]) != Combat.SIDE_ENEMY:
+			continue
+		if bool(unit["dead"]) or bool(unit["downed"]):
+			continue
+		var distance: int = absi(int(unit["position"].x) - int(actor["position"].x)) \
+			+ absi(int(unit["position"].y) - int(actor["position"].y))
+		var reason: String = MonsterCapture.is_capturable(unit, cfg)
+		infos.append({
+			"unitId": str(unit["unitId"]),
+			"capturable": reason.is_empty(),
+			"reason": reason,
+			"lowHp": MonsterCapture.low_hp_eligible(unit, cfg),
+			"chanceBp": MonsterCapture.chance_bp(unit, cfg),
+			"inRange": distance <= throw_range,
+		})
+	return {
+		"range": throw_range,
+		"apCost": MonsterCapture.ap_cost(cfg),
+		"units": infos,
+	}
+
+## 掷笼捕捉 target_id 指向的残血野兽。笼耗、成败判定、容器入包都在这结清；
+## 战场后果（收走/暴怒反扑）交给 Combat.ACTION_CAPTURE 动作落。
+func _do_capture(target_id: String) -> void:
+	if _combat == null or _world == null or _world.avatar == null:
+		return
+	var cfg: Dictionary = _capture_cfg()
+	var target: Dictionary = _combat.unit_by_id(target_id)
+	if target.is_empty():
+		_status.text = "捕捉目标不存在。"
+		_refresh()
+		return
+	var reason: String = MonsterCapture.is_capturable(target, cfg)
+	if not reason.is_empty():
+		_status.text = reason
+		_refresh()
+		return
+	if not MonsterCapture.low_hp_eligible(target, cfg):
+		_status.text = "它还有气力，笼不让收躁动的东西。"
+		_refresh()
+		return
+	var actor: Dictionary = _combat.unit_by_id(_combat.current_unit_id())
+	var ap_cost: int = MonsterCapture.ap_cost(cfg)
+	if int(actor.get("ap", 0)) < ap_cost:
+		_status.text = "行动点不足：掷笼需要 %d AP。" % ap_cost
+		_refresh()
+		return
+	var throw_range: int = MonsterCapture.throw_range(cfg)
+	var distance: int = absi(int(target["position"].x) - int(actor["position"].x)) \
+		+ absi(int(target["position"].y) - int(actor["position"].y))
+	if distance > throw_range:
+		_status.text = "够不着：笼只能掷 %d 格内，相距 %d 格。" % [throw_range, distance]
+		_refresh()
+		return
+	if not _consume_cage():
+		_status.text = "手边没有收容笼了。"
+		_refresh()
+		return
+	# 成败判定用独立支随机源（世界种子 ⊕ 场次），同场可复现、也不占战斗主随机。
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_combat_seq * 0x9E3779B9))
+	var outcome: Dictionary = MonsterCapture.outcome(target, cfg, rng.next_int(MonsterCapture.BP_FULL))
+	var succeeded: bool = bool(outcome.get("captured", false))
+	if succeeded:
+		_loot_seq += 1
+		var instance_id: String = "%s-cage-%04d" % [_world.avatar.avatar_id, _loot_seq]
+		var contained: Dictionary = MonsterCapture.contained_item(target, cfg, instance_id)
+		_world.avatar.item_instances[instance_id] = contained
+		_world.avatar.inventory.append(instance_id)
+	_submit_combat({
+		"actionType": Combat.ACTION_CAPTURE,
+		"actorId": _actor_id(),
+		"targetId": target_id,
+		"apCost": ap_cost,
+		"attackRange": MonsterCapture.throw_range(cfg),
+		"succeeded": succeeded,
+		"retaliationRatio": float(cfg.get("capture", {}).get("enrageCounterRatio", 0.6)),
+	})
+	if not succeeded:
+		_status.text = "笼子没能扣住它——笼毁了，它暴怒反扑！"
+
+## 从背包取走一只收容笼。找到并移除返回 true，四处都找不到返回 false。
+func _consume_cage() -> bool:
+	var tid: String = MonsterCapture.device_template(_capture_cfg())
+	for iid in _world.avatar.inventory.duplicate():
+		var inst: Dictionary = _world.avatar.item_instances.get(iid, {})
+		if str(inst.get("templateId", "")) == tid:
+			_world.avatar.inventory.erase(iid)
+			_world.avatar.item_instances.erase(iid)
+			return true
+	return false
 
 
 ## 把当前在效的随从追加进本场战斗的单位表。没有随从契约就什么都不做。
@@ -5023,30 +5157,38 @@ func _dungeon_monster_spec(rules: Dictionary, depth: int, rng: DeterministicRNG)
 	if count > 3:
 		count = 3
 	var picked: Dictionary = pool[rng.next_int(pool.size())]
+	# M34 变体（D-150）：先掷一次变体判定，再把副本修正词条的 enemyStrengthMult 作为
+	# 额外倍率叠进去。MonsterVariant.apply 会把两者乘成总的倍率并一并改书名号名——
+	# 这样副本中层既有修正词条、也出《书名号》破格怪。非变体时 total=str_mult，与旧行为逐一对齐。
+	var variant_roll: Dictionary = MonsterVariant.roll(picked, rng, \
+		ContentLoader.get_balance_section("monsters"))
 	var str_mult: float = float(_dungeon_modifiers.get("enemyStrengthMult", 1.0))
+	var rolled: Dictionary = MonsterVariant.apply(picked, variant_roll, str_mult)
 	var opponents: Array = []
 	# 数量多时给同一只的变体，但单位 id 各不相同
 	for i in range(count):
-		var name: String = str(picked.get("displayName", ""))
+		var name: String = str(rolled.get("displayName", ""))
 		if count > 1:
 			name = "%s %d" % [name, i + 1]
 		opponents.append({
 			"unitId": "dungeon-%s-d%d-%d" % [_dungeon_seq, depth, i + 1],
 			"name": name,
-			"displayName": str(picked.get("displayName", "")),
-			"category": str(picked.get("category", "")),
-			"threatLevel": int(picked.get("threatLevel", 1)),
-			"attributes": (picked.get("attributes", {}) as Dictionary).duplicate(),
-			"hp": maxi(1, roundi(float(int(picked.get("hp", 0))) * str_mult)),
-			"armor": maxi(0, roundi(float(int(picked.get("armor", 0))) * str_mult)),
-			"magicResist": maxi(0, roundi(float(int(picked.get("magicResist", 0))) * str_mult)),
-			"attack": maxi(1, roundi(float(int(picked.get("attack", 0))) * str_mult)),
-			"attackRange": int(picked.get("attackRange", 1)),
+			"displayName": str(rolled.get("displayName", "")),
+			"category": str(rolled.get("category", "")),
+			"monsterId": str(rolled.get("monsterId", "")),
+			"threatLevel": int(rolled.get("threatLevel", 1)),
+			"attributes": (rolled.get("attributes", {}) as Dictionary).duplicate(),
+			"hp": maxi(1, roundi(float(int(rolled.get("hp", 0))))),
+			"armor": maxi(0, roundi(float(int(rolled.get("armor", 0))))),
+			"magicResist": maxi(0, roundi(float(int(rolled.get("magicResist", 0))))),
+			"attack": maxi(1, roundi(float(int(rolled.get("attack", 0))))),
+			"attackRange": int(rolled.get("attackRange", 1)),
 			"parleyable": false,
 			"isNpc": false,
 			"npcId": "",
+			"isVariant": bool(variant_roll.get("isVariant", false)),
 		})
-	return {"title": str(picked.get("displayName", "地下的凶物")), "opponents": opponents}
+	return {"title": str(rolled.get("displayName", "地下的凶物")), "opponents": opponents}
 
 
 ## 副本战斗收尾：胜负都回到副本；赢了留在原地，输了离开副本回到地图。

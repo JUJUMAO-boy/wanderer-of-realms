@@ -274,6 +274,9 @@ func run_all() -> int:
 	_test_city_space_visitors()
 	_test_wanderer_trade()
 	_test_wanderer_trouble_resolve()
+	print("=== M34 怪物变体与捕捉 ===")
+	_test_monster_variant()
+	_test_monster_capture()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7834,6 +7837,10 @@ func _test_merchant_quote() -> void:
 	var quotes: Dictionary = m.quotations()
 	_check(not quotes.is_empty(), "货架上有报价")
 	for entry in m.stock_left():
+		# 专属传说货按 legendaryBuyRatio（2.5）开价，不走 BUY_RATIO 那套 1.5 基准；
+		# 它若被随机补上货架就跳过这句，避免对故意抬价的怪货断言普通基准。
+		if bool(entry.get("legendary", false)):
+			continue
 		var tid: String = str(entry["templateId"])
 		var base: int = maxi(1, int(ContentLoader.get_item(tid).get("price", 0)))
 		var q: Dictionary = quotes[tid]
@@ -9211,3 +9218,115 @@ func _test_dungeon_panel_hatch() -> void:
 	_check(not view2.get("relicMarks", []).is_empty(), "开后 treasure 房显示遗物标记")
 	var hit2: Dictionary = DungeonPanel.hit_test(view2, rect, view2["origin"] + Vector2(3.5, 5.5) * 16.0)
 	_eq(str(hit2.get("kind", "")), DungeonPanel.HIT_CELL, "开后原位回落到普通格")
+
+
+# --- M34 怪物变体（D-150） ---
+
+## 变体判定：未命中不放大、命中书名号、破格档放大到区间、威胁抬档；同一掷可复现。
+func _test_monster_variant() -> void:
+	var base: Dictionary = {
+		"monsterId": "mon_wolf", "displayName": "野狼", "category": "beast",
+		"threatLevel": 3, "hp": 70, "attack": 8, "armor": 1, "magicResist": 0,
+	}
+	var rules: Dictionary = ContentLoader.get_balance_section("monsters")
+	# 未命中（chanceBp=0 → 恒不中）不放大、不改名、威胁不抬。
+	var no := DeterministicRNG.new(111)
+	var miss_rules: Dictionary = {"variant": {"chanceBp": 0, "tiers": []}}
+	var miss: Dictionary = MonsterVariant.roll(base, no, miss_rules)
+	_check(not bool(miss.get("isVariant", false)), "chanceBp=0 不掷出变体")
+	_eq(float(miss.get("mult", 0.0)), 1.0, "未命中倍率恒 1")
+	_eq(str(miss.get("name", "")), "野狼", "未命中不改名")
+	var applied: Dictionary = MonsterVariant.apply(base, miss, 1.0)
+	_eq(int(applied["hp"]), 70, "未命中 hp 不放大")
+	# 恒命中某档：书名号名 + 倍率放大。
+	var tier_rules: Dictionary = {
+		"variant": {
+			"chanceBp": 10000, "tiers": [
+				{"id": "named", "label": "书名号", "mult": 1.25, "weightBp": 10000},
+			],
+		}
+	}
+	var hit: Dictionary = MonsterVariant.roll(base, DeterministicRNG.new(2), tier_rules)
+	_check(bool(hit.get("isVariant", false)), "chanceBp=10000 必中变体")
+	_check(str(hit["name"]).begins_with("《"), "变体名包书名号")
+	_eq(str(hit["label"]), "书名号", "变体档标签")
+	_eq(int(hit["threatBump"]), 1, "书名号档威胁抬 1")
+	var hit_applied: Dictionary = MonsterVariant.apply(base, hit, 1.0)
+	_eq(int(hit_applied["hp"]), roundi(70.0 * 1.25), "书名号档 hp 按 1.25 放大")
+	_eq(int(hit_applied["threatLevel"]), 4, "书名号档威胁 +1")
+	_check(bool(hit_applied["isVariant"]), "命中变体打 isVariant 标记")
+	# 「修正」破格档：×2–5 区间、威胁抬 2；用 range 掷出确定性区间值。
+	var fix_rules: Dictionary = {
+		"variant": {
+			"chanceBp": 10000, "tiers": [
+				{"id": "fix", "label": "修正", "multMin": 2.0, "multMax": 5.0, "weightBp": 10000},
+			],
+		}
+	}
+	var fix: Dictionary = MonsterVariant.roll(base, DeterministicRNG.new(999), fix_rules)
+	_check(bool(fix.get("isVariant", false)), "修正档必中")
+	_check(float(fix["mult"]) >= 2.0 and float(fix["mult"]) <= 5.0, "修正档倍率落在 2–5")
+	_eq(int(fix["threatBump"]), 2, "修正档威胁抬 2")
+	# extra_mult 叠加（副本修正词条）：非变体也随 extra_mult 放大。
+	var scaled: Dictionary = MonsterVariant.apply(base, miss, 2.0)
+	_eq(int(scaled["hp"]), 140, "非变体也随 extra_mult=2 放大")
+	_check(not scaled.has("isVariant"), "纯修正倍率不打变体标记")
+
+
+# --- M34 怪物捕捉（D-151） ---
+
+## 捕捉四道拒收红线、低血资格、成功率随血量缺口、失败恒两条代价；收成的容器带源标记。
+func _test_monster_capture() -> void:
+	var rules: Dictionary = ContentLoader.get_balance_section("monsters")
+	# 可收的残血野兽：TL 3、hp 30/max 70（≈0.43 < 0.5）、非变体、非 NPC、非神性。
+	var beast: Dictionary = {
+		"unitId": "e1-1", "name": "野狼", "displayName": "野狼",
+		"category": "beast", "threatLevel": 3, "hp": 30, "maxHp": 70,
+		"isNpc": false, "isVariant": false, "divine": false, "monsterId": "mon_wolf",
+	}
+	_eq(MonsterCapture.is_capturable(beast, rules), "", "残血野兽可捕捉")
+	_check(MonsterCapture.low_hp_eligible(beast, rules), "hp 占比 0.43 < 0.5 低血够格")
+	# 四道红线各拒一类。
+	var npc: Dictionary = beast.duplicate(); npc["isNpc"] = true
+	_check(not MonsterCapture.is_capturable(npc, rules).is_empty(), "生灵/isNpc 拒收")
+	var human: Dictionary = beast.duplicate(); human["category"] = "humanoid"
+	_check(not MonsterCapture.is_capturable(human, rules).is_empty(), "人形对话体拒收")
+	var var_: Dictionary = beast.duplicate(); var_["isVariant"] = true
+	_check(not MonsterCapture.is_capturable(var_, rules).is_empty(), "变体《》拒收")
+	var div: Dictionary = beast.duplicate(); div["divine"] = true
+	_check(not MonsterCapture.is_capturable(div, rules).is_empty(), "神性拒收")
+	var hot: Dictionary = beast.duplicate(); hot["threatLevel"] = 15  # > captureMaxThreatLevel=10
+	_check(serial(MonsterCapture.is_capturable(hot, rules)) == "它太凶，笼子装不下",
+		"超 TL 上限拒收")
+	# 不在低血线内的不能收。
+	var healthy: Dictionary = beast.duplicate(); healthy["hp"] = 60  # 60/70=0.86
+	_check(not MonsterCapture.low_hp_eligible(healthy, rules), "血还足不收")
+	# 成功率随血量缺口变大（残血 → 高把握）。
+	var hurt: Dictionary = beast.duplicate(); hurt["hp"] = 10  # 10/70≈0.143
+	var fullish: Dictionary = beast.duplicate(); fullish["hp"] = 34  # 34/70≈0.49
+	_check(MonsterCapture.chance_bp(hurt, rules) > MonsterCapture.chance_bp(fullish, rules),
+		"血越残成功率越高")
+	_check(MonsterCapture.chance_bp(beast, rules) <= MonsterCapture.BP_FULL, "成功率封顶不越界")
+	# 失败恒两条代价：deviceLost + enrage。
+	var f: Dictionary = MonsterCapture.outcome(beast, rules, 0)
+	_check(bool(f["captured"]), "roll 0 必成")
+	_eq((f["consequences"] as Array).size(), 0, "成功无代价")
+	var fo: Dictionary = MonsterCapture.outcome(beast, rules, MonsterCapture.BP_FULL)
+	_check(not bool(fo["captured"]), "roll 满必败")
+	_eq((fo["consequences"] as Array).size(), 2, "失败恒两条代价")
+	_check((fo["consequences"] as Array).has("deviceLost"), "失败代价之一 deviceLost")
+	_check((fo["consequences"] as Array).has("enrage"), "失败代价之一 enrage")
+	# 容器带源标记（species、变体、威胁）。
+	var cont: Dictionary = MonsterCapture.contained_item(beast, rules, "i1")
+	_eq(str(cont["templateId"]), "creature_caged", "容器模板为囚笼")
+	_eq(str((cont["modifiers"] as Dictionary).get("monsterId", "")), "mon_wolf", "容器记录 species")
+	_check(not bool((cont["modifiers"] as Dictionary).get("variant", true)), "容器记录非变体")
+	# 收容装置取与抛掷/AP 消耗读 balance.monsters.capture。
+	_eq(MonsterCapture.device_template(rules), "consumable_capture_cage", "收容装置模板")
+	_eq(MonsterCapture.throw_range(rules), 2, "抛掷距离 2 格")
+	_eq(MonsterCapture.ap_cost(rules), 3, "掷笼 AP 3")
+
+
+## 断言辅助：把任意值归一成字符串，便于比较（别名不存在的等效物）。
+func serial(v: Variant) -> String:
+	return str(v)

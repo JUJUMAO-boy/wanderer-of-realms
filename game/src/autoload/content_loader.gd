@@ -48,7 +48,7 @@ const DAMAGE_TYPES: Array = ["physical", "fire", "water", "wind", "earth", "holy
 
 ## 物品分类与稀有度（《数值框架》8 节）。material 为 M14 生产技能新增的原料类别，
 ## relic 为 M32 副本专属遗物类别（只出副本，见技术设计文档 D-145）。
-const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material", "relic"]
+const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material", "relic", "creature"]
 const ITEM_RARITIES: Array = [
 	"common", "fine", "rare", "epic", "legendary", "dragonforged",
 ]

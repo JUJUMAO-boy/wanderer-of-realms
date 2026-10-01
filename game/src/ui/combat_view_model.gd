@@ -31,11 +31,12 @@ static func build(
 	menu_mode: int,
 	cursor: int,
 	pending: Dictionary = {},
-	cursor_tile: Vector2i = Vector2i.ZERO
+	cursor_tile: Vector2i = Vector2i.ZERO,
+	capture_view: Dictionary = {}
 ) -> Dictionary:
 	if combat == null:
 		return {}
-	var menu: Array = _menu(combat, skill_names, menu_mode, pending)
+	var menu: Array = _menu(combat, skill_names, menu_mode, pending, capture_view)
 	return {
 		"round": combat.round,
 		"finished": combat.finished,
@@ -177,7 +178,8 @@ static func _menu_label(menu_mode: int, pending: Dictionary) -> String:
 ##   end_turn / downed_choice / target_unit / target_tile 直接提交；
 ##   move / attack / skill / downed 进入下一层子菜单。
 static func _menu(
-	combat: Combat, skill_names: Dictionary, menu_mode: int, pending: Dictionary
+	combat: Combat, skill_names: Dictionary, menu_mode: int, pending: Dictionary,
+	capture_view: Dictionary = {}
 ) -> Array:
 	if combat.finished:
 		return []
@@ -190,15 +192,18 @@ static func _menu(
 
 	match menu_mode:
 		MENU_TARGET_UNIT:
-			return _target_unit_menu(combat, actor, pending)
+			return _target_unit_menu(combat, actor, pending, capture_view)
 		MENU_TARGET_TILE:
 			return _target_tile_menu(actor, pending)
 		MENU_DOWNED:
 			return _downed_menu(combat)
-	return _main_menu(combat, actor, skill_names)
+	return _main_menu(combat, actor, skill_names, capture_view)
 
 
-static func _main_menu(combat: Combat, actor: Dictionary, skill_names: Dictionary) -> Array:
+static func _main_menu(
+	combat: Combat, actor: Dictionary, skill_names: Dictionary,
+	capture_view: Dictionary = {}
+) -> Array:
 	var out: Array = [{
 		"label": "移动（每格 %d AP）" % int(_move_cost(combat, actor)),
 		"action": {"kind": "move"},
@@ -248,14 +253,40 @@ static func _main_menu(combat: Combat, actor: Dictionary, skill_names: Dictionar
 					"label": str(skill_names.get(str(skill_id), str(skill_id))),
 					"apCost": ap_cost},
 			})
+	# M34 捕捉（D-151）：有收容笼、且场上存在可收的残血目标（够得着）才亮出
+	# 「捕捉」入口。具体目标信息（可收/低血/成功率）在 capture_view.units 里逐只判。
+	var cage_ap: int = int(capture_view.get("apCost", 3))
+	var has_catchable: bool = false
+	for info in capture_view.get("units", []):
+		if bool(info.get("capturable", false)) \
+			and bool(info.get("lowHp", false)) \
+			and bool(info.get("inRange", false)):
+			has_catchable = true
+			break
+	if has_catchable:
+		out.append({
+			"label": "捕捉（收容笼，%d AP）" % cage_ap,
+			"action": {
+				"kind": "capture",
+				"attackRange": maxi(1, int(capture_view.get("range", 2))),
+				"apCost": cage_ap,
+			},
+		})
 	if _has_pending_downed(combat):
 		out.append({"label": "处理倒地者（1 AP）", "action": {"kind": "downed"}})
 	out.append({"label": "结束回合", "action": {"kind": "end_turn"}})
 	return out
 
 
-static func _target_unit_menu(combat: Combat, actor: Dictionary, pending: Dictionary) -> Array:
+static func _target_unit_menu(
+	combat: Combat, actor: Dictionary, pending: Dictionary,
+	capture_view: Dictionary = {}
+) -> Array:
 	var out: Array = []
+	var is_capture: bool = str(pending.get("kind", "")) == "capture"
+	var capture_by_id: Dictionary = {}
+	for info in capture_view.get("units", []):
+		capture_by_id[str(info.get("unitId", ""))] = info
 	for unit in combat.units:
 		if str(unit["side"]) == str(actor["side"]):
 			continue
@@ -264,12 +295,26 @@ static func _target_unit_menu(combat: Combat, actor: Dictionary, pending: Dictio
 		var distance: int = absi(int(unit["position"].x) - int(actor["position"].x)) \
 			+ absi(int(unit["position"].y) - int(actor["position"].y))
 		var attack_range: int = int(pending.get("attackRange", 1))
+		var hint: String = "" if distance <= attack_range else " —— 够不着"
+		var enabled: bool = distance <= attack_range
+		if is_capture:
+			# 捕捉目标：把不可收/还有气力/成功率直接写在选目标菜单上，
+			# 玩家一眼能看到这只为什么收不得、以及大概几成把握。
+			var info: Dictionary = capture_by_id.get(str(unit["unitId"]), {})
+			if not bool(info.get("capturable", false)):
+				hint = " —— %s" % str(info.get("reason", "不可捕捉")) if hint.is_empty() else hint
+				enabled = enabled and false
+			elif not bool(info.get("lowHp", false)):
+				hint = " —— 它还有气力" if hint.is_empty() else hint
+				enabled = enabled and false
+			elif hint.is_empty():
+				@warning_ignore("integer_division")
+				hint = " —— 约 %d%%" % int(int(info.get("chanceBp", 0)) / 100)
 		out.append({
-			"label": "%s（距离 %d，射程 %d）%s" % [
-				str(unit["name"]), distance, attack_range,
-				"" if distance <= attack_range else " —— 够不着",
+			"label": "%s（距离 %d，%s %d）%s" % [
+				str(unit["name"]), distance, "射程" if not is_capture else "笼程", attack_range, hint,
 			],
-			"enabled": distance <= attack_range,
+			"enabled": enabled,
 			"action": {
 				"kind": "target_unit",
 				"targetId": str(unit["unitId"]),

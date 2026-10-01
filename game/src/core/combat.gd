@@ -27,6 +27,7 @@ const ACTION_ATTACK: String = "attack"
 const ACTION_SKILL: String = "skill"
 const ACTION_END_TURN: String = "end_turn"
 const ACTION_DOWNED_CHOICE: String = "downed_choice"
+const ACTION_CAPTURE: String = "capture_toss"
 
 const SIDE_PLAYER: String = "player"
 const SIDE_ENEMY: String = "enemy"
@@ -210,6 +211,8 @@ func submit_action(action: Dictionary) -> Dictionary:
 			return _do_attack(actor, action, str(action.get("skillId", "")))
 		ACTION_DOWNED_CHOICE:
 			return _do_downed_choice(actor, action)
+		ACTION_CAPTURE:
+			return _do_capture_toss(actor, action)
 		ACTION_END_TURN:
 			_spend_all(actor)
 			_end_turn()
@@ -345,6 +348,11 @@ func _build_unit(spec: Dictionary) -> Dictionary:
 		"displayName": str(spec.get("displayName",
 			str(spec.get("name", str(unit_id))))),
 		"category": str(spec.get("category", "")),
+		# M34 捕捉/变体源标记：透传遭遇给的是否 NPC、是否变体《》与生物主键。
+		# combat 层用它判"这只能不能收"，收进笼里给容器记 species。
+		"isNpc": bool(spec.get("isNpc", false)),
+		"isVariant": bool(spec.get("isVariant", false)),
+		"monsterId": str(spec.get("monsterId", "")),
 	}
 
 
@@ -842,6 +850,71 @@ func _do_downed_choice(actor: Dictionary, action: Dictionary) -> Dictionary:
 
 	_after_action(actor)
 	return {"ok": true, "state": get_state(), "log": [entry]}
+
+
+## 掷收容笼捕捉残血野兽（M34 / M-F / D-151）。动作结构：
+##   { actionType: ACTION_CAPTURE, actorId, targetId, apCost, attackRange,
+##     succeeded, retaliationRatio }
+## 笼的消耗、成败的判定与容器入包由 main 调用方先算好，这里只落战场后果：
+## 成——目标被收走（captured + handled + downed，放下场不留悬念）+ 写标记；
+## 败——目标暴怒、按比例反扑场上第一个站着的英雄，笼已毁在 main 侧扣掉了。
+func _do_capture_toss(actor: Dictionary, action: Dictionary) -> Dictionary:
+	var target: Dictionary = unit_by_id(str(action.get("targetId", "")))
+	if target.is_empty():
+		return {"ok": false, "error": "NOT_FOUND", "reason": "目标不存在"}
+	if bool(target["dead"]) or bool(target["downed"]):
+		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "目标已倒地或阵亡"}
+	if str(target["side"]) == str(actor["side"]):
+		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "不能对同侧投笼"}
+	var throw_range: int = maxi(1, int(action.get("attackRange", 1)))
+	var distance: int = _manhattan(actor["position"], target["position"])
+	if distance > throw_range:
+		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "够不着：笼只能掷 %d 格内，相距 %d 格" % [
+			throw_range, distance
+		]}
+	var ap_cost: int = maxi(1, int(action.get("apCost", 3)))
+	if ap_cost > int(actor["ap"]):
+		return {"ok": false, "error": "PRECONDITION_FAILED", "reason": "行动点不足：需要 %d，剩余 %d" % [
+			ap_cost, int(actor["ap"])
+		]}
+	_spend(actor, ap_cost)
+	var unit_id: String = str(target["unitId"])
+	var entry: String = ""
+	if bool(action.get("succeeded", false)):
+		target["captured"] = true
+		target["capturedBy"] = str(actor["unitId"])
+		target["handled"] = true
+		target["downed"] = true
+		world_flags["combat.capture.%s" % unit_id] = true
+		entry = "%s 掷出收容笼，把 %s 收进了笼里" % [str(actor["name"]), str(target["name"])]
+	else:
+		target["enraged"] = true
+		_retaliate(target, action)
+		entry = "%s 的收容笼没能扣住 %s，笼毁，它暴怒反扑" % [str(actor["name"]), str(target["name"])]
+	_push_log(entry)
+	_after_action(actor)
+	return {"ok": true, "state": get_state(), "log": [entry]}
+
+
+## 收笼失败后野兽的缩放反扑（D-151）：伤的是战场上第一个站着的英雄，不花 AP、
+## 不改回合序——只把这一记结果记进日志。ratio 由 balance.monsters.capture
+## 段的 enrageCounterRatio 提供（main 填进动作里）。漏掉它的症状：掷笼失败后
+## 只是笼没了，兽却毫无反应，与"暴怒"两个字的含义对不上。
+func _retaliate(target: Dictionary, action: Dictionary) -> void:
+	var ratio: float = float(action.get("retaliationRatio", 0.6))
+	var victim: Dictionary = {}
+	for unit in units:
+		if str(unit["side"]) != SIDE_PLAYER:
+			continue
+		if bool(unit["dead"]) or bool(unit["downed"]):
+			continue
+		victim = unit
+		break
+	if victim.is_empty():
+		return
+	var dmg: int = maxi(1, roundi(float(int(target["weapon"].get("attack", 0))) * ratio))
+	victim["hp"] = maxi(0, int(victim["hp"]) - dmg)
+	_push_log("  %s 扑向 %s（-%d）" % [str(target["name"]), str(victim["name"]), dmg])
 
 
 # --- 内部：结束判定与掉落 ---

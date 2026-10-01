@@ -241,6 +241,33 @@
     "cityNpcAttributeMin": 8,
     "cityNpcAttributeMax": 14
   },
+  "monsters": {
+    "_comment": "怪物变体与捕捉（M34 / M-F）。变体：野外遭遇与副本中层出生时有概率摇成《书名号》命名单体——书名号档 ×1.25/×1.67，最稀有的「修正」档在 ×2–5 之间。名字包书名号、四维按倍率放大、威胁略抬一档；变体亦是捕捉的拒收对象（有声名的收不得）。捕捉：战斗中对残血野兽掷出收容笼，低血够格 + 等级上限，生灵/有名/神性拒收，失败恒两条代价（笼毁 + 兽被激怒反扑）。两者均不落盘，由遭遇/副本会话种子派生。",
+    "variant": {
+      "_comment_chanceBp": "单只怪出生时成为变体的概率（基点）。低于普通掉落概率、接近 Boss 概率：变体是数值惊喜，不该每场都是。",
+      "chanceBp": 3000,
+      "_comment_tiers": "变体档位。common/rare 是《书名号》命名单体，倍率 1.25 / 1.67；fix 是「修正」破格档，倍率在 multMin–multMax 之间掷（×2–5），最稀有。weightBp 为抽取权重。",
+      "tiers": [
+        { "id": "named", "label": "书名号", "mult": 1.25, "weightBp": 5400 },
+        { "id": "named_rare", "label": "书名号", "mult": 1.67, "weightBp": 3200 },
+        { "id": "fix", "label": "修正", "multMin": 2.0, "multMax": 5.0, "weightBp": 1400 }
+      ]
+    },
+    "capture": {
+      "_comment": "战斗中对残血野兽投掷收容笼（低血掷 + 等级上限）。consumable_capture_cage 是玩家携带的收容装置，creature_caged 是成功后的容器物件（记录被收躯体）。captureThrowRange 抛掷可达格数、captureApCost 行动点。success 概率 = baseBp +（1 − hp/maxHp）× perMissingRatioBp，钳至 capBp；TL 每高出档基再按 perThreatPenaltyBp 递减。失败恒两条代价：deviceLost（笼毁）+ enrage（兽被激怒，本回合遭其一次缩放反击）。",
+      "consumeTemplateId": "consumable_capture_cage",
+      "containedTemplateId": "creature_caged",
+      "captureMaxThreatLevel": 10,
+      "captureThrowRange": 2,
+      "captureApCost": 3,
+      "baseBp": 4500,
+      "lowHpRatioThreshold": 0.5,
+      "perMissingRatioBp": 6000,
+      "capBp": 9500,
+      "perThreatPenaltyBp": 350,
+      "enrageCounterRatio": 0.6
+    }
+  },
   "dungeon": {
     "_comment": "随机临时副本（M21，对应「地图奇遇」）。世界地图上野外交互时可能撞见一道隐蔽入口，进入一座按当前世界种子 + 独立序号确定性生成的临时地牢（Dungeon 规则层，纯几何、可无头测试）。这里只放触发与深度的规则侧数值，内容与结构在 Dungeon 里。",
     "_comment_discoverChanceBp": "野外每判一次撞见地下入口的概率，基点。比普通遭遇略低：它是「惊喜」，不该频繁打断赶路，但常到玩家会期待它。",

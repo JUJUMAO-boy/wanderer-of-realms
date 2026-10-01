@@ -365,6 +365,10 @@ func is_available(city: City, template: Dictionary, channel: String = CHANNEL_SH
 	if str(template.get("category", "")) == "material" \
 		and not bool(template.get("baseMaterial", false)):
 		return false
+	# M34 捕捉战利品（category=creature，收容笼得主）不是商店货色：收进来的那具
+	# 躯体只作收藏物，不该让店主挂到货架上卖。收容笼（consumable）照常可售。
+	if str(template.get("category", "")) == "creature":
+		return false
 	# M-B 收口（D-137）：标了 blackMarketOnly 的货（如「改头换面」斗篷）只在黑市上架——
 	# 正常巷子的店主不会进罪犯家的生意。
 	if bool(template.get("blackMarketOnly", false)) and channel != CHANNEL_BLACK_MARKET:
