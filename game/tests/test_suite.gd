@@ -300,6 +300,10 @@ func run_all() -> int:
 	_test_a2_reputation_band_and_title()
 	_test_a2_reputation_favor_bonus()
 	_test_a2_reputation_criminal_treatment()
+	print("=== C2 传闻真假传播链（第三阶段 / D-166）===")
+	_test_c2_rumor_trace_stages()
+	_test_c2_rumor_trace_deterministic()
+	_test_c2_rumor_trace_into_event_view()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -9780,3 +9784,67 @@ func _test_a2_reputation_criminal_treatment() -> void:
 	var neutral: Dictionary = ReputationTitle.card(world, "aedran")
 	_check(not bool(neutral["criminal"]), "罪犯但声誉普通不视为通缉")
 	_check(not str(neutral["greet"]).contains("守卫"), "普通声誉不喊守卫")
+
+
+# === C2 传闻真假传播链（第三阶段 / D-166）===
+
+## 三档轮转：同城同月同种子 → 同一条流言同一档；月份推进档位才动。
+func _test_c2_rumor_trace_stages() -> void:
+	# 有流言表的城（rumors.json subject 匹配城名）抽得到，三档都合法
+	for month in range(12):
+		var state: Dictionary = RumorTrace.state_for("艾德兰", month, 12345)
+		_check(not state.is_empty(), "艾德兰月 %d 有流言" % month)
+		var stage: int = int(state["stage"])
+		_check(stage >= 0 and stage <= 2, "档位落在 0..2（得 %d）" % stage)
+		_check((state["debunked"] as bool) == (stage == RumorTrace.STAGE_DENIED),
+			"被辟谣标志与档位一致")
+	_check(not str(RumorTrace.line(ContentLoader.get_rumor("rumor_harbor_blackmarket"), 0)).is_empty()
+		and not str(RumorTrace.line(ContentLoader.get_rumor("rumor_harbor_blackmarket"), 2)).is_empty(),
+		"扩散与辟谣档都有字面")
+
+
+## 确定性 + 不落盘：同城同月同种子两次派同一个档位、同一条流言。
+func _test_c2_rumor_trace_deterministic() -> void:
+	var a: Dictionary = RumorTrace.state_for("艾德兰", 7, 424242)
+	var b: Dictionary = RumorTrace.state_for("艾德兰", 7, 424242)
+	_eq(int(a["stage"]), int(b["stage"]), "同城同月同种子档位确定")
+	_eq(str(a["rumor"]["id"]), str(b["rumor"]["id"]), "同城同月同种子流言确定")
+	# 渲染字面全程不带真假口径字段与字面
+	var text: String = str(a["line"])
+	_check(not text.contains("true") and not text.contains("false"), "渲染字面不漏真假字面")
+	_check(not text.contains("category") and not text.contains("reliability"),
+		"渲染字面不带数据口径字段")
+	# 传播档随月份变动（十一城里艾德兰必有档位轮转，从 0 到 2 遍历）
+	var stages: Dictionary = {}
+	for month in range(12):
+		stages[int(RumorTrace.state_for("艾德兰", month, 424242)["stage"])] = true
+	_check(stages.size() == RumorTrace.STAGE_COUNT, "随月份走完三档（非静止复读）")
+	# 没有流言表的城不给空造风声：十字路城的谣言语 subject 是「十字路口」，
+	# 匹配不到城名「十字路」就返空，绝不把别城风声兜底进来。
+	_check(RumorTrace.state_for("十字路", 3, 424242).is_empty(),
+		"无匹配 subject 的城不给流言，不兜底别城风声")
+
+
+## 接进 VIEW_EVENT：桥上市井风声行，可读可选、但不可处置。
+func _test_c2_rumor_trace_into_event_view() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var names: Dictionary = _city_names(world)
+	sim.settle_month(1)
+	var rumor_state: Dictionary = RumorTrace.state_for("艾德兰", 5, int(world.world_seed))
+	var view: Dictionary = EventViewModel.build(
+		world, world.get_events(), "aedran", "aedran", names, 0,
+		EventViewModel.MODE_LIST, rumor_state
+	)
+	var last: Dictionary = view["rows"][int(view["rowCount"]) - 1]
+	_eq(str(last["kind"]), EventViewModel.ROW_KIND_RUMOR, "流言垫在列表末尾")
+	_check(not str(last["summary"]).is_empty(), "谣言行有正文")
+	_check(bool(last["enabled"]), "谣言行可选中")
+	_check(not bool(last["canResolve"]), "谣言不可处置")
+	_check((view.get("branches", []) as Array).is_empty(), "谣言不展开处置项")
+	# 没传 rumor_state 时一切照旧（兼容旧调用）
+	var plain: Dictionary = EventViewModel.build(
+		world, world.get_events(), "aedran", "aedran", names, 0
+	)
+	_check(not plain.is_empty(), "不带谣言状态仍正常构建")

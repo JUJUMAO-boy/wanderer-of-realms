@@ -1320,7 +1320,8 @@ func _refresh_event() -> void:
 		_here_city_id(),
 		_table("cityNames"),
 		_event_cursor,
-		_event_mode
+		_event_mode,
+		_rumor_state_for(_event_city_id)
 	)
 	_event_cursor = int(_event_view.get("cursor", 0))
 	_event_branch_cursor = clampi(
@@ -1332,6 +1333,19 @@ func _refresh_event() -> void:
 			and not bool(_event_view.get("selectedIsActive", false)):
 		_event_mode = EventViewModel.MODE_LIST
 		_event_view["mode"] = EventViewModel.MODE_LIST
+
+
+## 这座城此刻在流传的流言（C2）。由 (世界种子 ⊕ 城 ⊕ 月份) 派生，不落盘；
+## 该城没有流言表（谣言的 subject 匹配不到城名）就返空，不造无中生有的风声。
+func _rumor_state_for(city_id: String) -> Dictionary:
+	if _world == null or city_id.is_empty():
+		return {}
+	var city: City = _world.get_city(city_id)
+	if city == null:
+		return {}
+	return RumorTrace.state_for(
+		city.display_name, Clock.total_months(), int(_world.world_seed)
+	)
 
 
 func _event_cycle_city(delta: int) -> void:

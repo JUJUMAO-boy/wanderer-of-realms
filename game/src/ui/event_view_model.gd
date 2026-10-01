@@ -16,12 +16,15 @@ extends RefCounted
 
 const ROW_KIND_ACTIVE: String = "active"
 const ROW_KIND_RESOLVED: String = "resolved"
+const ROW_KIND_RUMOR: String = "rumor"
 
 const MODE_LIST: int = 0
 const MODE_BRANCH: int = 1
 
 
 ## events 是世界的全部事件实例（含已了结的），city_id 是这一屏看的是哪座城。
+## rumor_state 是这座城此刻流传的流言（RumorTrace 派生的整幅画面，可为空）；
+## 非空时在事件列表末尾追一块「市井风声」行，只展示、不可处置。
 static func build(
 	world: WorldState,
 	events: Array,
@@ -29,7 +32,8 @@ static func build(
 	here_city_id: String,
 	city_names: Dictionary,
 	cursor: int,
-	mode: int = MODE_LIST
+	mode: int = MODE_LIST,
+	rumor_state: Dictionary = {}
 ) -> Dictionary:
 	if world.get_city(city_id) == null:
 		return {}
@@ -49,6 +53,9 @@ static func build(
 	for event in mine:
 		if not event.is_active():
 			rows.append(_resolved_row(event, city_label))
+	# 这座城的市井风声垫底：它不是"大事"，只是又一条真假难辨的口风。
+	if not rumor_state.is_empty():
+		rows.append(_rumor_row(rumor_state, city_label))
 
 	var row_count: int = rows.size()
 	var index: int = clampi(cursor, 0, maxi(0, row_count - 1))
@@ -127,6 +134,35 @@ static func _resolved_row(event: CityEvent, city_label: String) -> Dictionary:
 		"canResolve": false,
 		"blockedReason": "",
 		"outcomeLabel": label,
+	}
+
+
+## 市井风声行（C2）。它不是大事，不参与处置：只把这座城此刻在传的流言摊出来，
+## 玩家能读、能选、却无从"处置"——谣言没有拆解的办法，只有等它自己变质或被人按下。
+static func _rumor_row(rumor_state: Dictionary, city_label: String) -> Dictionary:
+	var rumor: Dictionary = rumor_state.get("rumor", {})
+	var title: String = "市井风声"
+	var line: String = str(rumor_state.get("line", ""))
+	var stage_label: String = str(rumor_state.get("stageLabel", ""))
+	var debunked: bool = bool(rumor_state.get("debunked", false))
+	return {
+		"kind": ROW_KIND_RUMOR,
+		"eventId": "rumor",
+		"templateId": str(rumor.get("id", "rumor")),
+		"title": title,
+		"scriptRef": "C2",
+		"cityLabel": city_label,
+		"summary": line,
+		"dialogue": [],
+		"reason": stage_label,
+		"effect": ("这话已经没人再信了。" if debunked
+			else "真假难辨，话从人嘴里传出来的那一天起就再没准过。"),
+		"statusLabel": stage_label,
+		# 风声不可处置但不能置灰：能看、能选，只是没有"回车办掉"那一格
+		"enabled": true,
+		"canResolve": false,
+		"blockedReason": "流言没有办掉的办法，等它自己凉下去吧。",
+		"outcomeLabel": "",
 	}
 
 
