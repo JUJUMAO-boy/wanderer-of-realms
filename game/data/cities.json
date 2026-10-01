@@ -13,6 +13,7 @@
       "culture": 75,
       "faction": 55,
       "dominantFactionId": "aedran_crown",
+      "factionCandidates": ["aedran_crown", "aedran_crown", "merchant_guild"],
       "hasBlackMarket": false,
       "pricePremium": 1.15,
       "buildings": ["aedran_throne", "aedran_knights", "aedran_temple", "aedran_court", "aedran_archive"]
@@ -29,6 +30,7 @@
       "culture": 55,
       "faction": 60,
       "dominantFactionId": "merchant_guild",
+      "factionCandidates": ["aedran_crown", "merchant_guild", "merchant_navy"],
       "hasBlackMarket": true,
       "pricePremium": 1.10,
       "buildings": ["thorne_lighthouse", "thorne_guild", "thorne_dock", "thorne_blackmarket", "thorne_auction"]
@@ -45,6 +47,7 @@
       "culture": 50,
       "faction": 80,
       "dominantFactionId": "dwarf_council",
+      "factionCandidates": ["aedran_crown", "dwarf_council", "dwarf_council"],
       "hasBlackMarket": false,
       "pricePremium": 0.90,
       "buildings": ["hammerhold_furnace", "hammerhold_forge", "hammerhold_mine", "hammerhold_oath", "hammerhold_workshop"]
@@ -61,6 +64,7 @@
       "culture": 90,
       "faction": 85,
       "dominantFactionId": "mage_council",
+      "factionCandidates": ["elf_court", "mage_council", "mage_council"],
       "hasBlackMarket": false,
       "pricePremium": 1.20,
       "buildings": ["silvermoon_tower", "silvermoon_library", "silvermoon_crystal", "silvermoon_observatory", "silvermoon_alchemy"]
@@ -77,6 +81,7 @@
       "culture": 80,
       "faction": 75,
       "dominantFactionId": "elf_court",
+      "factionCandidates": ["magenta_cult", "elf_court", "elf_court"],
       "hasBlackMarket": false,
       "pricePremium": 0.95,
       "buildings": ["greenwade_grove", "greenwade_herb", "greenwade_tree_library", "greenwade_moonspring", "greenwade_grey_elf"]
@@ -109,6 +114,7 @@
       "culture": 35,
       "faction": 70,
       "dominantFactionId": "north_tribes",
+      "factionCandidates": ["north_tribes", "north_tribes", "aedran_crown"],
       "hasBlackMarket": false,
       "pricePremium": 1.05,
       "buildings": ["frostspeak_wall", "frostspeak_longhall", "frostspeak_hearth", "frostspeak_glacier", "frostspeak_grounds"]
@@ -125,6 +131,7 @@
       "culture": 35,
       "faction": 50,
       "dominantFactionId": "desert_clans",
+      "factionCandidates": ["desert_renegades", "desert_clans", "merchant_guild"],
       "hasBlackMarket": true,
       "pricePremium": 0.85,
       "buildings": ["redsands_ruins", "redsands_slave_market", "redsands_oasis", "redsands_merc", "redsands_chamber"]

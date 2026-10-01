@@ -291,6 +291,10 @@ func run_all() -> int:
 	_test_b1_quest_speech_compose()
 	_test_b1_quest_speech_coverage()
 	_test_b1_quest_speech_style_gate()
+	print("=== C4 势力兴衰纪年化（第三阶段 / D-164）===")
+	_test_c4_faction_thresholds()
+	_test_c4_faction_drift_deterministic()
+	_test_c4_faction_change_entry()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -9590,3 +9594,70 @@ func _test_b1_quest_speech_style_gate() -> void:
 		var audit: Dictionary = QuestSpeech.audit(lines, 200)
 		_check((audit["flags"] as Array).is_empty(),
 			"%s 交付台词无套路腔 flag" % type_id)
+
+
+func _test_c4_faction_thresholds() -> void:
+	var low: City = City.from_config(ContentLoader.get_city_config("red_sands"))
+	low.faction = 20
+	_eq(FactionChronicle._tier_for_value(low.faction), 0, "faction=20 属落档")
+	low.faction = 33
+	_eq(FactionChronicle._tier_for_value(low.faction), 0, "faction=33 属落档（含边界）")
+	low.faction = 34
+	_eq(FactionChronicle._tier_for_value(low.faction), 1, "faction=34 属持档")
+	low.faction = 66
+	_eq(FactionChronicle._tier_for_value(low.faction), 1, "faction=66 属持档（含边界）")
+	low.faction = 67
+	_eq(FactionChronicle._tier_for_value(low.faction), 2, "faction=67 属兴档")
+	low.faction = 90
+	_eq(FactionChronicle._tier_for_value(low.faction), 2, "faction=90 属兴档")
+
+
+func _test_c4_faction_drift_deterministic() -> void:
+	var a: City = City.from_config(ContentLoader.get_city_config("aedran"))
+	a.faction = 55
+	var budget: int = FactionChronicle.drift(a, 3, 12345)
+	_check(budget >= -2 and budget <= 2, "年度漂移幅度有界 [-2,2]（得 %d）" % budget)
+	# 同一城同一年同种子 → 结果完全一致（能派生就不落盘）
+	var a2: City = City.from_config(ContentLoader.get_city_config("aedran"))
+	a2.faction = 55
+	var budget2: int = FactionChronicle.drift(a2, 3, 12345)
+	_eq(budget, budget2, "同城同年同世界种子的势力漂移可复现")
+	_eq(a.faction, a2.faction, "复现后 faction 维度一致")
+	# 不同年 → 漂移几乎必然不同（43% 的稳定概率，多数情况三年内有差异，避免 flaky 不断言强度）
+	var a3: City = City.from_config(ContentLoader.get_city_config("aedran"))
+	a3.faction = 55
+	FactionChronicle.drift(a3, 7, 12345)
+	_check(a3.faction >= 53 and a3.faction <= 57, "漂移后 faction 仍在合理窗口")
+
+
+func _test_c4_faction_change_entry() -> void:
+	var world: WorldState = (WorldFactory.create_new(
+		20241001, ContentLoader.get_city_configs(), 120, 120) as Dictionary)["world"]
+	var entry: Dictionary = FactionChronicle.faction_change_entry(
+		world, "aedran", "Aedran Crown", "Merchant Guild", 13, "第2年1月")
+	_eq(str(entry["kind"]), FactionChronicle.KIND_FACTION, "势力变更条目 kind 正确")
+	_eq(str(entry["cityLabel"]), "艾德兰", "条目带城名")
+	_check(str(entry["title"]).contains("艾德兰"), "标题含城名")
+	_check(str(entry["title"]).contains("Aedran Crown"), "标题含旧势力标签")
+	_check(str(entry["title"]).contains("Merchant Guild"), "标题含新势力标签")
+	_check(str(entry["detail"]).length() > 0, "条目有正文")
+	_eq(int(entry["month"]), 13, "条目带月份")
+	_eq(str(entry["year"]), "第2年1月", "条目带中文年标")
+	_eq(int(entry["weight"]), FactionChronicle.WEIGHT, "势力变更权重大于史书阈值")
+	# 势力标签：蛇形转空格、空串给「无主导势力」
+	_eq(FactionChronicle.faction_label("merchant_guild"), "Merchant Guild", "势力 id 转可读标签")
+	_eq(FactionChronicle.faction_label(""), "无主导势力", "空势力 id 给明确占位")
+	# 无候选城市永远不会换势力
+	var crossroad: City = City.from_config(ContentLoader.get_city_config("crossroad"))
+	_check(crossroad.dominant_faction_id.is_empty(), "十字路开局无主导势力")
+	_check(not FactionChronicle.pending_change(crossroad), "未配候选的城不触发势力变更")
+	# 候选城：把 faction 压到落档应提示换到候选 0
+	var red: City = City.from_config(ContentLoader.get_city_config("red_sands"))
+	red.faction = 15
+	_eq(red.dominant_faction_id, "desert_clans", "赤沙开局由沙漠部族把持")
+	_check(FactionChronicle.pending_change(red), "赤沙落档后主导势力需变更")
+	_eq(FactionChronicle.candidate_id(red), "desert_renegades", "赤沙落档候选是沙漠叛军")
+	var old_id: String = FactionChronicle.apply_change(red)
+	_eq(old_id, "desert_clans", "apply_change 返回旧主导势力")
+	_eq(red.dominant_faction_id, "desert_renegades", "apply_change 落得新主导势力")
+	_check(not FactionChronicle.pending_change(red), "变更后不再触发")

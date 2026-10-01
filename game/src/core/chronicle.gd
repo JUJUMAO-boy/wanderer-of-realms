@@ -171,6 +171,10 @@ func fallen_entry(world: WorldState, npc: SimNpc, reason: String, month: int) ->
 
 ## 纪年条目的中文年标。与主场景 _event_month_label 同一套口径，保证事件流与
 ## 纪年史书说同一年月。
+func year_label(month: int) -> String:
+	return _year_label(month)
+
+
 func _year_label(month: int) -> String:
 	@warning_ignore("integer_division")
 	var year: int = month / _months_per_year + 1

@@ -278,6 +278,24 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 			world, str(tchange["cityId"]), str(tchange["fromLabel"]),
 			str(tchange["label"]), month))
 
+	# 势力兴衰（C4 / D-164）：只在年边界结算这条慢轴。势力维度不由世界经济演化
+	# 驱动，这里按 (世界种子⊕城⊕年) 派确定性漂移；跨过档位阈值就把主导势力易手
+	# 写进纪年，让玩家快进一百年也能读到「谁兴谁衰」。
+	if _months_per_year > 0 and month % _months_per_year == 0:
+		var year_offset: int = int(month / _months_per_year) - 1
+		for city_id in world.get_city_ids():
+			var fc_city: City = world.get_city(str(city_id))
+			if fc_city == null:
+				continue
+			FactionChronicle.drift(fc_city, maxi(0, year_offset), world.world_seed)
+			if FactionChronicle.pending_change(fc_city):
+				var old_id: String = FactionChronicle.apply_change(fc_city)
+				chronicle.record(world, FactionChronicle.faction_change_entry(
+					world, fc_city.city_id,
+					FactionChronicle.faction_label(old_id),
+					FactionChronicle.faction_label(fc_city.dominant_faction_id),
+					month, chronicle.year_label(month)))
+
 	for city_id in world.get_city_ids():
 		_sync_city_npcs(str(city_id), false)
 
