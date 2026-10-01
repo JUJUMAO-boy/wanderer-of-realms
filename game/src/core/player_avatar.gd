@@ -92,6 +92,16 @@ var money: int = 0
 var is_disguised: bool = false
 var disguise_until_day: int = -1
 
+## 代神恩惠（M-A，M35）：当前化身上正生效的庇护。键 = buff.kind，
+## 值 = { value, activeUntilDay }。恩惠是"身体这件皮"的事——献祭换来一段持续
+## 的庇护，随化身落盘、每天 boundary 由 Pontiff.sync 剥掉到期的；虔诚本身则
+## 由善恶现算、不落盘。
+var blessings: Dictionary = {}
+## 接过哪几柱的圣物（godId 列表，随化身落盘）。改信神罚按它算"逐件咬"的账。
+var accepted_relics: Array[String] = []
+## 当前背的柱（godId，空 = 无所属）。改信神罚往里换。
+var current_patron: String = ""
+
 ## 负债（铜币）。两个来源都落在这里：出身的初始债务（含天赋「债台高筑」），
 ## 以及随机转生时继承的宿主债务。之所以给债务一个一等字段而不是塞进标记里，
 ## 是因为它要参与界面显示、交易判定与后续委托奖励的抵扣。
@@ -168,6 +178,9 @@ func to_dict() -> Dictionary:
 		"money": money,
 		"isDisguised": is_disguised,
 		"disguiseUntilDay": disguise_until_day,
+		"blessings": blessings.duplicate(true),
+		"acceptedRelics": accepted_relics.duplicate(),
+		"currentPatron": current_patron,
 		"debtCopper": debt_copper,
 		"legacy": legacy.duplicate(true),
 		"dragonization": dragonization,
@@ -209,6 +222,10 @@ static func from_dict(data: Dictionary) -> PlayerAvatar:
 	a.money = int(data.get("money", 0))
 	a.is_disguised = bool(data.get("isDisguised", false))
 	a.disguise_until_day = int(data.get("disguiseUntilDay", -1))
+	a.blessings = data.get("blessings", {}).duplicate(true)
+	for r in data.get("acceptedRelics", []):
+		a.accepted_relics.append(str(r))
+	a.current_patron = str(data.get("currentPatron", ""))
 	a.debt_copper = int(data.get("debtCopper", 0))
 	a.legacy = data.get("legacy", {}).duplicate(true)
 	a.dragonization = int(data.get("dragonization", 0))

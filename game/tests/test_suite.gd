@@ -277,6 +277,12 @@ func run_all() -> int:
 	print("=== M34 怪物变体与捕捉 ===")
 	_test_monster_variant()
 	_test_monster_capture()
+	print("=== M35 代神深化：恩惠 · 改信 · 圣物跨世 ===")
+	_test_pontiff_blessing_spec()
+	_test_pontiff_sacrifice_pay()
+	_test_pontiff_bestow_and_sync()
+	_test_pontiff_convert_revert()
+	_test_soul_relics_cross_lives()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -9330,3 +9336,136 @@ func _test_monster_capture() -> void:
 ## 断言辅助：把任意值归一成字符串，便于比较（别名不存在的等效物）。
 func serial(v: Variant) -> String:
 	return str(v)
+
+
+# --- M35 代神深化：恩惠 · 改信 · 圣物跨世（D-152 ~ D-155） ---
+
+## 恩惠档读取：虔诚越高够得着越高档；神罚线（karma≤-60）压住恩惠给空。
+func _test_pontiff_blessing_spec() -> void:
+	var zenith: Dictionary = ContentLoader.get_god("zenith")
+	_check(not zenith.is_empty(), "zenith 神配置存在")
+	_check(not str(zenith.get("sacrifice", {}).get("kind", "")).is_empty(), "zenith 声明了献祭代价")
+	# 极性方向（sigil.hash 奇偶）未知时两端都试：取非神罚端里虔诚更高的那一头。
+	var d_pos: int = GodBlessing.devotion_of(zenith, 100)
+	var d_neg: int = GodBlessing.devotion_of(zenith, -59)  # -59 不触发神罚（≥-60）
+	var use_positive: bool = d_pos >= d_neg
+	var high_karma: int = 100 if use_positive else -59
+	var low_karma: int = -59 if use_positive else 100
+	var high_dev: int = maxi(d_pos, d_neg)
+	var tier: int = GodBlessing.blessing_tier(zenith, high_dev)
+	var spec: Dictionary = Pontiff.blessing_spec(zenith, high_karma, {})
+	_check(not spec.is_empty(), "虔诚更高端必够着一档恩惠（tier=%d）" % tier)
+	_eq(int(spec.get("tier", 0)), tier, "spec.tier 对齐虔诚能到的档位")
+	var tiers: Array = zenith.get("blessings", [])
+	if tier >= 1:
+		_eq(str(spec.get("kind", "")),
+			str((tiers[tier - 1] as Dictionary).get("kind", "")),
+			"spec.kind 对齐该档恩惠的 kind")
+	_check(int(spec.get("days", 0)) >= 1, "恩惠有效期≥1 天")
+	# 虔诚另一端（非神罚、但够不着最低档）给空。
+	var low_spec: Dictionary = Pontiff.blessing_spec(zenith, low_karma, {})
+	_check(low_spec.is_empty(), "虔诚去程另一端够不着任何恩惠（空）")
+	# 神罚线：karma ≤ -60 一律压住恩惠。
+	_check(Pontiff.behind_of(zenith, -70), "karma=-70 在神罚线以下")
+	_check(Pontiff.blessing_spec(zenith, -70, {}).is_empty(), "神罚线以下不给恩惠")
+	# 空神配置返回空。
+	_check(Pontiff.blessing_spec({}, 100, {}).is_empty(), "空神配置返回空")
+
+
+## 献祭代价：付得起才真扣，付不起不落账。
+func _test_pontiff_sacrifice_pay() -> void:
+	var ember: Dictionary = ContentLoader.get_god("ember")
+	var avatar := PlayerAvatar.new()
+	avatar.set_luck(50)
+	var sac: Dictionary = ember.get("sacrifice", {})
+	_eq(str(sac.get("kind", "")), "luck", "ember 的祭品是运气")
+	_check(Pontiff.can_pay(avatar, sac), "幸运充足付得起")
+	_check(Pontiff.pay(avatar, sac), "付出成功返回 true")
+	_eq(avatar.luck, 45, "付出后幸运扣 5")
+	# 幸运已到底：付不起，且 pay 不落账。
+	avatar.set_luck(PlayerAvatar.HIDDEN_ATTR_MIN)
+	_check(not Pontiff.can_pay(avatar, sac), "幸运到底付不起")
+	_check(not Pontiff.pay(avatar, sac), "付不起时 pay 返回 false")
+	_eq(avatar.luck, PlayerAvatar.HIDDEN_ATTR_MIN, "付不起时运气分毫未动")
+	# karma 类祭品（zenith）：扣在善恶轴上。
+	var zenith: Dictionary = ContentLoader.get_god("zenith")
+	var av2 := PlayerAvatar.new()
+	av2.set_karma(10)
+	var ks: Dictionary = zenith.get("sacrifice", {})
+	_eq(str(ks.get("kind", "")), "karma", "zenith 的祭品是善恶")
+	_check(Pontiff.pay(av2, ks), "善恶祭品付出成功")
+	_eq(av2.karma, 5, "karma=10 付 5 后善恶 5")
+	# 善恶太低会突破下限：改信用的单列场景——这里直接造一个不足以付的。
+	av2.set_karma(PlayerAvatar.HIDDEN_ATTR_MIN)
+	av2.money = 10
+	_check(not Pontiff.can_pay(av2, {"kind": "copper", "amount": 20}), "钱不够付不起铜祭")
+
+
+## 恩惠生效与每日到期：对照 today 判活性，sync 剥掉过期的。
+func _test_pontiff_bestow_and_sync() -> void:
+	var avatar := PlayerAvatar.new()
+	var bestowed: Dictionary = Pontiff.bestow(avatar, {
+		"kind": "theft_resist", "value": 20, "days": 3,
+	}, 100)
+	_check(bool(bestowed.get("ok", false)), "bestow 成功")
+	_eq(int(bestowed.get("activeUntilDay", 0)), 103, "恩惠到 103 号自然日")
+	_check(Pontiff.blessing_active(avatar, "theft_resist", 100), "当天恩惠在效")
+	_eq(Pontiff.blessing_value(avatar, "theft_resist", 100), 20, "在效期内读到值 20")
+	_check(not Pontiff.blessing_active(avatar, "theft_resist", 104), "过 103 号后失效")
+	_eq(Pontiff.blessing_value(avatar, "theft_resist", 104), 0, "过期读到 0")
+	# sync：未到期不剥，到期才剥。
+	Pontiff.sync(avatar, 103)
+	_check(Pontiff.blessing_active(avatar, "theft_resist", 103), "sync(103) 未剥未到期恩惠")
+	Pontiff.sync(avatar, 104)
+	_check(not Pontiff.blessing_active(avatar, "theft_resist", 104), "sync(104) 剥掉到期恩惠")
+
+
+## 改信：逐件咬旧圣物、可逆但贵；改信把恩惠表清空。
+func _test_pontiff_convert_revert() -> void:
+	var avatar := PlayerAvatar.new()
+	avatar.set_karma(80)
+	avatar.accepted_relics = ["zenith", "ember"]
+	avatar.current_patron = "drift"
+	avatar.money = 200
+	var morrow: Dictionary = ContentLoader.get_god("morrow")
+	var cost: Dictionary = Pontiff.convert_cost(morrow, avatar, morrow, {})
+	_eq(int(cost.get("relicCount", 0)), 2, "接过 2 件旧圣物")
+	_eq(int(cost.get("karmaCost", 0)), 20, "逐件咬：2×10=20 善恶")
+	_check(bool(cost.get("reversible", false)), "改信可逆")
+	# 执行改信：扣善恶、改柱、接新柱圣物、清空恩惠。
+	avatar.blessings["fire_resist"] = {"value": 1, "activeUntilDay": 999}
+	var convert: Dictionary = Pontiff.convert(avatar, morrow, {}, DeterministicRNG.new(1))
+	_check(bool(convert.get("ok", false)), "改信成功")
+	_eq(avatar.karma, 60, "改信扣 20 善恶")
+	_eq(avatar.current_patron, "morrow", "柱改为 morrow")
+	_check(avatar.accepted_relics.has("morrow"), "新柱圣物算接过")
+	_check(avatar.blessings.is_empty(), "改信后旧柱恩惠被清空")
+	# 善恶太低：改信代价跨不过下限 → 拒改。
+	avatar.set_karma(PlayerAvatar.HIDDEN_ATTR_MIN)
+	var blocked: Dictionary = Pontiff.convert(avatar, morrow, {}, DeterministicRNG.new(2))
+	_check(not bool(blocked.get("ok", false)), "善恶到底拒改信")
+	# revert：付 refundCost 铜币换回旧柱。
+	avatar.set_karma(0)
+	avatar.money = 100
+	var back: Dictionary = Pontiff.revert(avatar, "zenith", {})
+	_check(bool(back.get("ok", false)), "换回旧柱成功")
+	_eq(avatar.current_patron, "zenith", "柱改回 zenith")
+	_eq(avatar.money, 50, "换回付 50 铜")
+	avatar.money = 10
+	var poor: Dictionary = Pontiff.revert(avatar, "drift", {})
+	_check(not bool(poor.get("ok", false)), "赎金不够拒换回")
+
+
+## 圣物跨世：settle_death 把接过的柱并入灵魂记录（去重），往返不丢。
+func _test_soul_relics_cross_lives() -> void:
+	var avatar := PlayerAvatar.new()
+	avatar.accepted_relics = ["zenith", "ember", "zenith"]
+	var soul := SoulRecord.new()
+	var rep: Reincarnation = Reincarnation.new()
+	rep.settle_death(soul, avatar, "natural", 1)
+	_eq(soul.relics.size(), 2, "圣物并集去重后 2 件")
+	_check(soul.relics.has("zenith") and soul.relics.has("ember"), "灵魂记录了两柱圣物")
+	_check(not soul.relics.has("morrow"), "没接过的柱不进灵魂账")
+	# to_dict/from_dict 往返后圣物还在。
+	var round: SoulRecord = SoulRecord.from_dict(soul.to_dict())
+	_eq(round.relics.size(), 2, "往返后圣物仍 2 件")

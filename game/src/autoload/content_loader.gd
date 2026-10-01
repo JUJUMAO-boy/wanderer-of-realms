@@ -47,8 +47,9 @@ const SKILL_TIERS: Array = ["novice", "skilled", "expert", "master", "grandmaste
 const DAMAGE_TYPES: Array = ["physical", "fire", "water", "wind", "earth", "holy", "dark", "soul", "none"]
 
 ## 物品分类与稀有度（《数值框架》8 节）。material 为 M14 生产技能新增的原料类别，
-## relic 为 M32 副本专属遗物类别（只出副本，见技术设计文档 D-145）。
-const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material", "relic", "creature"]
+## relic 为 M32 副本专属遗物类别（只出副本，见技术设计文档 D-145），
+## sanctum 为 M35 代神圣物类别（不占槽、不进商铺、带 relicOf 标注所属神，跨世由灵魂看管）。
+const ITEM_CATEGORIES: Array = ["weapon", "armor", "consumable", "tool", "material", "relic", "creature", "sanctum"]
 const ITEM_RARITIES: Array = [
 	"common", "fine", "rare", "epic", "legendary", "dragonforged",
 ]

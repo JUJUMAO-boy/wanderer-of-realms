@@ -7,10 +7,11 @@
 			"domain": "秩序",
 			"sigil": "z",
 			"blessings": [
-				{ "threshold": 40, "effect": "行的正，就更少被夜里的手摸走东西。" },
-				{ "threshold": 70, "effect": "守序之人走夜路，脚下更稳。" },
-				{ "threshold": 90, "effect": "它把目光落在你身上，代价都明码标价。" }
+				{ "threshold": 40, "kind": "theft_resist", "value": 20, "days": 3, "tierLabel": "第一档·夜不摸主", "displayEffect": "行的正，就更少被夜里的手摸走东西。", "effect": "行的正，就更少被夜里的手摸走东西。" },
+				{ "threshold": 70, "kind": "walk_ease", "value": 1, "days": 3, "tierLabel": "第二档·脚下生风", "displayEffect": "守序之人走夜路，脚下更稳。", "effect": "守序之人走夜路，脚下更稳。" },
+				{ "threshold": 90, "kind": "warning", "value": 1, "days": 3, "tierLabel": "第三档·目光与价码", "displayEffect": "它把目光落在你身上，代价都明码标价。", "effect": "它把目光落在你身上，代价都明码标价。" }
 			],
+			"sacrifice": { "kind": "karma", "amount": 5 },
 			"cost": "每次祈祷折一点沉眠",
 			"penalty": "若你行恶太多，它的注视会变成拷问。"
 		},
@@ -21,10 +22,11 @@
 			"domain": "火焰",
 			"sigil": "e",
 			"blessings": [
-				{ "threshold": 30, "effect": "怒火淬进骨里，出手更重。" },
-				{ "threshold": 60, "effect": "火日时你的手更稳，风日时你更容易燃起。" },
-				{ "threshold": 85, "effect": "它点你的灯，从不问你借过什么。" }
+				{ "threshold": 30, "kind": "fire_resist", "value": 1, "days": 3, "tierLabel": "第一档·怒淬入骨", "displayEffect": "怒火淬进骨里，出手更重。", "effect": "怒火淬进骨里，出手更重。" },
+				{ "threshold": 60, "kind": "fire_resist", "value": 2, "days": 3, "tierLabel": "第二档·焚而不伤", "displayEffect": "火日时你的手更稳，风日时你更容易燃起。", "effect": "火日时你的手更稳，风日时你更容易燃起。" },
+				{ "threshold": 85, "kind": "fire_resist", "value": 3, "days": 3, "tierLabel": "第三档·灯不问你借", "displayEffect": "它点你的灯，从不问你借过什么。", "effect": "它点你的灯，从不问你借过什么。" }
 			],
+			"sacrifice": { "kind": "luck", "amount": 5 },
 			"cost": "每次祈祷烧掉一点运气",
 			"penalty": "若你背叛了它的火，最先烧的是你。"
 		},
@@ -35,10 +37,11 @@
 			"domain": "旅途与贸易",
 			"sigil": "d",
 			"blessings": [
-				{ "threshold": 35, "effect": "远路上的风声会为你让路。" },
-				{ "threshold": 65, "effect": "货比三家时，它替你多看了一眼秤。" },
-				{ "threshold": 88, "effect": "你走得越远，它越记得你。" }
+				{ "threshold": 35, "kind": "walk_ease", "value": 1, "days": 3, "tierLabel": "第一档·风让路", "displayEffect": "远路上的风声会为你让路。", "effect": "远路上的风声会为你让路。" },
+				{ "threshold": 65, "kind": "bargain", "value": 1, "days": 3, "tierLabel": "第二档·慧眼识秤", "displayEffect": "货比三家时，它替你多看了一眼秤。", "effect": "货比三家时，它替你多看了一眼秤。" },
+				{ "threshold": 88, "kind": "bargain", "value": 2, "days": 3, "tierLabel": "第三档·陆越记深", "displayEffect": "你走得越远，它越记得你。", "effect": "你走得越远，它越记得你。" }
 			],
+			"sacrifice": { "kind": "days", "amount": 1 },
 			"cost": "每次祈祷耗掉一段旅程",
 			"penalty": "若你中途折返，它会把你的路折断。"
 		},
@@ -49,10 +52,11 @@
 			"domain": "沉眠与转世",
 			"sigil": "m",
 			"blessings": [
-				{ "threshold": 30, "effect": "梦做得安稳，醒时更清明。" },
-				{ "threshold": 62, "effect": "转世时，它替你多留一截旧路。" },
-				{ "threshold": 87, "effect": "死亡不再是终点，是它替你翻的一页。" }
+				{ "threshold": 30, "kind": "sleep_ease", "value": 1, "days": 3, "tierLabel": "第一档·夜有安枕", "displayEffect": "梦做得安稳，醒时更清明。", "effect": "梦做得安稳，醒时更清明。" },
+				{ "threshold": 62, "kind": "reincarnation_keep", "value": 1, "days": 3, "tierLabel": "第二档·留一截旧路", "displayEffect": "转世时，它替你多留一截旧路。", "effect": "转世时，它替你多留一截旧路。" },
+				{ "threshold": 87, "kind": "reincarnation_keep", "value": 2, "days": 3, "tierLabel": "第三档·翻页者", "displayEffect": "死亡不再是终点，是它替你翻的一页。", "effect": "死亡不再是终点，是它替你翻的一页。" }
 			],
+			"sacrifice": { "kind": "karma", "amount": 5 },
 			"cost": "每次祈祷献上一点记忆",
 			"penalty": "若你拒绝睡去，它也会忘记你醒着。"
 		}

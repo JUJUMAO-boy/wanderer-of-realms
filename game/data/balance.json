@@ -635,5 +635,15 @@
       { "id": "fued", "label": "和某座城过不去", "desc": "凡提到那座城，他总先沉默很长一会儿，再岔开说点旁的话——偏又绕不开那城的货价。", "resolveCost": 140, "resolveLine": "你托人把恩怨里的那节账给断了。他临走朝你拱了拱手，没说谢，说了句出城的路。", "rewardCopper": 48 },
       { "id": "pregnant", "label": "带着一个不能说的晚辈", "desc": "他身边常跟着一个半大孩子，说是亲戚家的。可孩子管他叫的辈分，他每次都答得不一致。", "resolveCost": 110, "resolveLine": "你把那孩子安顿了一桩难处。他垂着眼蹲了很久，忽然说了句不像玩笑的实话。", "rewardCopper": 42 }
     ]
+  },
+  "deity": {
+    "_comment": "代神机制（M-A 深化，D-152~D-155）：恩惠/改信/圣物的数值系数全部集中在这。恩惠有效期是『绝对自然日』(blessingDays)，与 DisguiseGate 的 disguise_until_day 同一套时钟通路，main 每日 boundary 调 Pontiff.sync 剥掉到期的。改信是『背一柱投另一柱』：接过多少旧圣物就按 perRelicPenalty 逐件咬善恶（karma 扣到 -100 以下就没法改），换回旧柱付 refundCost 铜币。圣物跨世保留由 SoulRecord.relics 携带。",
+    "blessingDays": 3,
+    "perRelicPenalty": 10,
+    "refundCost": 50,
+    "relicOfferReward": 30,
+    "snatchKarmaPenalty": 20,
+    "_comment_relicOfferReward": "把不属于你这柱的圣物献到别的殿，得这点善恶（M-A『献别殿渡让』）。",
+    "_comment_snatchKarmaPenalty": "下手去摸别的神圣物被咬，扣这么多善恶就地把手缩回去（M-A『摸走被咬』）。"
   }
 }

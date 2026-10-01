@@ -326,6 +326,8 @@ func rebirth(
 	# 随机转生是「放弃塑造」，因此没有创建期分配点，但吃前世的属性继承加成
 	spec[CharacterCreation.ATTR_POINTS_KEY] = CharacterCreation.zero_allocations()
 	spec["attributeBonuses"] = inherited_attribute_bonus(_last_life_attributes(soul), sou_value)
+	# M35 圣物跨世：把灵魂看管的柱圣物带回新化身，main 从 spec 读回写进 accepted_relics。
+	spec["soulRelics"] = soul.relics.duplicate()
 	return {
 		"ok": true,
 		"avatarSpec": spec,
@@ -361,6 +363,13 @@ func settle_death(soul: SoulRecord, avatar: PlayerAvatar, cause: String, month: 
 	soul.karma_carry = clampi(soul.karma_carry + avatar.karma, -100, 100)
 	soul.luck_carry = clampi(soul.luck_carry + avatar.luck, -100, 100)
 	soul.dragonization_carry = avatar.dragonization
+
+	# M35 代神圣物跨世（D-152）：接过的神柱圣物由灵魂看管，换体不清零——
+	# 这正是「背柱投柱时的逐件咬」与「跨世唯一硬通货」的落点。并集合并去重。
+	for god_id in avatar.accepted_relics:
+		var gid: String = str(god_id)
+		if not gid.is_empty() and not soul.relics.has(gid):
+			soul.relics.append(gid)
 
 	var archive_id: String = "%s-life-%03d" % [soul.soul_id, soul.life_archives.size() + 1]
 	soul.life_archives.append({

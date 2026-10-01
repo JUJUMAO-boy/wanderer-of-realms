@@ -20,7 +20,7 @@ var main_quest_progress: Dictionary = {}
 var dragonization_carry: int = 0
 var known_runes: Array[String] = []
 var life_archives: Array = []
-
+var relics: Array = []  ## 跨世保留的代神圣物（M35）：接过的神柱 godId 列表，由灵魂看管
 
 func to_dict() -> Dictionary:
 	return {
@@ -37,6 +37,7 @@ func to_dict() -> Dictionary:
 		"dragonizationCarry": dragonization_carry,
 		"knownRunes": known_runes.duplicate(),
 		"lifeArchives": life_archives.duplicate(true),
+		"relics": relics.duplicate(),
 	}
 
 
@@ -56,6 +57,8 @@ static func from_dict(data: Dictionary) -> SoulRecord:
 	for r in data.get("knownRunes", []):
 		s.known_runes.append(str(r))
 	s.life_archives = data.get("lifeArchives", []).duplicate(true)
+	for r in data.get("relics", []):
+		s.relics.append(str(r))
 	return s
 
 

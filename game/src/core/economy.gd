@@ -369,6 +369,10 @@ func is_available(city: City, template: Dictionary, channel: String = CHANNEL_SH
 	# 躯体只作收藏物，不该让店主挂到货架上卖。收容笼（consumable）照常可售。
 	if str(template.get("category", "")) == "creature":
 		return false
+	# M35 代神圣物（category=sanctum）不是商店货色：它是跨世由灵魂看管的硬通货，
+	# 不进任何货架——只能靠"摸走被咬/献别殿渡让/跨世保留"这三条通道流转。
+	if str(template.get("category", "")) == "sanctum":
+		return false
 	# M-B 收口（D-137）：标了 blackMarketOnly 的货（如「改头换面」斗篷）只在黑市上架——
 	# 正常巷子的店主不会进罪犯家的生意。
 	if bool(template.get("blackMarketOnly", false)) and channel != CHANNEL_BLACK_MARKET:

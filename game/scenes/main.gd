@@ -564,6 +564,10 @@ func _on_period_reached(period: String, elapsed_months: int, _tick_in_month: int
 		ClockCore.PERIOD_DAY:
 			# 变装时效（M-B 收口，D-137）：过一天就照着当天判一次，过期自动剥下。
 			DisguiseGate.sync(_world, Clock.now().day)
+			# 恩惠时效（M35，D-152）：代神恩惠是"身体这件皮"的事，每日边界照当天
+			# 剥掉到期的。与变装同用一个安全守卫：化身不存在时不操作。
+			if _world.avatar != null:
+				Pontiff.sync(_world.avatar, Clock.now().day)
 		ClockCore.PERIOD_MONTH:
 			var report: Dictionary = _sim.settle_month(elapsed_months)
 			_last_deltas = report["cityDeltas"]
@@ -2112,6 +2116,11 @@ func _start_avatar_from_rebirth(rebirth: Dictionary) -> void:
 	# 宿主的债跟着躯壳一起接下来（出身没有债务，所以这里直接加）
 	var legacy: Dictionary = rebirth.get("legacy", {})
 	avatar.debt_copper += maxi(0, int(legacy.get("debtCopper", 0)))
+	# M35 圣物跨世：重生时把灵魂看管的柱圣物带回新化身，写进 accepted_relics。
+	for relic_of in spec.get("soulRelics", []):
+		var ro: String = str(relic_of)
+		if not ro.is_empty() and not avatar.accepted_relics.has(ro):
+			avatar.accepted_relics.append(ro)
 	_place_avatar(avatar, str(legacy.get("hostCityId", "")))
 
 	# 世界纪年史书（M16）：一世落幕，写进史书。落幕这世的序号以 _soul 的
@@ -3762,7 +3771,7 @@ func _pray_click(point: Vector2) -> void:
 			_pray_confirm()
 
 
-## 回车。选光标所落的神，把这次祈祷结清。
+## 回车。选光标所落的神，把这次祈祷结清（M35 走 Pontiff 真机制）。
 func _pray_confirm() -> void:
 	var branches: Array = _pray_view.get("branches", [])
 	if branches.is_empty():
@@ -3773,27 +3782,43 @@ func _pray_confirm() -> void:
 		_status.text = "这位神不在此处。"
 		_refresh()
 		return
-	var result: Dictionary = GodBlessing.pray_result(
-		god, _world.avatar.karma, int(_world.world_seed)
-	)
-	_pray_active = false
-	_pray_view = {}
+	var avatar: PlayerAvatar = _world.avatar
+	var today: int = Clock.now().day
 	var notice: String
-	if bool(result.get("cursed", false)):
-		notice = "向「%s」祈祷，它降下神罚：%s" % [
-			str(god.get("name", "")), str(result.get("penalty", ""))]
-		_status.text = "「%s」的注视变得冰冷：%s" % [
-			str(god.get("name", "")), str(result.get("penalty", ""))]
-	elif bool(result.get("ok", false)):
-		notice = "向「%s」祈祷，得赐一档恩惠：%s" % [
-			str(god.get("name", "")), str(result.get("effect", ""))]
-		_status.text = "「%s」垂听，恩泽落身：%s" % [
-			str(god.get("name", "")), str(result.get("effect", ""))]
+	# M35：不再只弹文案。先看够不够着一档恩惠——够不着（含善恶低到神罚）就照旧
+	# 结一句；够着了就真付出献祭、真把这段庇护登记到化身。
+	var spec: Dictionary = Pontiff.blessing_spec(god, avatar.karma, {})
+	if spec.is_empty():
+		_pray_active = false
+		_pray_view = {}
+		if Pontiff.behind_of(god, avatar.karma):
+			notice = "向「%s」祈祷，它降下神罚：%s" % [
+				str(god.get("name", "")), str(god.get("penalty", ""))]
+			_status.text = "「%s」的注视变得冰冷：%s" % [
+				str(god.get("name", "")), str(god.get("penalty", ""))]
+		else:
+			notice = "向「%s」祈祷，神未垂听（代价：%s）" % [
+				str(god.get("name", "")), str(god.get("cost", ""))]
+			_status.text = "「%s」没有回应你。（代价：%s）" % [
+				str(god.get("name", "")), str(god.get("cost", ""))]
 	else:
-		notice = "向「%s」祈祷，神未垂听（代价：%s）" % [
-			str(god.get("name", "")), str(result.get("cost", ""))]
-		_status.text = "「%s」没有回应你。（代价：%s）" % [
-			str(god.get("name", "")), str(result.get("cost", ""))]
+		var sacrifice: Dictionary = spec.get("sacrifice", {})
+		if not Pontiff.can_pay(avatar, sacrifice):
+			_pray_active = false
+			_pray_view = {}
+			notice = "向「%s」祈祷，你付不起这份献祭" % str(god.get("name", ""))
+			_status.text = "「%s」要的献祭你拿不出手。" % str(god.get("name", ""))
+		else:
+			Pontiff.pay(avatar, sacrifice)
+			var bestowed: Dictionary = Pontiff.bestow(avatar, spec, today)
+			_pray_active = false
+			_pray_view = {}
+			notice = "向「%s」祈祷，付下献祭，得赐一档恩惠（%s）：%s，持续 %d 天" % [
+				str(god.get("name", "")), str(spec.get("tierLabel", "")),
+				str(spec.get("displayEffect", "")), int(bestowed.get("activeUntilDay", 0)) - today]
+			_status.text = "「%s」垂听，恩泽落身：%s（%d 天内有效）" % [
+				str(god.get("name", "")), str(spec.get("displayEffect", "")),
+				maxi(1, int(bestowed.get("activeUntilDay", 0)) - today)]
 	_note_events([{"month": Clock.total_months(), "text": notice}])
 	_switch_view(VIEW_MAP)
 
