@@ -163,6 +163,9 @@ static func talk(avatar: PlayerAvatar, world: WorldState, npc: SimNpc, intent: S
 		world.npc_talk_cooldowns[npc.npc_id] = cds_map
 
 	var delta: int = int(_cfg().get("talkDelta", {}).get(band_key, 0))
+	# A2（D-167）：在这城的声誉越高，攀谈越被待见——把该城声誉档位的友善加分
+	# 折进好感变化。罪犯 + 声誉垫底(告示板那张脸)时是负加成，交浅言深反而惹嫌。
+	delta += ReputationTitle.card(world, str(npc.city_id))["favorBonus"]
 	set_affinity(world, npc.npc_id, aff + delta)
 	return {
 		"ok": true, "line": line, "band": band_key, "bandLabel": band_label(band_key),
@@ -207,6 +210,10 @@ static func gift(avatar: PlayerAvatar, world: WorldState, npc: SimNpc, item_inst
 	# 消耗物品（从背包与实例表同时移除）
 	avatar.inventory.erase(item_instance_id)
 	avatar.item_instances.erase(item_instance_id)
+
+	# A2（D-167）：声誉档位的友善加分同样折进送礼。声誉高的城出手更见情分，
+	# 罪犯 + 声誉垫底的城连送礼都要碰一鼻子灰。
+	delta += ReputationTitle.card(world, str(npc.city_id))["favorBonus"]
 
 	var aff: int = affinity(world, npc.npc_id)
 	set_affinity(world, npc.npc_id, aff + delta)

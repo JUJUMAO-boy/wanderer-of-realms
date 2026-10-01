@@ -26,6 +26,16 @@
     "_comment": "罪犯态（M-B 剩余，D-134）：善恶(karma)低到门槛即罪犯态，正常巷子里的店主看都不看你——普通商铺拒卖，而有黑市的城（十字路/赤沙/索恩港）黑市渠道恒不问名声，是罪犯唯一的操作通道。变装绕过留后续。",
     "karmaThreshold": -30
   },
+  "reputationTitle": {
+    "_comment": "城市声誉·别称（A2，D-167）：声誉从隐藏数值升级成身份。各档友善加分（favorBonus）走这里，单位同好感 delta；档位阈值与别称文案在 ReputationTitle 规则层固定为单一来源（过文风闸）。罪犯态 + 垫底档(通缉)再折 CRIMINAL_PENALTY(规则层=3)。",
+    "favorBonus": {
+      "hero": 4,
+      "welcome": 1,
+      "neutral": 0,
+      "wary": -2,
+      "outcast": -5
+    }
+  },
   "training": {
     "_comment": "训练师双币种（M-B 剩余，D-135）：受训花铜币 + 从灵魂刨一丝业力（karma 递减，不透透支死就还能练）。校验用 PlayerAvatar 的 karma 下限，因此 karmaCost 别大到一次扣穿 -100。",
     "copper": 200,

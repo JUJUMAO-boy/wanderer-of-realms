@@ -5909,8 +5909,12 @@ func _npc_talk(intent: String) -> void:
 	if not bool(result.get("ok", false)):
 		_status.text = "谈不成：%s" % str(result.get("reason", result.get("error", "")))
 	else:
-		_status.text = "%s（好感 %+d，现 %s）" % [
-			str(result.get("line", "")), int(result.get("affDelta", 0)),
+		# A2（D-167）：告白前先报这城怎么叫你——声誉档位的别称/问候是这句的前奏。
+		var identity: Dictionary = ReputationTitle.card(_world, str(npc.city_id))
+		var greet: String = str(identity.get("greet", ""))
+		var prefix: String = "［%s］%s。" % [identity.get("title", ""), greet] if not greet.is_empty() else "［%s］" % identity.get("title", "")
+		_status.text = "%s%s（好感 %+d，现 %s）" % [
+			prefix, str(result.get("line", "")), int(result.get("affDelta", 0)),
 			str(result.get("bandLabel", "")),
 		]
 	_refresh()

@@ -295,6 +295,10 @@ func run_all() -> int:
 	_test_c4_faction_thresholds()
 	_test_c4_faction_drift_deterministic()
 	_test_c4_faction_change_entry()
+	print("=== A2 城市声望·别称（第三阶段 / D-167）===")
+	_test_a2_reputation_band_and_title()
+	_test_a2_reputation_favor_bonus()
+	_test_a2_reputation_criminal_treatment()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -9661,3 +9665,62 @@ func _test_c4_faction_change_entry() -> void:
 	_eq(old_id, "desert_clans", "apply_change 返回旧主导势力")
 	_eq(red.dominant_faction_id, "desert_renegades", "apply_change 落得新主导势力")
 	_check(not FactionChronicle.pending_change(red), "变更后不再触发")
+
+
+func _test_a2_reputation_band_and_title() -> void:
+	_eq(ReputationTitle.band_for(90), ReputationTitle.BAND_HERO, "声誉 90 归入座上宾")
+	_eq(ReputationTitle.band_for(60), ReputationTitle.BAND_HERO, "声誉 60（含边界）归座上宾")
+	_eq(ReputationTitle.band_for(59), ReputationTitle.BAND_WELCOME, "声誉 59 归说得上话")
+	_eq(ReputationTitle.band_for(20), ReputationTitle.BAND_WELCOME, "声誉 20 归说得上话")
+	_eq(ReputationTitle.band_for(19), ReputationTitle.BAND_NEUTRAL, "声誉 19 归外乡客")
+	_eq(ReputationTitle.band_for(-19), ReputationTitle.BAND_NEUTRAL, "声誉 -19 归外乡客")
+	_eq(ReputationTitle.band_for(-20), ReputationTitle.BAND_WARY, "声誉 -20 归名声发臭")
+	_eq(ReputationTitle.band_for(-59), ReputationTitle.BAND_WARY, "声誉 -59 归名声发臭")
+	_eq(ReputationTitle.band_for(-60), ReputationTitle.BAND_OUTCAST, "声誉 -60 归告示板")
+	_eq(ReputationTitle.band_for(-100), ReputationTitle.BAND_OUTCAST, "声誉 -100 归告示板")
+	_check(not str(ReputationTitle.title(ReputationTitle.BAND_HERO)).is_empty(), "座上宾有别称")
+	_check(not str(ReputationTitle.title(ReputationTitle.BAND_OUTCAST)).is_empty(), "告示板有别称")
+	_check(ReputationTitle.title("no_such_band") == ReputationTitle.title(ReputationTitle.BAND_NEUTRAL),
+		"未知档位回退中性别称")
+
+
+func _test_a2_reputation_favor_bonus() -> void:
+	# 友善加分：balance 表为准（hero 4 / welcome 1 / neutral 0 / wary -2 / outcast -5）
+	_eq(ReputationTitle.favor_bonus(ReputationTitle.BAND_HERO), 4, "座上宾友善加分 +4")
+	_eq(ReputationTitle.favor_bonus(ReputationTitle.BAND_WELCOME), 1, "说得上话友善加分 +1")
+	_eq(ReputationTitle.favor_bonus(ReputationTitle.BAND_NEUTRAL), 0, "外乡客友善加分 0")
+	_eq(ReputationTitle.favor_bonus(ReputationTitle.BAND_WARY), -2, "名声发臭友善加分 -2")
+	_eq(ReputationTitle.favor_bonus(ReputationTitle.BAND_OUTCAST), -5, "告示板友善加分 -5")
+	# card 随声誉档位给别称/问候/加分
+	var world: WorldState = (WorldFactory.create_new(
+		12345, ContentLoader.get_city_configs(), 120, 120) as Dictionary)["world"]
+	var avatar := PlayerAvatar.new()
+	world.avatar = avatar
+	avatar.set_reputation("aedran", 80)
+	var hero: Dictionary = ReputationTitle.card(world, "aedran")
+	_eq(str(hero["band"]), ReputationTitle.BAND_HERO, "声誉 80 的城身份卡是座上宾")
+	_eq(hero["favorBonus"], 4, "身份卡带座上加分")
+	_check(not str(hero["greet"]).is_empty(), "身份卡带开场问候")
+	_check(not bool(hero["criminal"]), "高声誉不视为通缉")
+
+
+func _test_a2_reputation_criminal_treatment() -> void:
+	var world: WorldState = (WorldFactory.create_new(
+		999, ContentLoader.get_city_configs(), 120, 120) as Dictionary)["world"]
+	var avatar := PlayerAvatar.new()
+	world.avatar = avatar
+	# 罪犯 + 声誉垫底 → 别称变告示板、问候是喊守卫、友善再加敌意折
+	avatar.karma = CriminalState.karma_threshold() - 10      # 坐实罪犯态
+	avatar.set_reputation("red_sands", -80)
+	var card: Dictionary = ReputationTitle.card(world, "red_sands")
+	_eq(str(card["band"]), ReputationTitle.BAND_OUTCAST, "罪犯在声誉垫底的城归告示板")
+	_check(bool(card["criminal"]), "身份卡标记罪犯被当通缉犯")
+	_check(str(card["greet"]).contains("守卫"), "罪犯开场问候是喊守卫")
+	_eq(card["favorBonus"],
+		ReputationTitle.favor_bonus(ReputationTitle.BAND_OUTCAST) - ReputationTitle.CRIMINAL_PENALTY,
+		"罪犯在垫底档再折 CRIMINAL_PENALTY")
+	# 罪犯但声誉普通 → 不触发告示板待遇
+	world.avatar.set_reputation("aedran", 10)
+	var neutral: Dictionary = ReputationTitle.card(world, "aedran")
+	_check(not bool(neutral["criminal"]), "罪犯但声誉普通不视为通缉")
+	_check(not str(neutral["greet"]).contains("守卫"), "普通声誉不喊守卫")
