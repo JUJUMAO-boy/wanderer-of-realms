@@ -22,7 +22,9 @@ const STAGE_DELIVER: String = "deliver"
 const STAGE_ABANDON: String = "abandon"
 
 ## 行文语境占位符。配置里写了 {title} 之类的，最终由 ctx 填掉。
-const PLACEHOLDERS: Array = ["giver", "title", "tier", "branch"]
+## A4（D-169）：{cityName} / {professionName} 给城市专属职业委托念城名与本城
+## 专属职业名——同一张板，在这八座城嘴上叫的是各自那套行话。
+const PLACEHOLDERS: Array = ["giver", "title", "tier", "branch", "cityName", "professionName"]
 
 
 ## 接单台词。本型 speech.accept 缺失或有空缺 → 回退到既有的 dialogue，

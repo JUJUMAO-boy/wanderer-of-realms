@@ -2804,6 +2804,17 @@ func _validate_quests(root: Dictionary) -> void:
 		if quest.has("speech"):
 			_validate_quest_speech(quest, quest["speech"], path)
 
+		var scope: String = str(quest.get("scope", ""))
+		if scope != "" and scope != "city":
+			_errors.append("委托任务配置的 scope 非法（应为空或 city）：%s.scope = %s" % [path, scope])
+		if scope == "city":
+			var city_id: String = str(quest.get("cityId", ""))
+			if get_city_config(city_id).is_empty():
+				_errors.append("城市作用域委托的城市不存在：%s.cityId = %s" % [path, city_id])
+			var prof_id: String = str(quest.get("professionId", ""))
+			if get_profession(prof_id).is_empty():
+				_errors.append("城市作用域委托的职业不存在：%s.professionId = %s" % [path, prof_id])
+
 	_quests = root
 
 

@@ -591,6 +591,326 @@
           }
         }
       }
+    },
+    {
+      "questTypeId": "city_aedran_grimoire_repair",
+      "displayName": "复原馆藏古卷",
+      "scriptRef": "QT-07",
+      "giverLabel": "档案馆掌卷人",
+      "scope": "city",
+      "cityId": "aedran",
+      "professionId": "scholar",
+      "dimension": "culture",
+      "triggerBelow": 50,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}的档案馆里，一匣古卷被馆里那只胖猫带进来的蛀虫啃成了屑。要抄、要补、还是干脆再造一份假的？",
+      "speech": {
+        "accept": [
+          "{giver}（捧着一匣碎纸，手都在抖）：{title}？{cityName}几百年的卷子，让一只猫身上的蛀虫啃成了这样。补得上，{cityName}念你的好；补不上……我这张老脸往档案馆的缝里塞。",
+          "玩家：补一卷要多久？",
+          "掌卷人：蛀虫啃了三年，我打算让你三天补完——{professionName}的手艺，该比贝叶虫快些。"
+        ],
+        "deliver": {
+          "restore": "{giver}（一页页端详补好的卷子）：蚕头燕尾都在，连蛀洞那道弯都补得跟原本一个脾气。{cityName}这一页从此有你的名字。",
+          "forge": "{giver}（翻着崭新如印的卷子，眉头越拧越紧）：这墨色，好像不该这么新……罢了，我闭眼，你已远走。",
+          "burn": "{giver}（看着炭盆里的余烬愣住了）：你把它烧了？补不成也不要紧，烧了……这一匣的故事就真没了。"
+        },
+        "abandon": [
+          "{giver}（把碎纸重新拢回匣里，手还是抖）：算了，蛀就蛀了。{cityName}不差这一匣，差的是肯坐下来补它的人。"
+        ]
+      },
+      "dialogue": [
+        "档案馆掌卷人（捧着一匣被蛀的碎纸）：这是{professionName}一脉传下来的古卷，如今让贝叶虫啃成了雨后的烂纸。",
+        "档案馆掌卷人（叹气）：{cityName}记得住王朝，记不住一卷书香。你若肯伸手，我便当你是这一脉的人。",
+        "玩家：补来何用？",
+        "档案馆掌卷人：让往后的人翻开时，能摸到三百年前那个人的手温。"
+      ],
+      "branches": [
+        { "branchId": "restore", "label": "逐字补全", "detail": "照原样把卷子补回可读，费时费工，{cityName}记你的情。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "reputationGain": 2, "karmaGain": 2 },
+        { "branchId": "forge", "label": "再造一份新卷", "detail": "索性誊一份崭新的搁上去，旧卷只是旧了，没人看得那么细。", "stateMultiplier": 0.5, "moneyMultiplier": 1.4, "reputationGain": -1, "karmaGain": -1, "flags": ["forged"] },
+        { "branchId": "burn", "label": "烧了干净", "detail": "蛀成这般，不如化灰。往后没人再替这一匣睡不安稳。", "stateMultiplier": 0.0, "moneyMultiplier": 0.4, "reputationGain": -4, "karmaGain": -2, "flags": ["burned"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_port_thorne_bill_of_lading",
+      "displayName": "追回失踪货单",
+      "scriptRef": "QT-08",
+      "giverLabel": "商行大掌柜",
+      "scope": "city",
+      "cityId": "port_thorne",
+      "professionId": "merchant",
+      "dimension": "wealth",
+      "triggerBelow": 60,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}港一张领了货却蹊跷运空的货单——货没出港，账海捞月。要查、要认亏、还是把这笔账做平？",
+      "speech": {
+        "accept": [
+          "{giver}（把一摞货单拍在柜上）：{title}？{cityName}港口的货单，货出库了，船是空的。查得出，{professionName}这条道上的人都承你情；查不出，这账就得有人扛。",
+          "玩家：货会自己跑了？",
+          "大掌柜：货不会跑，会跑的是账。{cityName}的港口跟人心一样——看着满，底下一捞全是浪。"
+        ],
+        "deliver": {
+          "trace": "{giver}（点着寻回的货单）：货在，账也在，亏掉的只有一张旧单子。{cityName}的港口从此对你敞着门。",
+          "absorb": "{giver}（把这笔亏摊进总账，面不改色）：吞了，就当喂了海。做生意的，哪有算得清的账。",
+          "pin": "{giver}（冷笑）：你扣的是别家行会的鼻子？{cityName}的浪再大，也拍不垮抱团取暖的人。"
+        },
+        "abandon": [
+          "{giver}（收回货单，油灯下盘着算盘）：查不动就罢了。{cityName}港口天天有单子进，亏一张，换个眼神，又是一单。"
+        ]
+      },
+      "dialogue": [
+        "商行大掌柜（用指节敲着货单）：{cityName}港这张单，领了货，船空了——货在港里蒸发了？",
+        "商行大掌柜（推过来一盏灯）：顺着单子上的脚印跟。账跟货一样，都有脚印，就是脚印会互相抹。",
+        "玩家：报案不成？",
+        "商行大掌柜：报案？港里最贵的就是「丢了的货」。水手们都说，{cityName}的海会把不干净的东西吞下去，再吐一份干净的账。"
+      ],
+      "branches": [
+        { "branchId": "trace", "label": "追查下账脚", "detail": "沿货单的流转玩命追，把货和账都找到一处。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "reputationGain": 2, "karmaGain": 1 },
+        { "branchId": "absorb", "label": "让行会认下亏空", "detail": "把账做实做平，行会赔一笔，事算揭过。", "stateMultiplier": 0.6, "moneyMultiplier": 1.3, "karmaGain": -1 },
+        { "branchId": "pin", "label": "揪出内鬼，当众揭发", "detail": "这笔亏是内鬼做的，当众捅破，港口立时清明。", "stateMultiplier": 1.2, "moneyMultiplier": 0.8, "reputationGain": 4, "karmaGain": 3, "flags": ["exposed"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_hammerhold_collapsed_seam",
+      "displayName": "塌巷救人",
+      "scriptRef": "QT-09",
+      "giverLabel": "矿工把头",
+      "scope": "city",
+      "cityId": "hammerhold",
+      "professionId": "miner",
+      "dimension": "development",
+      "triggerBelow": 55,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}一口老巷塌了，压住一班{professionName}。要凿、要炸、还是要放弃那条矿脉？",
+      "speech": {
+        "accept": [
+          "{giver}（握着一把断镐，指节泛白）：{title}？{cityName}井下塌方，一班{professionName}压在底下。救人，还是先救矿脉——这话我一晌也说不出口。",
+          "玩家：底下压了几个人？",
+          "把头：刨土的刨进去七个。镐在矿脉，就按「算了，先把人刨出来再说」的理儿走。"
+        ],
+        "deliver": {
+          "dig": "{giver}（满头满脸的煤，跪着扒出最后一个人）：齐了，一个没少。{cityName}的井下，再烂的矿脉也敢让人钻。",
+          "blast": "{giver}（望着炸塌了半截的矿脉，声音发颤）：人救出来了，矿脉塌了。{cityName}的矿是死的，人得是活的。",
+          "seal": "{giver}（一言不发，让人把塌口砌死）：底下有矿，也有兄弟。我宁可让{professionName}自此少挖两口，也不愿再听见那声闷响。"
+        },
+        "abandon": [
+          "{giver}（放下镐，背过身去）：你不来，我自己下去抬。{cityName}的煤会再长，人不会。"
+        ]
+      },
+      "dialogue": [
+        "矿工把头（握着一根断镐，指节发白）：{cityName}这口老巷塌了，底下一班{professionName}，压了七个人。",
+        "矿工把头（深深吸了一口煤灰味的气）：矿脉值钱，人也值钱——可没人至于为了一条活命的路，先衡量这两样。",
+        "玩家：底下还能撑多久？",
+        "矿工把头：矿坑里最难熬的不是饿，是黑。黑得久了，连自己是不是还活着都记不准。"
+      ],
+      "branches": [
+        { "branchId": "dig", "label": "一镐一镐刨", "detail": "最笨也最稳，赌矿脉不塌，赌人能等到。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "karmaGain": 2 },
+        { "branchId": "blast", "label": "定向炸开塌方", "detail": "快，但赌错方向就会连人带矿一同埋掉。", "stateMultiplier": 0.8, "moneyMultiplier": 1.2, "karmaGain": 1, "flags": ["blasted"] },
+        { "branchId": "seal", "label": "封巷，保其余矿脉", "detail": "把塌口彻底砌死，让运营安稳，但要让底下的人自生自灭。", "stateMultiplier": 0.0, "moneyMultiplier": 1.6, "reputationGain": -6, "karmaGain": -6, "flags": ["sealed"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_silvermoon_spire_runaway_golem",
+      "displayName": "收服失控魔像",
+      "scriptRef": "QT-10",
+      "giverLabel": "塔主",
+      "scope": "city",
+      "cityId": "silvermoon_spire",
+      "professionId": "mage",
+      "dimension": "security",
+      "triggerBelow": 55,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}高塔里一尊魔像突然醒过梦来，在塔里横冲直撞。要拆、要哄、还是给它关掉灯？",
+      "speech": {
+        "accept": [
+          "{giver}（一袭长袍上还带着焦糊味）：{title}？{cityName}塔里那尊看更的魔像，不知夜里惊醒，砸了半座藏书室。{professionName}的学徒都缩在旮旯里不敢吭声。",
+          "玩家：魔像也会做噩梦？",
+          "塔主：它会。给塔守了百年更，梦里全是我们这些熬夜抽乾书的人。"
+        ],
+        "deliver": {
+          "defuse": "{giver}（亲手解下魔像胸口的石符，长出一口气）：摘下符，它就睡回百年那位老僕。{cityName}的塔，今夜总算止了震。",
+          "smash": "{giver}（看着一地碎石，沉默良久）：拆了？拆了干净。可这塔从此少了个守夜人，往后我都不敢睡太沉。",
+          "bind": "{giver}（抚着被束住的魔像）：束住了就好。让它做个能睡安稳的看更——比拆了它，更像{professionName}的手艺。"
+        },
+        "abandon": [
+          "{giver}（拂了拂烧焦的袖口）：不拦它了？那就但愿它把整座塔砸完前，自己先醒过来。"
+        ]
+      },
+      "dialogue": [
+        "塔主（长袍上还飘着焦糊味）：{cityName}塔里那尊守夜的魔像醒了，在走廊里横冲直撞，撞塌了半座藏书楼。",
+        "塔主（指给你看墙上那道裂痕）：它是堵看更的石头，守了{professionName}一百年，如今怕是守出了心事。",
+        "玩家：会伤人不？",
+        "塔主：伤不伤人另说——它再撞塌一面墙，{cityName}的月亮就得从窟窿里照进我的书房了。"
+      ],
+      "branches": [
+        { "branchId": "defuse", "label": "摘下石符令其安睡", "detail": "不拆不砸，给它摘了符，让它睡回一口长觉。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "karmaGain": 2, "flags": ["defused"] },
+        { "branchId": "smash", "label": "带人拆了它", "detail": "路数不对就动手，拆了干净但塔从此没守夜人。", "stateMultiplier": 0.7, "moneyMultiplier": 1.2, "karmaGain": 0, "reputationGain": -2, "flags": ["smashed"] },
+        { "branchId": "bind", "label": "束住它继续看更", "detail": "给它套上符链束住，让它继续当个能安睡的看更。", "stateMultiplier": 1.0, "moneyMultiplier": 0.9, "karmaGain": 1, "flags": ["bound"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_greenwade_wolf_that_ate_lambs",
+      "displayName": "猎老害狼",
+      "scriptRef": "QT-11",
+      "giverLabel": "老猎户",
+      "scope": "city",
+      "cityId": "greenwade",
+      "professionId": "hunter",
+      "dimension": "security",
+      "triggerBelow": 55,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}林边一头老狼专挑牧民的羔羊下口，连这十年来骗它的猎人也断了烟。要猎、要诱、还是索性放过它？",
+      "speech": {
+        "accept": [
+          "{giver}（蹲在羊圈边数它的脚印）：{title}？{cityName}林里那头老灰狼，吃了半村人的羔羊，还啃坏了一个猎人的烟斗。年年有人去猎，年年空手回。",
+          "玩家：它有名字吗？",
+          "老猎户：有。{professionName}给我们看的猎物，从来不缺一个名——它叫白脚，因为那只前爪是白的。"
+        ],
+        "deliver": {
+          "hunt": "{giver}（盯着你拖回来的狼尸，良久没说话）：白脚终了。{cityName}的羊圈，今年总算能睡个安稳觉。",
+          "scare": "{giver}（看着被你惊走的灰影）：赶走了？狼不比人，赶得走。可{professionName}的后人，会记得这圈里曾住过一头白脚。",
+          "release": "{giver}（望着林尽处的灰影，把烟斗点上）：放了？狼也有它的道理，{cityName}本来就在它的狩猎场边上。"
+        },
+        "abandon": [
+          "{giver}（把烟灰磕进掌心）：不下手了？也好。狼跟人一样，都有活下去的由头，就看{professionName}认不认这个理。"
+        ]
+      },
+      "dialogue": [
+        "老猎户（蹲在羊圈边，用烟斗指着灰影没入的林边）：{cityName}林里那头白脚老狼，专挑羔羊，猎了十年没猎着。",
+        "老猎户（眯眼）：它不是凶，是活了太久的聪明。{professionName}缺的从来不是箭，是肯静下心来认它脚印的人。",
+        "玩家：它害了那么多羊？",
+        "老猎户：它只吃羔羊，不吃孩子。人猎它十年，它反手咬伤的人，都是先朝它开弓的。"
+      ],
+      "branches": [
+        { "branchId": "hunt", "label": "猎杀白脚", "detail": "了结这头老狼，给{cityName}的羊圈一个安稳。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "karmaGain": -1, "reputationGain": 2 },
+        { "branchId": "scare", "label": "赶走它", "detail": "不杀，把它惊出这片林子，让它换个地方觅食。", "stateMultiplier": 0.6, "moneyMultiplier": 0.8, "karmaGain": 1, "flags": ["scared"] },
+        { "branchId": "release", "label": "放它自去", "detail": "由着它在林边活着，羊圈看紧些就是。", "stateMultiplier": 0.2, "moneyMultiplier": 0.4, "karmaGain": 3, "flags": ["spared"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_crossroad_stolen_lockbox",
+      "displayName": "寻回失窃钱柜",
+      "scriptRef": "QT-12",
+      "giverLabel": "钱庄朝奉",
+      "scope": "city",
+      "cityId": "crossroad",
+      "professionId": "thief",
+      "dimension": "wealth",
+      "triggerBelow": 60,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}十字路口一家钱庄的钱柜被里应外合端了。要追、要认、还是要趁乱分一杯？",
+      "speech": {
+        "accept": [
+          "{giver}（在散落一地的铜券里拨弄算盘）：{title}？{cityName}十字街口的钱柜被人里应外合端了。这儿的{professionName}，敢动钱庄的从来不是生手。",
+          "玩家：柜子都偷，不怕断手？",
+          "朝奉（苦笑）：断手有人接。钱柜子上了三道锁，偷的开了两道，剩一道是我自己——你猜我夜里睡不睡得着。"
+        ],
+        "deliver": {
+          "recover": "{giver}（一屉铜券码回原样，长出一口气）：柜在，钱也在，{cityName}这家钱庄算是从鬼门关前捡了条命。",
+          "absorb": "{giver}（把亏记进坏账，抬眼看你一眼）：认亏。十字路口的人，最会的是把旧账忘在风里。",
+          "split": "{giver}（冷笑，却点了头）：钱照分。{cityName}的路口，每天都有新钱旧钱，不差这一柜。"
+        },
+        "abandon": [
+          "{giver}（把空柜子上了新锁，又上了一道）：不追了，柜子我连夜焊死。{cityName}的路口，悬着的账总得有人扛底。"
+        ]
+      },
+      "dialogue": [
+        "钱庄朝奉（在一地铜券里翻找）：{cityName}十字街口的钱柜，被人里应外合端了，开了两道锁。",
+        "钱庄朝奉（苦笑）：这儿是{professionName}的地界，敢动钱庄的，从来不是只图几两的笨贼。",
+        "玩家：报官不成？",
+        "钱庄朝奉：报官？十字路口的官，只认得钱不认得我。这账八成要自己了。"
+      ],
+      "branches": [
+        { "branchId": "recover", "label": "原样追回", "detail": "把钱柜和铜券逐份追回，钱庄保住了信誉。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "reputationGain": 2, "karmaGain": 1 },
+        { "branchId": "absorb", "label": "让钱庄认下坏账", "detail": "把亏摊进坏账，十字路口风平浪静。", "stateMultiplier": 0.5, "moneyMultiplier": 1.2, "karmaGain": -1 },
+        { "branchId": "split", "label": "与内贼分账", "detail": "咱也舀一勺，十字路口历来这么走。", "stateMultiplier": 0.0, "moneyMultiplier": 2.0, "reputationGain": -4, "karmaGain": -3, "flags": ["split"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_frostspeak_keep_watchtower_snow",
+      "displayName": "守北墙风雪夜",
+      "scriptRef": "QT-13",
+      "giverLabel": "守墙什长",
+      "scope": "city",
+      "cityId": "frostspeak_keep",
+      "professionId": "guard",
+      "dimension": "security",
+      "triggerBelow": 55,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}北墙一夜暴雪，哨岗被风雪封了门{professionName}没人肯上墙。要值守、要烧暖、还是干脆不开这班岗？",
+      "speech": {
+        "accept": [
+          "{giver}（往掌心哈着气，指头冻得发紫）：{title}？{cityName}北墙这场雪埋了半人高，{professionName}没人肯上墙。责任我担着，鞋子你自己暖。",
+          "玩家：雪夜守墙值当吗？",
+          "什长：雪夜最值当——全城都睡死的时候，能看见北边火光的就剩墙头那口哨了。"
+        ],
+        "deliver": {
+          "watch": "{giver}（在火盆边把冻僵的手伸向火苗）：一夜没闭眼，{cityName}的北墙没漏过一寸。什长记你这一夜。",
+          "warm": "{giver}（让人抬来几捆柴碳）：烧暖了？行，哨岗热乎了，{professionName}的心也就没那么冷了。",
+          "seal": "{giver}（望着被风雪封死的墙，沉默）：不开岗了。这班哨我替城墙自己站着，站到天亮。"
+        },
+        "abandon": [
+          "{giver}（看着你转身,自己还是披上毡靠向墙边）：你不来，我自己上。{cityName}的北墙，从来不等第二个人来搭班。"
+        ]
+      },
+      "dialogue": [
+        "守墙什长（指头冻得发紫，却把毡子按在你肩上）：{cityName}这场雪埋了半城，北墙那班岗要人顶上。",
+        "守墙什长（眉上结着霜）：雪夜守墙不是守死，是守一个约定——全城睡定时，城墙给{professionName}留一盏不灭的火。",
+        "玩家：风雪真有那么大？",
+        "守墙什长：大到能把月光都冻在城墙缝里。可天亮下城时，{cityName}的屋顶都是白的，只有哨位上那块地是暖的。"
+      ],
+      "branches": [
+        { "branchId": "watch", "label": "彻夜值守", "detail": "顶着风雪守满一夜，北墙不漏一寸。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "reputationGain": 2, "karmaGain": 1 },
+        { "branchId": "warm", "label": "烧暖哨岗", "detail": "索性拉几捆柴碳把哨岗烧热，人暖了才守得住。", "stateMultiplier": 0.8, "moneyMultiplier": 1.1, "karmaGain": 1 },
+        { "branchId": "seal", "label": "封岗停哨", "detail": "风雪太大，明着停一班，城墙自会扛到雪住。", "stateMultiplier": 0.3, "moneyMultiplier": 0.6, "reputationGain": -3, "karmaGain": -1, "flags": ["sealed"] }
+      ],
+      "combat": null
+    },
+    {
+      "questTypeId": "city_red_sands_desert_courier",
+      "displayName": "穿沙护送信使",
+      "scriptRef": "QT-14",
+      "giverLabel": "佣兵团长",
+      "scope": "city",
+      "cityId": "red_sands",
+      "professionId": "mercenary",
+      "dimension": "wealth",
+      "triggerBelow": 60,
+      "stateGain": { "small": 4, "medium": 8, "large": 14 },
+      "summary": "{cityName}黄沙里一条商路被沙盗断了，要护一位信使穿过驿道。要护、要绕、还是要与沙盗合伙分这趟？",
+      "speech": {
+        "accept": [
+          "{giver}（把一块脏腰牌拍在你掌心）：{title}？{cityName}那条穿沙驿道被沙盗断了，{professionName}的信使要过境。护送的钱我先付，命你自己带。",
+          "玩家：沙盗认得你的腰牌？",
+          "团长：认得，也认得狮子。可沙盗最认的，是钱——你护得越稳，他越想在沙里开一道你的口子。"
+        ],
+        "deliver": {
+          "guard": "{giver}（拍着信使的肩，向你敬了个眼神）：人送到了，{cityName}那封信也到了。这趟{professionName}，我认你。",
+          "detour": "{giver}（点头）：绕了百里不撞沙盗？稳，就是慢。{cityName}的驿道，从来不争这一夜。",
+          "split": "{giver}（面不改色地数着银）：跟沙盗分了货？{professionName}的眼里钱归钱，命归命——这趟你两样都拿到了。"
+        },
+        "abandon": [
+          "{giver}（收回腰牌，退回你掌心的灰）：人不护了，信改走水路。{cityName}的沙会替我把这话咽下去。"
+        ]
+      },
+      "dialogue": [
+        "佣兵团长（把一块沾满沙粒的腰牌拍到你面前）：{cityName}那条穿沙驿道被沙盗断了，要护一位信使过境。",
+        "佣兵团长（眯起眼望砂里的热浪）：{professionName}的道上，最难的不是活着，是活着还把信送到。",
+        "玩家：这趟钱多事险？",
+        "佣兵团长：钱先付，命自负。{cityName}的黄沙不养闲人，也不欠诚实的人一个公道。"
+      ],
+      "branches": [
+        { "branchId": "guard", "label": "一路严护勿失", "detail": "贴身护送到站，信使与信都记你一分。", "stateMultiplier": 1.0, "moneyMultiplier": 1.0, "reputationGain": 2, "karmaGain": 1 },
+        { "branchId": "detour", "label": "绕沙道远行", "detail": "多走百里避开沙盗，稳当但费时。", "stateMultiplier": 0.8, "moneyMultiplier": 1.1, "karmaGain": 1 },
+        { "branchId": "split", "label": "与沙盗合伙分货", "detail": "把信使的货分一杯换平安，赌团长看不出来。", "stateMultiplier": 0.0, "moneyMultiplier": 1.8, "reputationGain": -5, "karmaGain": -3, "flags": ["plit"] }
+      ],
+      "combat": null
     }
   ]
 }

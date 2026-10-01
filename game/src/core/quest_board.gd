@@ -38,9 +38,18 @@ static func offers(
 
 	var gap_scale: float = maxf(1.0, float(rules.get("supplyGapScale", 40)))
 	var pool: Array = []
+	# A4（D-169）：城市专属职业委托。scope=="city" 的条目只在自己的城出现（外城
+	# 不贴别家的职业告示）；它们同样走"缺口驱动供给"的规则——本城的职业维度低过
+	# 阈值才冒出来，且作为"招牌活"权重自带加成，在同缺口段里更靠前。这样既让职业
+	# 任务链跟着需求走，又不把通用委托挤下板。
+	var specialty_boost: float = maxf(0.0, float(rules.get("citySpecialtyBoost", 2.0)))
+	var specialty_city_id: String = _city_specialty_id(city_id)
 	for entry in ContentLoader.get_quest_types():
 		var quest_type: String = str(entry.get("questTypeId", ""))
 		if taken.has(quest_type):
+			continue
+		if str(entry.get("scope", "")) == "city" \
+				and str(entry.get("cityId", "")) != city_id:
 			continue
 		var dimension: String = str(entry.get("dimension", ""))
 		var trigger: int = int(entry.get("triggerBelow", 0))
@@ -49,6 +58,9 @@ static func offers(
 			continue
 		var gap: float = float(trigger - value)
 		var weight: float = 1.0 + gap / gap_scale + _repeat_boost(world, city_id, quest_type)
+		if str(entry.get("scope", "")) == "city" \
+				and str(entry.get("professionId", "")) == specialty_city_id:
+			weight += specialty_boost
 		pool.append({
 			"entry": entry,
 			"typeId": quest_type,
@@ -165,3 +177,15 @@ static func _city_salt(city_id: String) -> int:
 	for i in range(city_id.length()):
 		salt = ((salt ^ city_id.unicode_at(i)) * 16777619) & 0xFFFFFFFF
 	return salt
+
+
+## 该城市的专属职业 id（professions.json 的 citySpecialty），读不到返回 ""。
+## A4（D-169）给本城的"职业招牌委托"加权，靠它把 Board 里那条被我们标成
+## scope=="city" + professionId 的委托认出来。玩家的职业这一世没有——这是
+## 「城市职能原型反哺职业」那一侧（每城建谁家职业的招牌），不下放到玩家身上。
+static func _city_specialty_id(city_id: String) -> String:
+	var prof_cfg: Dictionary = ContentLoader.get_profession_config()
+	var mapping: Variant = prof_cfg.get("citySpecialty", {})
+	if not (mapping is Dictionary):
+		return ""
+	return str((mapping as Dictionary).get(city_id, ""))

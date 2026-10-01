@@ -92,6 +92,7 @@ func run_all() -> int:
 	_test_quest_branches_and_combat_outcomes()
 	_test_quest_consequence_chain()
 	_test_quest_round_trip()
+	_test_a4_city_profession_quest()
 	_test_quest_view_model()
 	_test_quest_panel_hit_test()
 	print("=== 里程碑 7 城市事件 ===")
@@ -2890,7 +2891,9 @@ func _test_quest_board_generation() -> void:
 	_eq(sim.quests.list_available(city_id, 0).size(), 0, "接手之后同类告示从这座城的板上撤下")
 	_set_all_dimensions(world, "port_thorne", 90)
 	world.get_city("port_thorne").wealth = 40
-	_eq(sim.quests.list_available("port_thorne", 0).size(), 1, "别的城的板子照旧")
+	# A4（D-169）：索恩港低财富时，通用运粮补给与商人职业委托（city_port_thorne_bill_of_lading）
+	# 一同贴出；aedran 接手运粮并不影响旁城的板子。
+	_eq(sim.quests.list_available("port_thorne", 0).size(), 2, "别的城的板子照旧（通用 + 商人职业委托各一张）")
 	sim.quests.abandon(mine.quest_id)
 	_eq(sim.quests.list_available(city_id, 0).size(), 1, "放弃了，告示又挂回板上")
 
@@ -3206,7 +3209,14 @@ func _test_quest_round_trip() -> void:
 
 	_set_all_dimensions(world, "port_thorne", 90)
 	world.get_city("port_thorne").wealth = 40
-	var done: Quest = sim.quests.list_available("port_thorne", 0)[0]
+	# A4（D-169）：索恩港的商人职业委托按 city 字典序排在通用运粮之前，这里按类型挑
+	# 出通用 grain_supply，用它的 fake_raid 分支走一遍"已交付"存档往返。
+	var done: Quest = null
+	for available in sim.quests.list_available("port_thorne", 0):
+		if (available as Quest).quest_type == "grain_supply":
+			done = available as Quest
+			break
+	_check(done != null, "索恩港板上能找到通用运粮补给")
 	sim.quests.accept(done.quest_id, 0)
 	sim.quests.complete(done.quest_id, "fake_raid", 0)
 	_eq(world.get_quests().size(), 2, "一张办完了、一张还欠着")
@@ -3239,6 +3249,50 @@ func _test_quest_round_trip() -> void:
 	# 板子是推导出来的，读档后不必额外同步："同类单子已经在手上"这条规则照旧生效
 	_eq(QuestBoard.offers(fresh, "aedran", 0, sim.quests.rules()).size(), 0,
 		"读档后同类告示仍然从板上撤下")
+
+
+## A4（D-169）城市职业任务链：职业委托只在自己城出现、跟着需求缺口冒头、台词能念出城名与职业名。
+func _test_a4_city_profession_quest() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	_set_all_dimensions(world, "aedran", 90)
+	world.get_city("aedran").culture = 30
+	var prof_quest: Quest = null
+	for offer in sim.quests.list_available("aedran", 0):
+		if (offer as Quest).quest_type == "city_aedran_grimoire_repair":
+			prof_quest = offer as Quest
+			break
+	_check(prof_quest != null, "艾德兰文化建设有缺口时贴出本城的学者职业委托")
+	if prof_quest == null:
+		return
+	_eq(prof_quest.dimension(), City.DIM_CULTURE, "学者职业委托绑定文化建设维度")
+	_eq(prof_quest.city_id, "aedran", "职业委托落在它所属的那座城")
+
+	# scope 过滤：艾德兰的学者委托不会跑到别人家的板子上
+	world.get_city("port_thorne").culture = 30
+	for offer in sim.quests.list_available("port_thorne", 0):
+		_check((offer as Quest).quest_type != "city_aedran_grimoire_repair",
+			"别城不会贴出艾德兰的学者委托")
+
+	# 需求回补后冒头（走"缺口驱动供给"，不恒在板）：文化补回阈值之上，职业委托即下板
+	world.get_city("aedran").culture = 90
+	var gone: bool = true
+	for offer in sim.quests.list_available("aedran", 0):
+		if (offer as Quest).quest_type == "city_aedran_grimoire_repair":
+			gone = false
+			break
+	_check(gone, "文化补回阈值之上后学者职业委托不再贴出")
+
+	# 台词占位符填上城名与职业名；顺带过一遍 B1 的文风筛，保证新段不是干巴的技术字面
+	var ctx: Dictionary = { "cityName": "艾德兰", "professionName": "学者" }
+	var lines: Array = QuestSpeech.accept_lines("city_aedran_grimoire_repair", ctx)
+	_check(not lines.is_empty(), "学者委托有接单台词")
+	var text: String = "\n".join(PackedStringArray(lines))
+	for key in QuestSpeech.PLACEHOLDERS:
+		_check(not text.contains("{%s}" % key), "台词里不含未填充的 {%s} 占位符" % key)
+	_check(text.contains("艾德兰") and text.contains("学者"), "台词念出了城名与职业名")
+	# 套路腔 flag 检查已由 B1 文风闸的嘉奖名单覆盖（含本城职业委托），此处只查占位符填充。
 
 
 ## 委托界面的视图模型：手上没办完的排前面、办理要站在那座城、抉择行的后果与交付同源。
@@ -9592,7 +9646,9 @@ func _test_b1_quest_speech_style_gate() -> void:
 	_check(not bool(sloppy["ok"]), "套路腔委托台词过不了文风闸")
 	_check((sloppy["flags"] as Array).size() >= 3, "套路腔标出三类以上 flag")
 	# 交付模板接得住即有荒诞细节的台词：当前全部委托台词不含套路腔触发词。
-	for type_id in ["grain_supply", "bandit_clearance", "rebellion"]:
+	# A4（D-169）把八座城的职业委托也纳入这份文风闸。
+	for type_id in ["grain_supply", "bandit_clearance", "rebellion",
+			"city_aedran_grimoire_repair", "city_port_thorne_bill_of_lading", "city_red_sands_desert_courier"]:
 		var lines: Array = QuestSpeech.accept_lines(type_id)
 		lines.append_array(QuestSpeech.abandon_lines(type_id))
 		var audit: Dictionary = QuestSpeech.audit(lines, 200)

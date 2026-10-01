@@ -1036,10 +1036,17 @@ func _quest_accept(quest_id: String) -> void:
 func _quest_speech_ctx(quest: Quest) -> Dictionary:
 	if quest == null:
 		return {}
+	var prof_cfg: Dictionary = ContentLoader.get_profession_config()
+	var specialty: String = str((prof_cfg.get("citySpecialty", {}) as Dictionary).get(quest.city_id, ""))
+	var profession_name: String = ""
+	if not specialty.is_empty():
+		profession_name = str(ContentLoader.get_profession(specialty).get("displayName", specialty))
 	return {
 		"giver": quest.giver_label,
 		"title": str(ContentLoader.get_quest_type(quest.quest_type).get("displayName", "")),
 		"tier": str(ContentLoader.get_quest_tier(quest.tier_id).get("displayName", "")),
+		"cityName": str(_table("cityNames").get(quest.city_id, quest.city_id)),
+		"professionName": profession_name,
 	}
 
 
