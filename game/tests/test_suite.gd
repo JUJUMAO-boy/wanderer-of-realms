@@ -304,6 +304,10 @@ func run_all() -> int:
 	_test_c2_rumor_trace_stages()
 	_test_c2_rumor_trace_deterministic()
 	_test_c2_rumor_trace_into_event_view()
+	print("=== C3 地壳变动下的生意连锁（第三阶段 / D-174）===")
+	_test_c3_tectonic_shocks()
+	_test_c3_trade_price_factor()
+	_test_c3_route_and_building_yield()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -4317,11 +4321,11 @@ func _trade_lookups(world: WorldState) -> Dictionary:
 func _trade_view(
 	world: WorldState, sim: WorldSim, city_id: String, here_city_id: String,
 	channel: String = Economy.CHANNEL_SHOP, side: String = TradeViewModel.SIDE_BUY,
-	cursor: int = 0, pane: String = TradeViewModel.PANE_TRADE
+	cursor: int = 0, pane: String = TradeViewModel.PANE_TRADE, era: int = 0
 ) -> Dictionary:
 	return TradeViewModel.build(
 		world, sim.economy, _trade_lookups(world), city_id, here_city_id,
-		channel, side, cursor, pane
+		channel, side, cursor, pane, era
 	)
 
 
@@ -9848,3 +9852,179 @@ func _test_c2_rumor_trace_into_event_view() -> void:
 		world, world.get_events(), "aedran", "aedran", names, 0
 	)
 	_check(not plain.is_empty(), "不带谣言状态仍正常构建")
+
+
+# --- 第三阶段 C3：地壳变动下的生意连锁（D-174）---
+
+## 找一个会受扰的纪元：从 e=1 起逐纪元用 severity_for 探，命中即返。
+## 扰动概率 0.3/纪元，这么扫几乎必然在很小的 e 上命中（世界种子固定，测试确定）。
+func _c3_disrupted_era(te: TectonicEconomy, seed: int, city_id: String, ceiling: int = 60) -> int:
+	for e in range(1, ceiling + 1):
+		if te.is_disrupted(te.severity_for(seed, e, city_id)):
+			return e
+	return -1
+
+
+## 扰动的形状：纯派生、不落盘、纪元 0 恒不受扰、倍率按下标取档。
+func _test_c3_tectonic_shocks() -> void:
+	var cfg: Dictionary = ContentLoader.get_balance_section("tectonicEconomy")
+	var te := TectonicEconomy.new(cfg)
+	_check(not cfg.is_empty(), "balance 里配了 tectonicEconomy 段")
+	var seed: int = 20260915
+	# 纪元 0（原初 / 第 1 年）一律不受扰：新开局零行为变化。
+	for cid in ["hammerhold", "port_thorne", "aedran"]:
+		_eq(te.severity_for(seed, 0, cid), 0, "纪元 0 的%s不受扰" % cid)
+		_check(absf(te.price_factor(0) - 1.0) < 1e-6, "纪元 0 价不变")
+	# 找出一个受扰纪元，验证 severity 落在 1..severityMax、两档倍率与档位成套。
+	var era: int = _c3_disrupted_era(te, seed, "port_thorne")
+	_check(era > 0, "固定种子能找到一个受扰纪元（得 %d）" % era)
+	if era <= 0:
+		return
+	var sev: int = te.severity_for(seed, era, "port_thorne")
+	_check(sev >= 1, "受扰纪元 severity 至少 1")
+	_check(sev <= int(cfg.get("severityMax", 2)), "severity 不越上限")
+	_check(absf(te.price_factor(0) - 1.0) < 1e-6, "倍率表下标 0 恒为 1.0")
+	_check(te.price_factor(sev) > 1.0, "受扰城价倍率 > 1")
+	_check(te.yield_factor(sev) < 1.0, "受扰城经营倍率 < 1")
+	# 确定性：同一 (种子,纪元,城) 两次求值同答案；不同城/纪元不保证相同，但同参数必同。
+	_eq(te.severity_for(seed, era, "port_thorne"), sev, "同参数二次求值确定")
+	_eq(te.severity_for(seed, era, "port_thorne"), sev, "同参数三次求值仍确定")
+	# 纪元换算与 main 的所见纪元对齐：第 1 年（0..11 月）为 era 0。
+	_eq(TectonicEconomy.era_for_month(0, 12), 0, "月 0→纪元 0")
+	_eq(TectonicEconomy.era_for_month(5, 12), 0, "第 1 年内仍纪元 0")
+	_eq(TectonicEconomy.era_for_month(12, 12), 1, "第 2 年→纪元 1")
+	_eq(TectonicEconomy.era_for_month(24, 12), 2, "第 3 年→纪元 2")
+
+
+## 货价连锁（I-12/I-13）：受扰城买/卖价同乘扰幅，界面报的价与成交落账一致。
+func _test_c3_trade_price_factor() -> void:
+	var built: Dictionary = _new_sim(false)
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	_set_all_dimensions(world, "port_thorne", 50)
+	var te := TectonicEconomy.new(ContentLoader.get_balance_section("tectonicEconomy"))
+	var seed: int = int(world.world_seed)
+	var era: int = _c3_disrupted_era(te, seed, "port_thorne")
+	_check(era > 0, "索恩港在某纪元受扰（得 %d）" % era)
+	if era <= 0:
+		return
+	var sev: int = te.severity_for(seed, era, "port_thorne")
+	var pf: float = te.price_factor(sev)
+	_check(absf(pf - sim.economy.tectonic_price_factor(world, era, "port_thorne")) < 1e-6,
+		"economy 对同一城同一纪元给出同一因子")
+
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-c3"
+	world.avatar = avatar
+	avatar.money = 10_000_000
+	# 纪元 0（默认）按原价成交；受扰纪元按扰幅涨价。
+	var q: Dictionary = sim.economy.get_price(world, "port_thorne", "weapon_longsword_common")
+	var base: int = int(q["unitPrice"])
+	var expected: int = maxi(1, int(round(float(base) * pf)))
+	avatar.money = 10_000_000
+	var bought: Dictionary = sim.economy.execute_trade(
+		world, "port_thorne", "weapon_longsword_common", Economy.SIDE_BUY,
+		Economy.CHANNEL_SHOP, "", era
+	)
+	_check(bool(bought.get("ok", false)), "受扰城买卖做成：" + str(bought.get("error", "")))
+	_eq(avatar.money, 10_000_000 - expected, "受扰城按扰幅付款")
+
+	# 视图模型与成交同口径：era 传进去价目跟着放大，且详情多了「地壳变动」一行。
+	var view_e: Dictionary = _trade_view(world, sim, "port_thorne", "port_thorne",
+		Economy.CHANNEL_SHOP, TradeViewModel.SIDE_BUY, 0, TradeViewModel.PANE_TRADE, era)
+	_check(bool(view_e.get("atCity", false)), "人在受扰城")
+	var ls_e: Dictionary = {}
+	for r in view_e["rows"]:
+		if str(r.get("templateId", "")) == "weapon_longsword_common":
+			ls_e = r
+			break
+	_check(not ls_e.is_empty(), "受扰货架上有长刀行")
+	_eq(int(ls_e.get("price", 0)), expected, "视图模型报受扰后的价")
+	var sel_e: Dictionary = view_e.get("selected", {})
+	var has_factor := false
+	for fr in (sel_e.get("factorRows", []) as Array):
+		if str(fr.get("label", "")) == "地壳变动":
+			has_factor = true
+			var raw: float = float(str(fr.get("value", "×0")).trim_prefix("×"))
+			_check(absf(raw - pf) < 1e-6, "详情摊开扰幅因子")
+	_check(has_factor, "详情把地壳变动因子列出来")
+	# 不带 era（原初）时保持不变：长刀行价与因子表都退回普通。
+	var view_0: Dictionary = _trade_view(world, sim, "port_thorne", "port_thorne")
+	var ls_0: Dictionary = {}
+	for r in view_0["rows"]:
+		if str(r.get("templateId", "")) == "weapon_longsword_common":
+			ls_0 = r
+			break
+	_eq(int(ls_0.get("price", 0)), base, "不带 era 报原价")
+	var sel_0: Dictionary = view_0.get("selected", {})
+	_eq((sel_0.get("factorRows", []) as Array).size(), 6, "不带 era 不出现地壳变动行")
+
+
+## 商路与建筑经营的连锁（I-14 / D-69~D-72）：受扰城的航线整条中断，经营折减。
+func _test_c3_route_and_building_yield() -> void:
+	var built: Dictionary = _new_sim(true)
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var te := TectonicEconomy.new(ContentLoader.get_balance_section("tectonicEconomy"))
+	var seed: int = int(world.world_seed)
+
+	# 找一个既挂有（非传奇）航线、又会在某纪元受扰的城，作为观察对象。
+	var target: String = ""
+	var era: int = -1
+	for cid in world.get_city_ids():
+		var has_route := false
+		for r in world.get_routes_sorted():
+			if (r.city_a == cid or r.city_b == cid) and not r.is_legendary():
+				has_route = true
+				break
+		if not has_route:
+			continue
+		var e: int = _c3_disrupted_era(te, seed, str(cid))
+		if e > 0:
+			target = str(cid)
+			era = e
+			break
+	_check(not target.is_empty(), "找到一座既有航线又受扰的城")
+	if target.is_empty() or era < 0:
+		return
+
+	# 商路：结算到 era==era 的年边界，该城航线应出现在 haltedRoutes（本月断航）。
+	var rep: Dictionary = sim.settle_month(12 * era)
+	var halted_target := false
+	for entry in rep.get("haltedRoutes", []):
+		if str(entry.get("cityId", "")) == target:
+			halted_target = true
+			break
+	_check(halted_target, "%s 受扰当月的航线被中断（地壳断航）" % target)
+
+	# 建筑经营：同一座城的建筑经营 milli，受扰月严格小于原初月（yield<1）。
+	# monthly_contribution 与维度无关，因此两次结算只差在扰幅这一条上。
+	var era0: Dictionary = _new_sim(false)
+	var s0: WorldSim = era0["sim"]
+	var w0: WorldState = era0["world"]
+	var milli0: int = _c3_building_milli(s0, str(w0.get_city(target).city_id), 1)
+	var eraE: Dictionary = _new_sim(false)
+	var sE: WorldSim = eraE["sim"]
+	var wE: WorldState = eraE["world"]
+	var milliE: int = _c3_building_milli(sE, str(wE.get_city(target).city_id), 12 * era)
+	_check(milli0 > 0, "%s 有建筑经营产出（得 %d）" % [target, milli0])
+	if milli0 > 0:
+		_check(milliE < milli0, "受扰月经营折减（%d < %d）" % [milliE, milli0])
+		var expect: float = te.yield_factor(te.severity_for(seed, era, target))
+		var ratio: float = float(milliE) / float(milli0)
+		_check(absf(ratio - expect) < 0.051,
+			"折减幅度与扰频倍率对得上（%.2f ≈ %.2f）" % [ratio, expect])
+
+
+## 结算到指定月并返回某个城就本月建筑经营的总 milli（wealth+culture 等合计）。
+## 只算 C-3 关心的建筑贡献；route 收益等不从这取数。
+func _c3_building_milli(sim: WorldSim, city_id: String, month: int) -> int:
+	var rep: Dictionary = sim.settle_month(month)
+	var total: int = 0
+	var slots: Dictionary = rep.get("cityDeltas", {}).get(city_id, {})
+	for dim in slots:
+		var slot: Dictionary = slots[dim]
+		for item in (slot.get("items", []) as Array):
+			if str(item.get("key", "")).begins_with("building-"):
+				total += int(item.get("milli", 0))
+	return total

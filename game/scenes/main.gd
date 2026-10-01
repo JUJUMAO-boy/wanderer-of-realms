@@ -1636,7 +1636,8 @@ func _refresh_trade() -> void:
 		_trade_channel,
 		_trade_side,
 		_trade_cursor,
-		_trade_pane
+		_trade_pane,
+		_current_seen_era()
 	)
 	_trade_cursor = int(_trade_view.get("cursor", 0))
 	# 换了城市或渠道之后，原来那条渠道可能不成立（黑市只存在于少数几座城），
@@ -1713,7 +1714,8 @@ func _trade_confirm() -> void:
 		str(row.get("templateId", "")),
 		_trade_side,
 		_trade_channel,
-		str(row.get("instanceId", ""))
+		str(row.get("instanceId", "")),
+		_current_seen_era()
 	)
 	if not bool(result.get("ok", false)):
 		_status.text = "做不成：%s" % str(result.get("error", ""))
@@ -3242,7 +3244,8 @@ func _current_seen_seed() -> int:
 func _tectonic_shift() -> void:
 	_seen_bucket = 0
 	_rebuild_seen()
-	_note_events(["地壳变动：整片大地的遗构与怪物窝点被震得换了位置，旧日的坑被翻出来重长。"])
+	_note_events(["地壳变动：整片大地的遗构与怪物窝点被震得换了位置，旧日的坑被翻出来重长。"
+		+ "受震的城生意也瞒不住：货价被抬、航路时断、铺面经营跟着减产。"])
 
 
 ## 重建大地图可见实体图纸（M-C）。每会话一次；窝点存活态随图纸重建而重置——

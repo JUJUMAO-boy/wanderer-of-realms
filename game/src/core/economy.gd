@@ -82,6 +82,8 @@ var _dragonforged_city: String = ""
 ## 实例层规则（词缀、强化、耐久）。买卖的价目要算得出"这件货带的词缀值多少铜"，
 ## 所以 Economy 要能读到它——与它读 ContentLoader.get_item 是同一条依赖。
 var _items: ItemInstance = null
+## 地壳变动的生意连锁（C-3，D-174）：受扰城买/卖价上浮的因子源。纯派生、不落盘。
+var _tectonic: TectonicEconomy = null
 
 
 ## cfg 取 balance 整段（贸易与交易两块都从这里读）。直接给 trade 段也能跑：
@@ -123,6 +125,7 @@ func _init(cfg: Dictionary = {}) -> void:
 	_black_rarity_bonus = int(econ.get("blackMarketRarityBonus", 15))
 	_rarity_gates = _dict_of(econ.get("rarityMinDevelopment", {}))
 	_dragonforged_city = str(econ.get("dragonforgedCityId", ""))
+	_tectonic = TectonicEconomy.new(cfg.get("tectonicEconomy", {}))
 
 
 # --- I-14 贸易结算 ---
@@ -212,6 +215,19 @@ func settle_routes(
 ## 涨价规则一变就会分叉。
 func item_rules() -> ItemInstance:
 	return _items
+
+
+## 地壳变动的货价因子（C-3）：受扰城买/卖价上浮。纯派生、只读，供视图模型在
+## 渲染价目时与 execute_trade 用同一个答案（否则界面报的价和成交价对不上）。
+## era <= 0（原初纪元）与不受扰城一律返回 1.0。
+func tectonic_price_factor(world: WorldState, era: int, city_id: String) -> float:
+	if _tectonic == null:
+		return 1.0
+	if world == null:
+		return 1.0
+	return _tectonic.price_factor(
+		_tectonic.severity_for(int(world.world_seed), era, city_id)
+	)
 
 
 ## 某城某件商品的当前买价与收价。channel 取 shop / black_market。
@@ -414,13 +430,15 @@ static func _category_rank(category: String) -> int:
 ## 决定，因此同一份存档重放同一次点击卖的是同一件。
 func execute_trade(
 	world: WorldState, city_id: String, template_id: String, side: String,
-	channel: String = CHANNEL_SHOP, instance_id: String = ""
+	channel: String = CHANNEL_SHOP, instance_id: String = "", era: int = 0
 ) -> Dictionary:
 	if side != SIDE_BUY and side != SIDE_SELL:
 		return _fail(ERROR_INVALID_ARGUMENT, "没有这种买卖方向：%s" % side)
 	var quote: Dictionary = get_price(world, city_id, template_id, channel)
 	if not quote.get("ok", false):
 		return quote
+	# 地壳变动的货价因子（C-3 / D-174）：受扰城买/卖价同乘这一档，只读派生、不落盘。
+	var price_factor: float = tectonic_price_factor(world, era, city_id)
 	if bool(quote.get("refused", false)):
 		return _fail(ERROR_PRECONDITION_FAILED, "%s 的%s不做你的生意——先把名声攒回来" % [
 			str(quote.get("cityName", "")), str(quote.get("channelLabel", ""))
@@ -430,6 +448,8 @@ func execute_trade(
 		return _fail(ERROR_PRECONDITION_FAILED, "还没有化身，做不了买卖")
 	var city: City = world.get_city(city_id)
 	var template: Dictionary = ContentLoader.get_item(template_id)
+	var quoted_unit: int = maxi(1, int(round(float(quote.get("unitPrice", 0)) * price_factor)))
+	var quoted_sell: int = maxi(1, int(round(float(quote.get("sellPrice", 0)) * price_factor)))
 
 	var result: Dictionary = {
 		"ok": true,
@@ -441,14 +461,14 @@ func execute_trade(
 		"channelLabel": channel_label(channel),
 		"templateId": template_id,
 		"displayName": str(quote.get("displayName", template_id)),
-		"unitPrice": int(quote.get("unitPrice", 0)),
-		"sellPrice": int(quote.get("sellPrice", 0)),
+		"unitPrice": quoted_unit,
+		"sellPrice": quoted_sell,
 	}
 
 	if side == SIDE_BUY:
 		if not is_available(city, template, channel):
 			return _fail(ERROR_NOT_FOUND, "%s 没有这件货" % str(quote.get("cityName", "")))
-		var price: int = int(quote.get("unitPrice", 0))
+		var price: int = quoted_unit
 		if avatar.money < price:
 			return _fail(ERROR_PRECONDITION_FAILED, "钱不够：%s 要 %d 铜，你只有 %d 铜" % [
 				str(quote.get("displayName", "")), price, avatar.money
@@ -475,7 +495,7 @@ func execute_trade(
 	var taken: Dictionary = _take_from_inventory(avatar, template_id, instance_id)
 	if taken.is_empty():
 		return _fail(ERROR_NOT_FOUND, "背包里没有这件货：%s" % str(quote.get("displayName", "")))
-	var gained: int = int(quote.get("sellPrice", 0))
+	var gained: int = quoted_sell
 	avatar.money += gained
 	result["money"] = gained
 	result["moneyAfter"] = avatar.money

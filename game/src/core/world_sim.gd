@@ -62,6 +62,9 @@ var _npc_cfg: Dictionary = {}
 var _months_per_year: int = 12
 ## 建筑数值段（balance.buildings）。供等级派生/贡献/投资取数。
 var _building_bal: Dictionary = {}
+## 地壳变动的生意连锁（C-3 / D-174）：受扰城商路断航、建筑经营与投资收益减产
+## 的因子源。纯派生、不落盘，纪元由当月累计月数换算（与 main 的所见纪元对齐）。
+var _tectonic: TectonicEconomy = null
 ## 建筑配置索引：buildingId -> cfg（来自 buildings.json，经 load_buildings 注入）。
 var _buildings_cfg: Dictionary = {}
 ## 按城的建筑配置：cityId -> [cfg]，每城按 buildingId 排序，保证结算确定性。
@@ -92,6 +95,7 @@ func _init(p_world: WorldState, balance: Dictionary, profession_cfg: Dictionary,
 	_player_smuggling_income = int(_trade.get("playerSmugglingIncomeCopper", 300))
 	_legendary_player_income = int(_trade.get("legendaryPlayerIncomeCopper", 800))
 	_building_bal = balance.get("buildings", {})
+	_tectonic = TectonicEconomy.new(balance.get("tectonicEconomy", {}))
 
 
 ## 从 ContentLoader 取配置构造。逻辑类不继承 Node，但配置来源可以是 autoload。
@@ -237,13 +241,20 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 
 	# 封港中的城市：这些城相关的航线本月收益整条中断（不注销，解封即恢复）。
 	# 集合取自上面刚跑完的触发与了结，所以"这个月刚封上的港口"当月就断航。
-	var settlements: Dictionary = economy.settle_routes(
-		world, month, world.rng, events.blockade_cities()
-	)
+	# C-3 地壳变动（D-174）：受扰城一律按"航运中断"处理，并入同一张 halted——货价
+	# 上浮、商路断航、经营减产三件事共用同一份纯派生的扰动，碰不碰随机流都一样确定。
+	var tectonic_era: int = TectonicEconomy.era_for_month(month, _months_per_year)
+	var halted: Dictionary = events.blockade_cities().duplicate()
+	for cid in world.get_city_ids():
+		if _tectonic != null and _tectonic.is_disrupted(
+			_tectonic.severity_for(int(world.world_seed), tectonic_era, str(cid))
+		):
+			halted[str(cid)] = true
+	var settlements: Dictionary = economy.settle_routes(world, month, world.rng, halted)
 	_apply_route_yields(settlements, deltas, detail)
 	# 建筑月度贡献（D-69~D-72）：折各城本月维度 milli，路子与贸易路线同源。
-	_apply_building_contributions(deltas, detail)
-	var building_income: int = _apply_player_building_income()
+	_apply_building_contributions(deltas, detail, tectonic_era)
+	var building_income: int = _apply_player_building_income(tectonic_era)
 	var confiscations: Array = settlements.get("confiscations", [])
 	for entry in confiscations:
 		notable.append(event(str(entry["cityId"]), month, EVENT_CONFISCATION,
@@ -869,13 +880,19 @@ func _apply_route_yields(settlements: Dictionary, deltas: Dictionary, collect: b
 ## 建筑月度维度贡献（D-69~D-72）：按生效等级把各城每个建筑的 dimensionBonus
 ## 折成该城某维的 milli，像贸易路线一样折进 deltas。遍历走 get_city_ids + 每城
 ## 按 buildingId 排序，保证结算顺序确定（同一份存档每次运行产出完全相同）。
-func _apply_building_contributions(deltas: Dictionary, collect: bool) -> void:
+func _apply_building_contributions(deltas: Dictionary, collect: bool, era: int = 0) -> void:
 	if _buildings_by_city.is_empty() or _building_bal.is_empty():
 		return
 	for city_id in world.get_city_ids():
 		var city: City = world.get_city(str(city_id))
 		if city == null:
 			continue
+		# C-3 地壳变动（D-174）：受扰城建筑经营减产，本城所有经营该月统一折 yieldFactor。
+		var yield_factor: float = 1.0
+		if _tectonic != null:
+			yield_factor = _tectonic.yield_factor(
+				_tectonic.severity_for(int(world.world_seed), era, str(city_id))
+			)
 		var list: Array = _buildings_by_city.get(str(city_id), [])
 		for b in list:
 			var bid: String = str(b.get("buildingId", ""))
@@ -888,7 +905,7 @@ func _apply_building_contributions(deltas: Dictionary, collect: bool) -> void:
 				continue
 			var contrib: Dictionary = CityBuildings.monthly_contribution(b, effective)
 			for dim in contrib:
-				var milli: int = int(contrib[dim])
+				var milli: int = maxi(0, int(round(float(contrib[dim]) * yield_factor)))
 				if milli <= 0:
 					continue
 				var result: Dictionary = CityEvolution.apply_milli(
@@ -905,19 +922,27 @@ func _apply_building_contributions(deltas: Dictionary, collect: bool) -> void:
 
 ## 玩家建筑投资的月收益（铜）。只算玩家亲手投的部分——城市自然等级不白给玩家
 ## 钱，否则没投过钱的城也会按月发钱，玩家收益与经营行为就脱钩了。投资即时结清
-## 已扣 avatar.money，这里只是每月返钱，并入 avatar.money。
-func _apply_player_building_income() -> int:
+## 已扣 avatar.money，这里只是每月返钱，并入 avatar.money。受扰城按月折 yieldFactor。
+func _apply_player_building_income(era: int = 0) -> int:
 	var avatar: PlayerAvatar = world.avatar
 	if avatar == null or _building_bal.is_empty():
 		return 0
 	var total: int = 0
 	for city_id in world.get_city_ids():
+		var yield_factor: float = 1.0
+		if _tectonic != null:
+			yield_factor = _tectonic.yield_factor(
+				_tectonic.severity_for(int(world.world_seed), era, str(city_id))
+			)
 		var invested_map: Dictionary = world.building_investments.get(str(city_id), {})
 		for bid in invested_map:
 			var invested: int = int(invested_map[bid])
 			if invested <= 0:
 				continue
-			total += CityBuildings.player_income(invested, _building_bal)
+			var gained: int = maxi(0, int(round(
+				float(CityBuildings.player_income(invested, _building_bal)) * yield_factor
+			)))
+			total += gained
 	if total > 0:
 		avatar.money += total
 	return total

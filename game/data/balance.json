@@ -36,6 +36,13 @@
       "outcast": -5
     }
   },
+  "tectonicEconomy": {
+    "_comment": "地壳变动下的生意连锁（C-3，D-174）：M30 地壳变动不只换图，还连锁改经济轴。受扰城的 severity 由 (世界种子⊕纪元⊕城) 确定性派生（TectonicEconomy），不落盘。severity 0 = 不受扰（第 1 年恒为 0，新开局零行为变化）。倍率按下标取档：priceFactor 放大买/卖价（货价上浮），yieldFactor 折减建筑经营与投资收益（生意难做）。",
+    "severityMax": 2,
+    "disruptionChance": 0.3,
+    "priceFactorBySeverity": [1.0, 1.25, 1.5],
+    "yieldFactorBySeverity": [1.0, 0.85, 0.7]
+  },
   "training": {
     "_comment": "训练师双币种（M-B 剩余，D-135）：受训花铜币 + 从灵魂刨一丝业力（karma 递减，不透透支死就还能练）。校验用 PlayerAvatar 的 karma 下限，因此 karmaCost 别大到一次扣穿 -100。",
     "copper": 200,

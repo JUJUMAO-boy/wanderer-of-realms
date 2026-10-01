@@ -53,7 +53,8 @@ static func build(
 	channel: String,
 	side: String,
 	cursor: int,
-	pane: String = PANE_TRADE
+	pane: String = PANE_TRADE,
+	era: int = 0
 ) -> Dictionary:
 	var city: City = null if world == null else world.get_city(city_id)
 	if city == null or economy == null:
@@ -62,6 +63,10 @@ static func build(
 		channel = Economy.CHANNEL_SHOP
 	if side != SIDE_SELL:
 		side = SIDE_BUY
+	# 地壳变动的货价因子（C-3 / D-174）：受扰城的买/卖价同乘这一档。era <= 0
+	# （原初纪元）或不受扰城恒为 1.0，且只作用于买卖页——铁匠铺的增强/修理是
+	# 就地工匠活，不进这条市场价格轴。
+	var price_factor: float = economy.tectonic_price_factor(world, era, city_id)
 
 	var templates: Dictionary = _lookup(lookups, "itemTemplates")
 	var avatar: PlayerAvatar = world.avatar
@@ -81,15 +86,20 @@ static func build(
 	var rows: Array = []
 	if side == SIDE_BUY:
 		for quote in economy.list_stock(world, city_id, channel):
-			rows.append(_stock_row(quote, templates, money, at_city))
+			rows.append(_stock_row(quote, templates, money, at_city, price_factor))
 	else:
-		rows.append_array(_held_rows(world, economy, city_id, channel, templates, avatar, at_city))
+		rows.append_array(_held_rows(world, economy, city_id, channel, templates, avatar, at_city, price_factor))
 
 	cursor = clampi(cursor, 0, maxi(0, rows.size() - 1))
 	var selected: Dictionary = rows[cursor] if not rows.is_empty() else {}
 	var quote: Dictionary = economy.get_price(
 		world, city_id, _quote_template_id(selected), channel
 	)
+	if quote.get("ok", false) and price_factor != 1.0:
+		# 价目表按列表同口径缩放：货架上那一行与详情里的 unit/sell 是同一乘数，
+		# 否则"界面上标的价"和"成交落账的价"会对不上。倍率 > 1 才进详情因子表。
+		quote["unitPrice"] = maxi(1, int(round(float(quote["unitPrice"]) * price_factor)))
+		quote["sellPrice"] = maxi(1, int(round(float(quote["sellPrice"]) * price_factor)))
 	if not quote.get("ok", false):
 		quote = {}
 
@@ -130,7 +140,7 @@ static func build(
 		"rows": rows,
 		"rowCount": rows.size(),
 		"cursor": cursor,
-		"selected": _detail(selected, quote, templates, side),
+		"selected": _detail(selected, quote, templates, side, price_factor),
 		"money": money,
 		"moneyLabel": AvatarViewModel.money_label(money),
 		"moneyAfterLabel": AvatarViewModel.money_label(money_after),
@@ -154,11 +164,12 @@ static func _quote_template_id(row: Dictionary) -> String:
 
 ## 货架上的一行。
 static func _stock_row(
-	quote: Dictionary, templates: Dictionary, money: int, at_city: bool
+	quote: Dictionary, templates: Dictionary, money: int, at_city: bool,
+	price_factor: float
 ) -> Dictionary:
 	var template_id: String = str(quote.get("templateId", ""))
 	var template: Dictionary = _template(templates, template_id)
-	var price: int = int(quote.get("unitPrice", 0))
+	var price: int = maxi(1, int(round(float(quote.get("unitPrice", 0)) * price_factor)))
 	var affordable: bool = money >= price
 	return {
 		"kind": ROW_KIND_STOCK,
@@ -189,7 +200,8 @@ static func _stock_row(
 ## 显式拦截，为的是给出"先把它脱下"这句话（D-53）。
 static func _held_rows(
 	world: WorldState, economy: Economy, city_id: String, channel: String,
-	templates: Dictionary, avatar: PlayerAvatar, at_city: bool
+	templates: Dictionary, avatar: PlayerAvatar, at_city: bool,
+	price_factor: float
 ) -> Array:
 	if avatar == null:
 		return []
@@ -209,7 +221,9 @@ static func _held_rows(
 		row["instanceId"] = str(instance_id)
 		row["templateId"] = template_id
 		row["categoryLabel"] = _category(template)
-		row["price"] = int(quote.get("sellPrice", 0)) if quote.get("ok", false) else 0
+		row["price"] = maxi(1, int(round(
+			float(quote.get("sellPrice", 0)) * price_factor
+		))) if quote.get("ok", false) else 0
 		row["priceText"] = AvatarViewModel.money_label(int(row["price"]))
 		row["enabled"] = at_city
 		row["blockedReason"] = "要在这座城里才卖得掉。"
@@ -541,7 +555,8 @@ static func _percent(bp: int) -> String:
 
 ## 右列：这件货的价目。逐因子列出来，玩家才看得出"贵在哪"。
 static func _detail(
-	selected: Dictionary, quote: Dictionary, templates: Dictionary, side: String
+	selected: Dictionary, quote: Dictionary, templates: Dictionary, side: String,
+	price_factor: float = 1.0
 ) -> Dictionary:
 	if selected.is_empty():
 		return {}
@@ -567,6 +582,9 @@ static func _detail(
 			{"label": "渠道", "value": "×%.2f" % float(quote.get("channelBuyFactor", 1.0)),
 				"hint": str(quote.get("channelLabel", ""))},
 		]
+	if price_factor != 1.0:
+		factors.append({"label": "地壳变动", "value": "×%.2f" % price_factor,
+			"hint": "受扰城买贵卖平，生意被大地震抬了价"})
 	return {
 		"templateId": template_id,
 		"label": str(selected.get("label", template_id)),
