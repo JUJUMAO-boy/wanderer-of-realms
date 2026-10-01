@@ -86,6 +86,11 @@ var hire_seq: int = 0
 ## 这里只存生命周期状态，随世界落盘（D-142）。名册永远满 `WandererPool.capacity()` 条，空缺即补。
 var wanderer_roster: Array = []
 
+## 冒险者「个人麻烦」的化解标记（M33 C）：键 `"{slot}-{gen}"` → true，随世界落盘。
+## 化解绑在 `(slot,gen)` 上——换了代新人是新身份，麻烦是新人自己的，上一代的化解作废
+## （与 M31 名册生命周期同一把尺，D-149）。
+var wanderer_troubles_resolved: Dictionary = {}
+
 ## 补满冒险者名册到满额（空缺即补，M-E）。首次建新世界与读档后由世界模拟/主场景调用；
 ## 之后的名额流转（送医/离开/接替）随 `WandererPool.advance` 按月推进。
 func ensure_wanderer_roster(month: int) -> void:
@@ -529,6 +534,7 @@ func to_dict() -> Dictionary:
 		"activeHires": hire_out,
 		"hireSeq": hire_seq,
 		"wandererRoster": _wanderer_out(),
+		"wandererTroublesResolved": wanderer_troubles_resolved.duplicate(),
 		"playerAvatar": avatar.to_dict() if avatar != null else {},
 	}
 
@@ -707,3 +713,9 @@ func apply_dict(data: Dictionary) -> void:
 			"status": str(e.get("status", WandererPool.STATUS_ROAMING)),
 			"hospitalUntil": int(e.get("hospitalUntil", 0)),
 		})
+	# 冒险者麻烦化解标记（M33 C）：旧档没有该键（迁移零步），空字典即可。
+	wanderer_troubles_resolved.clear()
+	var resolved_in: Dictionary = data.get("wandererTroublesResolved", {}) as Dictionary
+	for key in resolved_in:
+		if str(key).contains("-"):
+			wanderer_troubles_resolved[str(key)] = true

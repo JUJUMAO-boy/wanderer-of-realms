@@ -50,23 +50,46 @@ const NPC_SLOTS: Array = [
 	Vector2i(3, 9), Vector2i(8, 9), Vector2i(15, 9), Vector2i(20, 9),
 ]
 
+## 进城歇脚冒险者（M33 A / D-147）的摆点候选。同在 y4..10 空地带上，但与 NPC_SLOTS
+## 错开，且绝不压到建筑/居民——访客是有自己位置的另一种人，不是居民。缺省最多访客数。
+const VISITOR_SLOTS: Array = [
+	Vector2i(2, 5), Vector2i(12, 5), Vector2i(19, 5),
+	Vector2i(5, 8), Vector2i(13, 8), Vector2i(22, 8),
+	Vector2i(7, 10), Vector2i(18, 10),
+]
+
 
 ## 生成一座城的城内网格结构。输入：
 ##   city_id   用于做槽位轮转的种子键
 ##   building_ids  这座城的建筑 id（顺序任意，内部会排序）
 ##   npc_ids       这座城的 npc id（顺序任意，内部会排序）
+##   visitors      进城歇脚的冒险者名额（slot 数组，M33 A；顺序任意）。摆多少看
+##                   `VISITOR_SLOTS` 够不够，**只影响这把 layout 的访客层**，不落盘——
+##                   `WandererPool.city_visitors` 由世界种子派生谁在城（D-147）。
 ## 返回：
 ##   { w, h, gate, spawn,
 ##     blocked: {"x,y": true, ...},                建筑占用的格
 ##     buildings: [{ id, kind, x, y, w:h 占地 }], 每座建筑及其落位与功能
 ##     building_cell: {"x,y": building_index},     每格属于哪座建筑
 ##     npcs: [{ id, x, y }],
-##     npc_cell: {"x,y": npc_id} }
-static func layout(city_id: String, building_ids: Array, npc_ids: Array) -> Dictionary:
+##     npc_cell: {"x,y": npc_id},
+##     visitors: [{ slot, x, y }],
+##     visitor_cell: {"x,y": slot} }
+static func layout(
+	city_id: String, building_ids: Array, npc_ids: Array, visitors: Array = []
+) -> Dictionary:
 	var ids: Array = building_ids.duplicate()
 	ids.sort()
 	var city_npcs: Array = npc_ids.duplicate()
 	city_npcs.sort()
+	# 访客名额去重（名册永远满员不会给重复，但喂进来的可能带重复，按序取即可）。
+	var slots_in: Array = []
+	var seen_s: Dictionary = {}
+	for s in visitors:
+		var sl: int = int(s)
+		if not seen_s.has(sl):
+			seen_s[sl] = true
+			slots_in.append(sl)
 
 	# 槽位轮转：同一城恒定，不同城错开。城市哈希只决定"哪个槽装哪座建筑，不决定
 	# 每个槽是什么形状/在哪"——形状与位置都是固定死的，所以零碰撞。
@@ -78,6 +101,7 @@ static func layout(city_id: String, building_ids: Array, npc_ids: Array) -> Dict
 		"gate": GATE, "spawn": SPAWN,
 		"blocked": {}, "buildings": [], "building_cell": {},
 		"npcs": [], "npc_cell": {},
+		"visitors": [], "visitor_cell": {},
 	}
 	for i in range(ids.size()):
 		var slot: Vector2i = SLOTS[(i + offset) % SLOTS.size()]
@@ -99,6 +123,14 @@ static func layout(city_id: String, building_ids: Array, npc_ids: Array) -> Dict
 		var npc_id: String = str(city_npcs[i])
 		out["npcs"].append({"id": npc_id, "x": slot.x, "y": slot.y})
 		out["npc_cell"]["%d,%d" % [slot.x, slot.y]] = npc_id
+
+	# 访客摆点：名额挨个落固定访客位，没有 slot 就不摆。落地格不写进 blocked（访客在
+	# 空地站着，不是墙），只记一张 `visitor_cell` 表供命中/近邻判定。
+	for i in range(mini(slots_in.size(), VISITOR_SLOTS.size())):
+		var slot: Vector2i = VISITOR_SLOTS[i]
+		var wp_slot: int = slots_in[i]
+		out["visitors"].append({"slot": wp_slot, "x": slot.x, "y": slot.y})
+		out["visitor_cell"]["%d,%d" % [slot.x, slot.y]] = wp_slot
 	return out
 
 
@@ -136,6 +168,15 @@ static func near_npc(cells: Dictionary, pos: Vector2i) -> String:
 		if cells.get("npc_cell", {}).has(key):
 			return str(cells["npc_cell"][key])
 	return ""
+
+
+## 四邻是否有进城歇脚的冒险者（M33 A）。返回名额 slot，否则 -1。
+static func near_visitor(cells: Dictionary, pos: Vector2i) -> int:
+	for dir in _ORTHO:
+		var key: String = "%d,%d" % [pos.x + dir.x, pos.y + dir.y]
+		if cells.get("visitor_cell", {}).has(key):
+			return int(cells["visitor_cell"][key])
+	return -1
 
 
 const _ORTHO: Array = [

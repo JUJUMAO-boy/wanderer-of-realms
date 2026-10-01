@@ -86,6 +86,29 @@ static func trouble_of(trouble_id: String) -> Dictionary:
 	return {}
 
 
+## 此刻「进城歇脚」的冒险者名额（M33 A / D-147）：从 39 个名额确定性挑 `count` 个。
+## 由 `world_seed ⊕ city_id ⊕ 游荡桶` 派生——同一个世界同一座城同一个 bucket 恒同一拨人，
+## bucket 滚动则看得见换了一拨访客（与 M31 地图游荡同一个时间轴）。纯派生、不落盘：
+## 读档后谁在城由种子重算，不占存档字段。
+static func city_visitors(world_seed: int, city_id: String, bucket: int, count: int = -1) -> Array:
+	var n: int = count if count >= 0 else 3
+	n = clampi(n, 0, capacity())
+	if n <= 0 or city_id.is_empty():
+		return []
+	var rng := DeterministicRNG.new(
+		(world_seed ^ str(city_id).hash() ^ (bucket * 1640531527)) & 0xFFFFFFFF
+	)
+	var out: Array = []
+	var used: Dictionary = {}
+	while out.size() < n:
+		var slot: int = rng.next_int(capacity())
+		if used.has(slot):
+			continue
+		used[slot] = true
+		out.append(slot)
+	return out
+
+
 ## 雇一名冒险者的契约（战斗侧随从规格）。unitId 带名额号，与模拟居民（unitId=npc_id）隔离（D-143）。
 static func hire_contract(slot: int, month: int) -> Dictionary:
 	var spec: Dictionary = {}

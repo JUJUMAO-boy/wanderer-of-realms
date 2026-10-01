@@ -13,6 +13,7 @@ const COLOR_GRID: Color = Color(0.16, 0.18, 0.22)
 const COLOR_PLAYER: Color = Color(0.35, 0.85, 0.95)
 const COLOR_GATE: Color = Color(0.85, 0.62, 0.30)
 const COLOR_NPC: Color = Color(0.55, 0.70, 0.92)
+const COLOR_VISITOR: Color = Color(0.93, 0.78, 0.38)
 const COLOR_LABEL: Color = Color(0.92, 0.94, 0.97)
 const COLOR_NEAR: Color = Color(0.98, 0.92, 0.55)
 
@@ -79,6 +80,22 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 		canvas.draw_circle(c, 3.0, COLOR_NPC)
 		_text(canvas, font, c + Vector2(4.0, 3.0), str(npc["label"]), COLOR_NPC, SIZE_LABEL)
 
+	# 进城歇脚的冒险者（M33 A）：明黄菱形 + 亮核（跟大地图标记一个色，标明"是人，不是居民"）
+	var visitors: Array = view.get("visitors", [])
+	var near_slot: int = int(view.get("near", {}).get("visitorSlot", -1))
+	for v in visitors:
+		var vc: Vector2 = v["center"]
+		var half := Vector2(2.6, 2.6)
+		var corners := PackedVector2Array([
+			vc + Vector2(0, -half.y), vc + Vector2(half.x, 0),
+			vc + Vector2(0, half.y), vc + Vector2(-half.x, 0),
+		])
+		canvas.draw_colored_polygon(corners, COLOR_VISITOR)
+		canvas.draw_circle(vc, 1.1, Color(0.45, 0.30, 0.05))
+		_text(canvas, font, vc + Vector2(6.0, 3.0), str(v["label"]), COLOR_VISITOR, SIZE_LABEL)
+		if int(v.get("slot", -1)) == near_slot:
+			canvas.draw_colored_polygon(corners, Color(0.98, 0.92, 0.55))
+
 	# 玩家
 	var player: Rect2 = view.get("playerRect", Rect2())
 	canvas.draw_rect(player, COLOR_PLAYER)
@@ -91,6 +108,42 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 			if str(b["id"]) == bid:
 				canvas.draw_rect(b["rect"], COLOR_NEAR, false, 3.0)
 				break
+
+	# 冒险者小菜单叠加（M33 A/B/C）：半透明底板上列当前可选行，游标行以 ▶ 标出。
+	var menu: Dictionary = view.get("wandererMenu", {})
+	if not menu.is_empty():
+		_draw_wanderer_menu(canvas, font, menu)
+
+
+## 画冒险者小菜单的浮层（留在城内网格右上一角）。
+static func _draw_wanderer_menu(canvas: CanvasItem, font: Font, menu: Dictionary) -> void:
+	var rows: Array = menu.get("rows", [])
+	var cursor: int = maxi(0, int(menu.get("cursor", 0)))
+	var pad_x: float = 10.0
+	var line_h: float = 15.0
+	var row_h: float = line_h + 4.0
+	var title_h: float = 18.0
+	var w: float = 0.0
+	for r in rows:
+		w = maxf(w, font.get_string_size(str(r), HORIZONTAL_ALIGNMENT_LEFT, -1, SIZE_LABEL).x)
+	w = mini(w + 26.0, CitySpaceViewModel.CITY_TILE * CitySpace.WIDTH * 0.6)
+	var width: float = maxf(w, 120.0)
+	var box_w: float = width + pad_x * 2.0
+	var box_h: float = title_h + row_h * rows.size() + pad_x
+	var bx: float = CitySpaceViewModel.CITY_TILE * CitySpace.WIDTH - box_w - 8.0
+	var by: float = 8.0
+	# 底板（半透明）与标题
+	canvas.draw_rect(Rect2(bx, by, box_w, box_h), Color(0.07, 0.08, 0.10, 0.82))
+	canvas.draw_rect(Rect2(bx, by, box_w, box_h), Color(0.82, 0.72, 0.45, 0.55), false, 1.0)
+	_text(canvas, font, Vector2(bx + pad_x, by + 4.0),
+		str(menu.get("title", "冒险者")), Color(0.97, 0.93, 0.75), SIZE_LABEL)
+	# 各可选行，游标行用 ▶
+	var y: float = by + title_h
+	for i in range(rows.size()):
+		var marker: String = "▶ " if i == cursor else "   "
+		var color: Color = COLOR_NEAR if i == cursor else COLOR_LABEL
+		_text(canvas, font, Vector2(bx + pad_x, y), marker + str(rows[i]), color, SIZE_LABEL)
+		y += row_h
 
 
 static func rect_center(r: Rect2) -> Vector2:
@@ -118,6 +171,12 @@ static func hit_test(view: Dictionary, rect: Rect2, point: Vector2) -> Dictionar
 	for i in range(buildings.size()):
 		if buildings[i]["rect"].has_point(point):
 			return {"kind": "building", "index": i, "grid": Vector2i(gx, gy)}
+
+	# 冒险者（M33 A）：点为进城歇脚的冒险者 → 走过去再开菜单。
+	var layout: Dictionary = view.get("layout", {})
+	if layout.get("visitor_cell", {}).has("%d,%d" % [gx, gy]):
+		return {"kind": "visitor", "slot": int(layout["visitor_cell"]["%d,%d" % [gx, gy]]),
+			"grid": Vector2i(gx, gy)}
 
 	return {"kind": "cell", "grid": Vector2i(gx, gy)}
 

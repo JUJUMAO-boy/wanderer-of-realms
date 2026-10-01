@@ -32,6 +32,7 @@ static func build(
 	player: Vector2i,
 	building_labels: Dictionary,
 	npc_labels: Dictionary,
+	visitor_labels: Dictionary,
 	rect: Rect2
 ) -> Dictionary:
 	var origin: Vector2 = origin_of(rect)
@@ -59,10 +60,22 @@ static func build(
 			"center": origin + gc,
 		})
 
-	# 相邻可交互项：站在建筑/NPC 旁时，面板把这笔交互标出来
+	# 进城歇脚的冒险者（M33 A）：明黄菱形的中心点清单。label 由主场景以冒险者名字填充。
+	var visitors: Array = []
+	for slot in layout.get("visitors", []):
+		var vc: Vector2 = Vector2(slot.x * CITY_TILE + CITY_TILE * 0.5,
+			slot.y * CITY_TILE + CITY_TILE * 0.5)
+		visitors.append({
+			"slot": int(slot["slot"]),
+			"label": str(visitor_labels.get(int(slot["slot"]), "冒险者")),
+			"center": origin + vc,
+		})
+
+	# 相邻可交互项：站在建筑/NPC/冒险者旁时，面板把这笔交互标出来
 	var near: Dictionary = {
 		"building": CitySpace.near_building(layout, player),
 		"npcId": CitySpace.near_npc(layout, player),
+		"visitorSlot": CitySpace.near_visitor(layout, player),
 		"atGate": (player.x == layout["gate"].x and player.y == layout["gate"].y),
 	}
 
@@ -73,6 +86,7 @@ static func build(
 		"playerRect": cell_rect(origin, player.x, player.y),
 		"buildings": buildings,
 		"npcs": npcs,
+		"visitors": visitors,
 		"gate": {
 			"rect": cell_rect(origin, layout["gate"].x, layout["gate"].y),
 			"center": origin + Vector2(layout["gate"].x * CITY_TILE + CITY_TILE * 0.5,

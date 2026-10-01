@@ -269,6 +269,11 @@ func run_all() -> int:
 	_test_dungeon_relics()
 	_test_dungeon_story()
 	_test_dungeon_panel_hatch()
+	print("=== M33 大地图随机人物深化：城内可见 · 交易 · 麻烦化解 ===")
+	_test_wanderer_city_visitors()
+	_test_city_space_visitors()
+	_test_wanderer_trade()
+	_test_wanderer_trouble_resolve()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7597,7 +7602,7 @@ func _test_city_space_view_model() -> void:
 	var l: Dictionary = CitySpace.layout("aedran", ids, ["n1", "n2"])
 	var rect := Rect2(0.0, 0.0, 1248.0, 568.0)
 	var view: Dictionary = CitySpaceViewModel.build(l, l["spawn"],
-		{"b1": "大堂", "b2": "铺", "b3": "堂", "b4": "厅", "b5": "院"}, {"n1": "甲", "n2": "乙"}, rect)
+		{"b1": "大堂", "b2": "铺", "b3": "堂", "b4": "厅", "b5": "院"}, {"n1": "甲", "n2": "乙"}, {}, rect)
 	var expected_origin: Vector2 = rect.position + (rect.size
 		- Vector2(CitySpaceViewModel.CITY_TILE * CitySpace.WIDTH, CitySpaceViewModel.CITY_TILE * CitySpace.HEIGHT)) * 0.5
 	_eq(view["origin"], expected_origin, "面板原点居中算出")
@@ -8359,6 +8364,124 @@ func _wand_entry(seed: int, slot: int, gen: int, status: String = WandererPool.S
 		"gender": spec["gender"], "age": spec["age"], "troubleId": spec["troubleId"],
 		"hireCost": spec["hireCost"], "status": status, "hospitalUntil": until,
 	}
+
+
+## 城内可见冒险者：同城同 bucket 同参访客名单恒一致、无重复、名额落在人口池内；
+## 不同 bucket 换一批；指定人数生效。
+func _test_wanderer_city_visitors() -> void:
+	var seed: int = 20260922
+	var a: Array = WandererPool.city_visitors(seed, "aedran", 1)
+	var b: Array = WandererPool.city_visitors(seed, "aedran", 1)
+	_eq(a, b, "同城同 bucket，访客名单逐位一致")
+	_eq(a.size(), 3, "缺省城内访客 3 人")
+	var seen := {}
+	var clean := true
+	for s in a:
+		var slot_v: int = int(s)
+		if seen.has(slot_v) or slot_v < 0 or slot_v >= WandererPool.capacity():
+			clean = false
+		seen[slot_v] = true
+	_check(clean, "访客名额无重复且落在人口池容量内")
+	var c: Array = WandererPool.city_visitors(seed, "aedran", 2)
+	_check(str(c) != str(a), "不同 bucket 换一批访客")
+	var e: Array = WandererPool.city_visitors(seed, "aedran", 1, 5)
+	_eq(e.size(), 5, "指定人数生效")
+
+
+## 城内空间访客层：layout 铺出 visitors/visitor_cell；站在访客旁四邻能命中名额；
+## 落地格不写 blocked（访客是空地的人，不是墙）。
+func _test_city_space_visitors() -> void:
+	var cells: Dictionary = CitySpace.layout(
+		"aedran", ["b1", "b2", "b3", "b4", "b5"], ["n1", "n2"], [3, 7, 15])
+	_eq(cells["visitors"].size(), 3, "访客名额铺进城内网格")
+	_check(not cells["visitor_cell"].is_empty(), "访客格映射非空")
+	var near_hit := -1
+	for v in cells["visitors"]:
+		var sx: int = int(v["x"])
+		var sy: int = int(v["y"])
+		var slot_v: int = CitySpace.near_visitor(cells, Vector2i(sx + 1, sy))
+		if slot_v >= 0:
+			near_hit = int(v["slot"])
+			break
+	_check(near_hit >= 0, "站在访客旁四邻能命中名额")
+	var first: Dictionary = cells["visitors"][0]
+	_check(CitySpace.walkable(cells, int(first["x"]), int(first["y"])), "访客落地格可走（未写 blocked）")
+
+
+## 冒险者交易：货架确定性；买得起身入包钱对扣；钱不够拒；身上穿的拒收、背包货折价。
+func _test_wanderer_trade() -> void:
+	var built: Dictionary = _new_world()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-trader"
+	avatar.money = 5000
+	world.avatar = avatar
+	var seed: int = 20260922
+	var spec: Dictionary = WandererPool.fill_spec(seed, 5, 0)
+	var g0: Array = WandererTrade.stall(spec, DeterministicRNG.new(WandererPool.slot_seed(seed, 5, 0)))
+	var g1: Array = WandererTrade.stall(spec, DeterministicRNG.new(WandererPool.slot_seed(seed, 5, 0)))
+	_eq(g0, g1, "同一位置冒险者同代，货架逐位一致")
+	_check(not g0.is_empty(), "货架有货")
+	var row: Dictionary = g0[0]
+	var tpl: String = str(row["templateId"])
+	_eq(int(row["unitPrice"]), WandererTrade.unit_price(tpl), "货架价与单价口径一致")
+	var before: int = avatar.money
+	var bought: Dictionary = WandererTrade.buy(world, spec, 0, g0, DeterministicRNG.new(1))
+	_check(bool(bought.get("ok", false)), "买下一件")
+	_eq(avatar.money, before - int(bought["money"]), "扣款正确")
+	_check(avatar.inventory.has(str(bought["instanceId"])), "货入包")
+	avatar.money = 0
+	var poor: Dictionary = WandererTrade.buy(world, spec, 0, g0, DeterministicRNG.new(1))
+	_check(not bool(poor.get("ok", false)), "钱不够拒卖（不赊账）")
+	_check(poor.has("reason"), "拒绝带理由")
+	avatar.money = 2000
+	var inst: String = _give(avatar, tpl, "sell-me")
+	_check(not inst.is_empty(), "背包货实例化成功")
+	var sold: Dictionary = WandererTrade.sell_item(world, inst)
+	_check(bool(sold.get("ok", false)), "折价卖出")
+	_eq(avatar.money, 2000 + int(sold["money"]), "回坑钱正确")
+	var eq_inst: String = _give(avatar, "weapon_longsword_common", "eq-me")
+	if not eq_inst.is_empty():
+		avatar.equipment["main_hand"] = eq_inst
+	var refused: Dictionary = WandererTrade.sell_item(world, eq_inst)
+	_check(not bool(refused.get("ok", false)), "身上穿的拒收（须先脱下）")
+
+
+## 个人麻烦可化解：有价码；化解后标记真、钱账净变动 == 谢礼 − 价码、雇佣打折；
+## 已化解再化解被拒（幂等）；穷化身钱不够被拒。
+func _test_wanderer_trouble_resolve() -> void:
+	var built: Dictionary = _new_world()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-trouble"
+	avatar.money = 3000
+	world.avatar = avatar
+	var seed: int = 20260922
+	var spec: Dictionary = WandererPool.fill_spec(seed, 5, 0)
+	var trouble: Dictionary = WandererPool.trouble_of(str(spec.get("troubleId", "")))
+	_check(not trouble.is_empty(), "这位冒险者带着一桩可查的个人麻烦")
+	_check(WandererTrouble.resolve_cost(trouble) > 0, "化解有价码")
+	_check(not WandererTrouble.resolved(world, 5, 0), "初始未化解")
+	var cost: int = WandererTrouble.resolve_cost(trouble)
+	var before: int = avatar.money
+	var r: Dictionary = WandererTrouble.resolve_step(world, spec, trouble)
+	_check(bool(r.get("ok", false)), "化解成功")
+	_eq(WandererTrouble.resolved(world, 5, 0), true, "化解后标记真")
+	_eq(avatar.money, before - cost + int(r.get("rewardCopper", 0)), "钱账净变动 == 谢礼铜 − 化解价")
+	var mult: float = float(ContentLoader.get_balance_section("wanderer").get("resolveHireDiscountMult", 1.0))
+	_eq(WandererTrouble.hire_discount(world, 5, 0), mult, "化解后雇佣打折生效")
+	var again: Dictionary = WandererTrouble.resolve_step(world, spec, trouble)
+	_check(not bool(again.get("ok", false)), "已化解再化解被拒（幂等）")
+	# 穷化身：同一桩麻烦，钱不够被拒
+	var w2: Dictionary = _new_world()
+	var av2 := PlayerAvatar.new()
+	av2.avatar_id = "avatar-poor"
+	av2.money = 0
+	(w2["world"] as WorldState).avatar = av2
+	var poor_r: Dictionary = WandererTrouble.resolve_step(w2["world"], spec, trouble)
+	_check(not bool(poor_r.get("ok", false)), "钱不够化解被拒")
+	_check(poor_r.has("reason"), "拒绝带理由")
+
 
 # --- M25 神系与昼夜天候 ---
 

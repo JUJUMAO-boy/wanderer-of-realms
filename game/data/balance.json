@@ -577,15 +577,36 @@
     "skillByArchetype": { "warrior": "guard", "archer": "ranged", "mage": "ranged" },
     "tendencyByArchetype": { "warrior": "guard", "archer": "ranged", "mage": "guard" },
     "tendencyDefault": "guard",
+    "resolveHireDiscountMult": 0.65,
+    "trade": {
+      "_comment": "冒险者随身行货（M33 B）：这位在野汉在城际间倒手的东西。价格取模板 base price × magMult；卖给他按 sellDiscountBp 收。",
+      "stockCount": 4,
+      "sellDiscountBp": 7000,
+      "magMult": 1.15,
+      "palette": [
+        { "templateId": "consumable_dried_meat", "weightBp": 1800 },
+        { "templateId": "consumable_bread", "weightBp": 1400 },
+        { "templateId": "consumable_stew", "weightBp": 1100 },
+        { "templateId": "consumable_antidote", "weightBp": 900 },
+        { "templateId": "consumable_healing_potion", "weightBp": 900 },
+        { "templateId": "consumable_mana_potion", "weightBp": 700 },
+        { "templateId": "weapon_dagger_common", "weightBp": 700 },
+        { "templateId": "weapon_longsword_common", "weightBp": 600 },
+        { "templateId": "weapon_longsword_fine", "weightBp": 300 },
+        { "templateId": "weapon_axe_common", "weightBp": 400 },
+        { "templateId": "weapon_bow_fine", "weightBp": 250 },
+        { "templateId": "armor_cloth_common", "weightBp": 350 }
+      ]
+    },
     "troubles": [
-      { "id": "debt", "label": "欠了一笔说不清来历的账", "desc": "他逢人就打听哪里能快些还上那笔账，可账主到底是谁，他自己也说不清。" },
-      { "id": "rival", "label": "被一个名字追着跑", "desc": "只要有人提起那个名字，他脸上的表情就像被冰水泼过——却又偏要假装没听见。" },
-      { "id": "sick", "label": "带病上路，整夜咳", "desc": "远远听着露宿处传来一整夜的咳嗽，那声响不像是从一个自称『只是着了凉』的人嘴里出来的。" },
-      { "id": "hollow", "label": "梦里总回到同一座塌了的城", "desc": "他说那座城还在，只是谁也不信；他记得每一条街的走向，却没有一张地图能对上。" },
-      { "id": "cursed", "label": "身上带着一件不敢摘的东西", "desc": "他睡觉都要搂着那只旧匣子。有人劝他扔掉，他只说『它还压着我，它也护着我』。" },
-      { "id": "lost", "label": "在找一件早就找不回来的信物", "desc": "他反复盘问每一个行商，有没有见过一枚缺了角的旧扣。答没有的人越多，他问得越勤。" },
-      { "id": "fued", "label": "和某座城过不去", "desc": "凡提到那座城，他总先沉默很长一会儿，再岔开说点旁的话——偏又绕不开那城的货价。" },
-      { "id": "pregnant", "label": "带着一个不能说的晚辈", "desc": "他身边常跟着一个半大孩子，说是亲戚家的。可孩子管他叫的辈分，他每次都答得不一致。" }
+      { "id": "debt", "label": "欠了一笔说不清来历的账", "desc": "他逢人就打听哪里能快些还上那笔账，可账主到底是谁，他自己也说不清。", "resolveCost": 120, "resolveLine": "你把那笔账替他抹平了——他不问你怎么弄到的钱，只咧开嘴笑出一口烟黄的牙。", "rewardCopper": 40 },
+      { "id": "rival", "label": "被一个名字追着跑", "desc": "只要有人提起那个名字，他脸上的表情就像被冰水泼过——却又偏要假装没听见。", "resolveCost": 150, "resolveLine": "你替他在那名字上帮了一回忙。他愣了半晌，把一直攥着的旧伤疤指给你看，权当赌咒。", "rewardCopper": 50 },
+      { "id": "sick", "label": "带病上路，整夜咳", "desc": "远远听着露宿处传来一整夜的咳嗽，那声响不像是从一个自称『只是着了凉』的人嘴里出来的。", "resolveCost": 90, "resolveLine": "你找来药，看着他喉头不再发紧。他咳一声，把裤腰里藏的半个饼塞给你。", "rewardItem": "consumable_healing_potion" },
+      { "id": "hollow", "label": "梦里总回到同一座塌了的城", "desc": "他说那座城还在，只是谁也不信；他记得每一条街的走向，却没有一张地图能对上。", "resolveCost": 130, "resolveLine": "你陪他沿着那城的旧街走了半宿。天快亮时他忽然不说了，像心事终于落了地。", "rewardCopper": 45 },
+      { "id": "cursed", "label": "身上带着一件不敢摘的东西", "desc": "他睡觉都要搂着那只旧匣子。有人劝他扔掉，他只说『它还压着我，它也护着我』。", "resolveCost": 160, "resolveLine": "你替他把压着的那节由头了了。他头一回在白天把那匣子搁下，嚅嗫着道谢。", "rewardCopper": 60 },
+      { "id": "lost", "label": "在找一件早就找不回来的信物", "desc": "他反复盘问每一个行商，有没有见过一枚缺了角的旧扣。答没有的人越多，他问得越勤。", "resolveCost": 100, "resolveLine": "你递上一件跟那信物沾边的旧物。他对着光看了很久，忽然不再满世界地找了。", "rewardItem": "consumable_dried_meat" },
+      { "id": "fued", "label": "和某座城过不去", "desc": "凡提到那座城，他总先沉默很长一会儿，再岔开说点旁的话——偏又绕不开那城的货价。", "resolveCost": 140, "resolveLine": "你托人把恩怨里的那节账给断了。他临走朝你拱了拱手，没说谢，说了句出城的路。", "rewardCopper": 48 },
+      { "id": "pregnant", "label": "带着一个不能说的晚辈", "desc": "他身边常跟着一个半大孩子，说是亲戚家的。可孩子管他叫的辈分，他每次都答得不一致。", "resolveCost": 110, "resolveLine": "你把那孩子安顿了一桩难处。他垂着眼蹲了很久，忽然说了句不像玩笑的实话。", "rewardCopper": 42 }
     ]
   }
 }

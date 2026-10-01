@@ -349,6 +349,20 @@ var _merchant_cursor: int = 0
 var _merchant_side: String = Merchant.SIDE_BUY
 var _merchant_seq: int = 0
 
+# 冒险者小菜单（M33：进城歇脚的冒险者 · 交谈/交易/化解麻烦）
+const _WANDERER_MODE_MAIN: String = "main"
+const _WANDERER_MODE_TRADE: String = "trade"
+const _WANDERER_MODE_TRADE_SELL: String = "trade_sell"
+var _wanderer_open: bool = false
+var _wanderer_slot: int = -1
+var _wanderer_gen: int = -1
+var _wanderer_mode: String = _WANDERER_MODE_MAIN
+var _wanderer_cursor: int = 0
+var _wanderer_goods: Array = []
+var _wanderer_goods_cursor: int = 0
+var _wanderer_sell_candidates: Array = []
+var _wanderer_sell_cursor: int = 0
+
 
 func _ready() -> void:
 	if "--test" in OS.get_cmdline_user_args():
@@ -4118,9 +4132,13 @@ func _enter_city_space(city_id: String) -> void:
 	var npc_ids: Array = []
 	for npc in _world.get_city_npcs(city_id):
 		npc_ids.append(npc.npc_id)
+	_leave_wanderer_menu()
 	_city_space = {
 		"city_id": city_id,
-		"layout": CitySpace.layout(city_id, building_ids, npc_ids),
+		"layout": CitySpace.layout(
+			city_id, building_ids, npc_ids,
+			WandererPool.city_visitors(int(_world.world_seed), city_id, _seen_bucket)
+		),
 		"player": CitySpace.SPAWN,
 	}
 	_selected_city = maxi(0, ids.find(city_id))
@@ -4146,8 +4164,50 @@ func _refresh_city_space() -> void:
 	for n in layout.get("npcs", []):
 		var npc: SimNpc = _world.get_npc(str(n["id"]))
 		npc_labels[str(n["id"])] = npc.display_name() if npc != null else str(n["id"])
+	var visitor_labels: Dictionary = {}
+	for v in layout.get("visitors", []):
+		var slot: int = int(v.get("slot", -1))
+		var entry: Dictionary = _wanderer_entry(slot)
+		var spec: Dictionary = WandererPool.fill_spec(
+			int(_world.world_seed), slot, int(entry.get("gen", 0)))
+		visitor_labels[slot] = str(spec.get("name", "冒险者"))
 	_city_space_view = CitySpaceViewModel.build(layout, _city_space["player"],
-		building_labels, npc_labels, _content_rect())
+		building_labels, npc_labels, visitor_labels, _content_rect())
+	# 冒险者小菜单叠加层：把当前菜单行摊给面板画（M33 A/B/C）。
+	_city_space_view["wandererMenu"] = _wanderer_menu_view()
+
+
+## 冒险者菜单的绘制清单（panel 叠画用）：title + 行 + 当前游标。
+func _wanderer_menu_view() -> Dictionary:
+	if not _wanderer_open or _world == null:
+		return {}
+	var spec: Dictionary = _wanderer_spec(_wanderer_slot, _wanderer_gen)
+	var title: String = "「%s」· %s" % [
+		str(spec.get("name", "冒险者")),
+		str(_WANDERER_ARCHETYPE_LABELS.get(str(spec.get("archetype", "")), "游民")),
+	]
+	var rows: Array = []
+	var cursor: int = 0
+	match _wanderer_mode:
+		_WANDERER_MODE_TRADE:
+			cursor = _wanderer_goods_cursor
+			for g in _wanderer_goods:
+				rows.append("「%s」 %d 铜" % [str(g.get("displayName", "")), int(g.get("unitPrice", 0))])
+			if rows.is_empty():
+				rows.append("他这趟没带什么可买的")
+		_WANDERER_MODE_TRADE_SELL:
+			cursor = _wanderer_sell_cursor
+			var avatar: PlayerAvatar = _world.avatar
+			for inst in _wanderer_sell_candidates:
+				var tid: String = str(avatar.item_instances.get(str(inst), {}).get("templateId", ""))
+				var nm: String = str(ContentLoader.get_item(tid).get("displayName", tid))
+				rows.append("「%s」 %d 铜" % [nm, WandererTrade.sell_price(tid)])
+			if rows.is_empty():
+				rows.append("身上没有能卖的东西")
+		_:
+			cursor = _wanderer_cursor
+			rows = ["交谈", "交易", "帮他化解麻烦"]
+	return {"title": title, "rows": rows, "cursor": cursor}
 
 
 ## 空格/回车：站在建筑旁就开它的功能视图，站在居民旁就看居民，否则提示。
@@ -4169,7 +4229,12 @@ func _city_space_interact() -> void:
 			return
 		_enter_residents(str(_city_space["city_id"]))
 		return
-	_status.text = "旁边没有可互动的建筑或居民。"
+	# M33 A：挨着进城歇脚的冒险者 → 打开他的小菜单（交谈/交易/化解麻烦）。
+	var visitor_slot: int = CitySpace.near_visitor(layout, pos)
+	if visitor_slot >= 0:
+		_open_wanderer_menu(visitor_slot)
+		return
+	_status.text = "旁边没有可互动的建筑、居民或冒险者。"
 	_refresh()
 
 
@@ -4281,6 +4346,9 @@ func _city_space_step(dx: int, dy: int) -> void:
 
 
 func _city_space_input(key_event: InputEventKey) -> void:
+	if _wanderer_open:
+		_wanderer_space_input(key_event)
+		return
 	match key_event.keycode:
 		KEY_LEFT, KEY_A:
 			_city_space_step(-1, 0)
@@ -4308,6 +4376,35 @@ func _city_space_input(key_event: InputEventKey) -> void:
 			_load()
 
 
+## 冒险者小菜单的按键：W/S 选、回车确认、E 换买卖方向、ESC 退一级、T 离开。
+func _wanderer_space_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_wanderer_menu_move(-1)
+		KEY_DOWN, KEY_S:
+			_wanderer_menu_move(1)
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_wanderer_menu_confirm()
+		KEY_E:
+			_wanderer_toggle_sell()
+		KEY_ESCAPE:
+			if _wanderer_mode == _WANDERER_MODE_MAIN:
+				_leave_wanderer_menu()
+				_refresh()
+			else:
+				_wanderer_mode = _WANDERER_MODE_MAIN
+				_wanderer_cursor = 0
+				_status.text = _wanderer_status_hint()
+				_refresh()
+		KEY_T:
+			_leave_wanderer_menu()
+			_switch_view(VIEW_CITY)
+		KEY_F5:
+			_save()
+		KEY_F9:
+			_load()
+
+
 ## 城内点击：点空地走过去，点建筑走近后自动进入，点城门离开。
 func _city_space_click(point: Vector2) -> void:
 	if _world == null or _city_space.is_empty():
@@ -4317,9 +4414,13 @@ func _city_space_click(point: Vector2) -> void:
 		return
 	match str(hit.get("kind", "")):
 		"gate":
+			_leave_wanderer_menu()
 			_leave_city_space()
 		"building":
 			_city_space_approach_building(int(hit.get("index", -1)))
+		"visitor":
+			_city_space_walk_to(hit.get("grid", Vector2i()))
+			_open_wanderer_menu(int(hit.get("slot", -1)))
 		"cell":
 			_city_space_walk_to(hit.get("grid", Vector2i()))
 
@@ -6186,6 +6287,212 @@ func _draw_wanderer_markers() -> void:
 		])
 		draw_colored_polygon(corners, Color(0.93, 0.78, 0.38))
 		draw_circle(mark, 1.1, Color(0.45, 0.30, 0.05))
+
+
+# --- M33 冒险者小菜单（进城歇脚 · 交谈/交易/化解麻烦）---
+#
+# 城里站定的冒险者在 `_city_space_interact` 里挨着按回车即打开这个小菜单。三个动作
+# 分别走 WandererTrouble（化解）/ WandererTrade（交易）/ 一段派生观察（交谈）。规则层
+# 都纯派生成可无头钉测；这里只把「当前在跟哪位、在哪个模式、游标指哪」接起来画出来。
+
+
+## 从名册找某名额的条目；找不到用 gen=0 兜底（名册永远满员，正常都在）。
+func _wanderer_entry(slot: int) -> Dictionary:
+	if _world == null:
+		return {"slot": int(slot), "gen": 0}
+	for e: Dictionary in _world.wanderer_roster:
+		if int(e.get("slot", -1)) == int(slot):
+			return e
+	return {"slot": int(slot), "gen": 0}
+
+
+## 某名额派生细节（快捷取）。
+func _wanderer_spec(slot: int, gen: int) -> Dictionary:
+	return WandererPool.fill_spec(int(_world.world_seed), slot, gen)
+
+
+## 打开对某位进城冒险者的对话小菜单。
+func _open_wanderer_menu(slot: int) -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var entry: Dictionary = _wanderer_entry(slot)
+	_wanderer_slot = slot
+	_wanderer_gen = int(entry.get("gen", 0))
+	_wanderer_mode = _WANDERER_MODE_MAIN
+	_wanderer_cursor = 0
+	_wanderer_goods = []
+	_wanderer_goods_cursor = 0
+	_wanderer_sell_candidates = []
+	_wanderer_sell_cursor = 0
+	_wanderer_open = true
+	_status.text = "和他谈谈（W/S 选，回车确认，ESC 走开）。"
+	_refresh()
+
+
+func _leave_wanderer_menu() -> void:
+	_wanderer_open = false
+	_wanderer_mode = _WANDERER_MODE_MAIN
+	_wanderer_goods = []
+
+
+## 进入菜单时的状态栏说明（按当前模式给一句）。
+func _wanderer_status_hint() -> String:
+	match _wanderer_mode:
+		_WANDERER_MODE_TRADE:
+			return "买他的行货（W/S 选，回车买；S 换卖给他；ESC 回上一级）。"
+		_WANDERER_MODE_TRADE_SELL:
+			return "把背包的货卖给他（W/S 选，回车卖；ESC 回上一级）。"
+		_:
+			return "和他谈谈（W/S 选，回车确认，ESC 走开）。"
+
+
+## 冒险者菜单游标移动。
+func _wanderer_menu_move(delta: int) -> void:
+	if not _wanderer_open or _world == null:
+		return
+	if _wanderer_mode == _WANDERER_MODE_TRADE:
+		_wanderer_goods_cursor = posmod(_wanderer_goods_cursor + delta, maxi(1, _wanderer_goods.size()))
+	elif _wanderer_mode == _WANDERER_MODE_TRADE_SELL:
+		_wanderer_sell_cursor = posmod(_wanderer_sell_cursor + delta, maxi(1, _wanderer_sell_candidates.size()))
+	else:
+		_wanderer_cursor = posmod(_wanderer_cursor + delta, 3)
+	_refresh()
+
+
+## 冒险者菜单回车：按当前模式执行。
+func _wanderer_menu_confirm() -> void:
+	if not _wanderer_open or _world == null:
+		return
+	var spec: Dictionary = _wanderer_spec(_wanderer_slot, _wanderer_gen)
+	match _wanderer_mode:
+		_WANDERER_MODE_TRADE:
+			_wanderer_buy(spec)
+		_WANDERER_MODE_TRADE_SELL:
+			_wanderer_sell()
+		_:
+			match _wanderer_cursor:
+				0:
+					_wanderer_talk(spec)
+				1:
+					_wanderer_open_trade(spec)
+				2:
+					_wanderer_resolve(spec)
+
+
+## 交谈：把这段人拧成一句可观察的话念给你听。
+func _wanderer_talk(spec: Dictionary) -> void:
+	var trouble: Dictionary = WandererPool.trouble_of(str(spec.get("troubleId", "")))
+	var line: String = str(trouble.get("desc", ""))
+	if line.is_empty():
+		line = str(trouble.get("label", "他岔开话头，没有接着说。"))
+	_status.text = "「%s」%s" % [str(spec.get("name", "某冒险者")), line]
+	_note_events(["你与冒险者「%s」攀谈：%s" % [str(spec.get("name", "某冒险者")), line]])
+	_refresh()
+
+
+## 交易：摊开他随身带的货。
+func _wanderer_open_trade(spec: Dictionary) -> void:
+	var rng := DeterministicRNG.new(WandererPool.slot_seed(
+		int(_world.world_seed), _wanderer_slot, _wanderer_gen + 37))
+	_wanderer_goods = WandererTrade.stall(spec, rng)
+	_wanderer_mode = _WANDERER_MODE_TRADE
+	_wanderer_goods_cursor = 0
+	_status.text = _wanderer_status_hint()
+	_refresh()
+
+
+func _wanderer_toggle_sell() -> void:
+	if _wanderer_mode != _WANDERER_MODE_TRADE and _wanderer_mode != _WANDERER_MODE_TRADE_SELL:
+		return
+	if _wanderer_mode == _WANDERER_MODE_TRADE:
+		_wanderer_sell_candidates = _sellable_inventory_ids()
+		_wanderer_mode = _WANDERER_MODE_TRADE_SELL
+		_wanderer_sell_cursor = 0
+	else:
+		_wanderer_mode = _WANDERER_MODE_TRADE
+	_status.text = _wanderer_status_hint()
+	_refresh()
+
+
+## 买他货架上的第 goods_cursor 件（当场结账）。
+func _wanderer_buy(spec: Dictionary) -> void:
+	if _wanderer_goods.is_empty():
+		_status.text = "他这趟没带什么可买的。"
+		_refresh()
+		return
+	var rng := DeterministicRNG.new(WandererPool.slot_seed(
+		int(_world.world_seed), _wanderer_slot, _wanderer_gen + 37))
+	var result: Dictionary = WandererTrade.buy(
+		_world, spec, _wanderer_goods_cursor, _wanderer_goods, rng)
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("reason", "这买卖没做成。"))
+		_refresh()
+		return
+	_status.text = "你花 %d 铜买下「%s」。" % [int(result["money"]), str(result["displayName"])]
+	_note_events(["你从冒险者「%s」手里买下「%s」。" % [
+		str(spec.get("name", "某冒险者")), str(result["displayName"])]])
+	_wanderer_goods.remove_at(_wanderer_goods_cursor)
+	_wanderer_goods_cursor = clampi(_wanderer_goods_cursor, 0, maxi(0, _wanderer_goods.size() - 1))
+	_refresh()
+
+
+## 把第 sell_cursor 件背包货折价卖给他。
+func _wanderer_sell() -> void:
+	if _wanderer_sell_candidates.is_empty():
+		_status.text = "你身上没有能卖给他的货。"
+		_refresh()
+		return
+	if _wanderer_sell_cursor < 0 or _wanderer_sell_cursor >= _wanderer_sell_candidates.size():
+		return
+	var result: Dictionary = WandererTrade.sell_item(
+		_world, str(_wanderer_sell_candidates[_wanderer_sell_cursor]))
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("reason", "这买卖没做成。"))
+		_refresh()
+		return
+	_status.text = "你把「%s」卖给他，换回 %d 铜。" % [
+		str(result["displayName"]), int(result["money"])]
+	_note_events(["你把「%s」折价卖给了冒险者。" % str(result["displayName"])])
+	_wanderer_sell_candidates.remove_at(_wanderer_sell_cursor)
+	_wanderer_sell_cursor = clampi(_wanderer_sell_cursor, 0, maxi(0, _wanderer_sell_candidates.size() - 1))
+	_refresh()
+
+
+## 帮忙化解他的个人麻烦（C/D-149）：掏钱了结，记 `(slot,gen)` 已化解 + 谢礼。
+func _wanderer_resolve(spec: Dictionary) -> void:
+	var trouble: Dictionary = WandererPool.trouble_of(str(spec.get("troubleId", "")))
+	if trouble.is_empty():
+		_status.text = "他没什么需要你掺和的事。"
+		_refresh()
+		return
+	var result: Dictionary = WandererTrouble.resolve_step(_world, spec, trouble)
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("reason", "这一桩暂时了结不了。"))
+		_refresh()
+		return
+	var line: String = str(result["line"])
+	if int(result.get("rewardCopper", 0)) > 0:
+		line += " 他塞给你 %d 铜作谢礼。" % int(result["rewardCopper"])
+	if not str(result.get("rewardItem", "")).is_empty():
+		line += " 他还留了一件「%s」给你。" % str(
+			ContentLoader.get_item(str(result["rewardItem"])).get("displayName", result["rewardItem"]))
+	_status.text = line
+	_note_events(["你替冒险者「%s」了结了那桩麻烦。" % str(spec.get("name", "某冒险者"))])
+	_refresh()
+
+
+## 背包里能卖给他的一批货（在包里、没穿在身上）。
+func _sellable_inventory_ids() -> Array:
+	var out: Array = []
+	if _world == null or _world.avatar == null:
+		return out
+	var avatar: PlayerAvatar = _world.avatar
+	for inst_id in avatar.inventory:
+		if avatar.equipment.values().has(inst_id):
+			continue
+		if avatar.item_instances.has(inst_id):
+			out.append(inst_id)
+	return out
 
 
 ## 把 _walk 里尚未走到的路线用柔金细线 + 圆点画出来（从化身当前位置串到终点）。
