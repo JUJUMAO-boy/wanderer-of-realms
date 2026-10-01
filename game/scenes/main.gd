@@ -1002,9 +1002,15 @@ func _quest_abandon() -> void:
 	var row: Dictionary = rows[clampi(_quest_cursor, 0, rows.size() - 1)]
 	if str(row.get("kind", "")) != QuestViewModel.ROW_KIND_ACTIVE:
 		return
+	# 放弃会从世界里移除委托，台词要在移除前把 quest 对象拿住。
+	var quest: Quest = _world.find_quest(str(row.get("questId", "")))
 	var result: Dictionary = _sim.quests.abandon(str(row.get("questId", "")))
 	if bool(result.get("ok", false)):
-		_status.text = "把「%s」让给了别人。" % str(row.get("title", ""))
+		var lines: Array = [] if quest == null else QuestSpeech.abandon_lines(
+			quest.quest_type, _quest_speech_ctx(quest))
+		var first: String = str(lines[0]) if not lines.is_empty() else ""
+		var base: String = "把「%s」让给了别人。" % str(row.get("title", ""))
+		_status.text = base if first.is_empty() else "%s —— %s" % [base, first]
 	else:
 		_status.text = "放弃不了：%s" % str(result.get("error", ""))
 	_refresh()
@@ -1012,12 +1018,29 @@ func _quest_abandon() -> void:
 
 func _quest_accept(quest_id: String) -> void:
 	var result: Dictionary = _sim.quests.accept(quest_id, Clock.total_months())
-	if bool(result.get("ok", false)):
-		_status.text = "接下了%s的委托。" % str(_table("cityNames").get(
-			str(result.get("cityId", "")), str(result.get("cityId", ""))))
-	else:
+	if not bool(result.get("ok", false)):
 		_status.text = "接不了：%s" % str(result.get("error", ""))
+		_refresh()
+		return
+	var base: String = "接下了%s的委托。" % str(_table("cityNames").get(
+		str(result.get("cityId", "")), str(result.get("cityId", ""))))
+	var quest: Quest = _world.find_quest(quest_id)
+	var lines: Array = [] if quest == null else QuestSpeech.accept_lines(
+		quest.quest_type, _quest_speech_ctx(quest))
+	var first: String = str(lines[0]) if not lines.is_empty() else ""
+	_status.text = base if first.is_empty() else "%s —— %s" % [base, first]
 	_refresh()
+
+
+## 委托台词的行文语境：把 {giver}/{title}/{tier} 按当前委托填掉。
+func _quest_speech_ctx(quest: Quest) -> Dictionary:
+	if quest == null:
+		return {}
+	return {
+		"giver": quest.giver_label,
+		"title": str(ContentLoader.get_quest_type(quest.quest_type).get("displayName", "")),
+		"tier": str(ContentLoader.get_quest_tier(quest.tier_id).get("displayName", "")),
+	}
 
 
 ## 执行光标所在的选项。普通选项直接交付；带战斗的那一行先打一场，
@@ -1051,7 +1074,12 @@ func _quest_complete(quest_id: String, branch_id: String) -> void:
 			_refresh()
 			return
 	_quest_mode = QuestViewModel.MODE_BOARD
-	_status.text = _quest_outcome_text(result)
+	var quest: Quest = _world.find_quest(quest_id)
+	var lines: Array = [] if quest == null else QuestSpeech.deliver_lines(
+		quest.quest_type, branch_id, _quest_speech_ctx(quest))
+	var first: String = str(lines[0]) if not lines.is_empty() else ""
+	var outcome: String = _quest_outcome_text(result)
+	_status.text = outcome if first.is_empty() else "%s —— %s" % [first, outcome]
 	_refresh()
 
 
@@ -1212,9 +1240,14 @@ func _resolve_quest_combat() -> void:
 	if change != null:
 		_sim.apply_state_change(change)
 	_quest_mode = QuestViewModel.MODE_BOARD
-	_status.text = "%s · %s" % [
+	var quest: Quest = _world.find_quest(quest_id)
+	var lines: Array = [] if quest == null else QuestSpeech.deliver_lines(
+		quest.quest_type, branch_id, _quest_speech_ctx(quest))
+	var first: String = str(lines[0]) if not lines.is_empty() else ""
+	var base: String = "%s · %s" % [
 		"你赢了" if won else "你输了", _quest_outcome_text(result)
 	]
+	_status.text = base if first.is_empty() else "%s —— %s" % [first, base]
 
 
 ## 战场上的处置 → 配置里的结局名。一个敌人一种处置，这里取最重的那个：

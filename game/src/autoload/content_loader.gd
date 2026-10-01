@@ -2801,6 +2801,8 @@ func _validate_quests(root: Dictionary) -> void:
 
 		_validate_quest_branches(quest, path)
 		_validate_quest_combat(quest, path)
+		if quest.has("speech"):
+			_validate_quest_speech(quest, quest["speech"], path)
 
 	_quests = root
 
@@ -2883,4 +2885,39 @@ func _validate_quest_combat(quest: Dictionary, path: String) -> void:
 			_errors.append("委托战斗结局名非法：%s.combat.outcomes.%s（应为 defeat 或 %s 之一）" % [
 				path, name, ", ".join(PackedStringArray(Combat.ALL_DOWNED_CHOICES))
 			])
+
+
+## 委托对话模板（B1 / D-162）。speech 是可选字段，给了就必须齐：accept/abandon 是
+## 非空台词数组，deliver 必须给每个做法（普通分支 + 带战斗的 combat:〈结局〉）都写
+## 一句，否则玩家选了个做法却没人接话——"交付模板完整性"在这里被直接钉死。
+## 交付大多是一句，故允许单条字符串；为省书写也容忍整段。
+func _validate_quest_speech(quest: Dictionary, speech: Variant, path: String) -> void:
+	if not (speech is Dictionary):
+		_errors.append("委托任务配置的 speech 必须是对象：%s" % path)
+		return
+	var sp: Dictionary = speech
+	for stage in ["accept", "abandon"]:
+		var lines: Variant = sp.get(stage, null)
+		if not (lines is Array) or (lines as Array).is_empty():
+			_errors.append("委托任务配置缺非空 speech.%s：%s" % [stage, path])
+	var deliver: Variant = sp.get("deliver", null)
+	if not (deliver is Dictionary) or (deliver as Dictionary).is_empty():
+		_errors.append("委托任务配置缺非空 speech.deliver：%s" % path)
+		return
+	var need: Array = []
+	for branch in quest.get("branches", []):
+		var bid: String = str(branch.get("branchId", ""))
+		if not bid.is_empty():
+			need.append(bid)
+	var combat: Variant = quest.get("combat", null)
+	if combat is Dictionary:
+		var outcomes: Dictionary = (combat as Dictionary).get("outcomes", {})
+		for key in (outcomes as Dictionary).keys():
+			need.append("combat:%s" % str(key))
+	for key in need:
+		var line: Variant = (deliver as Dictionary).get(str(key), null)
+		var ok: bool = (line is String and not (line as String).is_empty()) \
+			or (line is Array and not (line as Array).is_empty())
+		if not ok:
+			_errors.append("委托任务配置 speech.deliver 缺做法 %s：%s" % [str(key), path])
 

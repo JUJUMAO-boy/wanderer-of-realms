@@ -287,6 +287,10 @@ func run_all() -> int:
 	_test_a1_rumors_pool()
 	_test_a1_rumors_pick_no_leak()
 	_test_a1_menu_style_audit()
+	print("=== B1 委托对话模板（第三阶段 / D-162）===")
+	_test_b1_quest_speech_compose()
+	_test_b1_quest_speech_coverage()
+	_test_b1_quest_speech_style_gate()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -9517,3 +9521,72 @@ func _test_a1_menu_style_audit() -> void:
 	# 纯说明目录腔（无任何荒诞细节）也要被拦。
 	var flat_copy: String = "打开仓库，取出物品，检查属性。"
 	_check(not bool(MenuStyle.audit(flat_copy, 80)["ok"]), "纯说明腔无荒诞细节判不通过")
+
+
+## B1 委托对话模板：按委托类型 + 交付分支产三段台词，并填掉占位符。
+func _test_b1_quest_speech_compose() -> void:
+	# 接单：给出行文语境，{giver}/{title}/{tier} 被填成真委托的字面。
+	var ctx: Dictionary = {
+		"giver": "商业行会", "title": "运粮补给", "tier": "小委托",
+	}
+	var accept: Array = QuestSpeech.accept_lines("grain_supply", ctx)
+	_check(accept.size() >= 2, "接单台词不止一句（不再「接了就一句」）")
+	_eq(str(accept[0]).contains("运粮补给"), true, "接单台词填进了委托名")
+	_eq(str(accept[0]).contains("{title}"), false, "占位符不留则漏给玩家看")
+	_eq(str(accept[0]).contains("商业行会"), true, "接单台词填进了委托人")
+	# 交付模板：不同的做法说不同的话。
+	var honest: Array = QuestSpeech.deliver_lines("grain_supply", "honest", ctx)
+	var resell: Array = QuestSpeech.deliver_lines("grain_supply", "resell", ctx)
+	_check(not honest.is_empty(), "老实话做法的交付台词非空")
+	_check(not resell.is_empty(), "转卖做法的交付台词非空")
+	_check(str(honest[0]) != str(resell[0]), "不同做法说不同的话（交付模板按做法分岔）")
+	_eq(str(resell[0]).contains("卖"), true, "转卖的台词话里有「卖」")
+	# 放弃台词。
+	var abandon: Array = QuestSpeech.abandon_lines("grain_supply", ctx)
+	_check(not abandon.is_empty(), "放弃台词非空")
+	# 交付段的单条字符串也会被兜成数组（交付大多是一句）。
+	_check(bool(QuestSpeech.deliver_lines("grain_supply", "honest", {}).size() == 1),
+		"单条字符串交付被兜成一句")
+
+
+## B1 交付模板完整性：每型委托的 delive 都覆盖了它的全部做法（普通分支 + 战斗结局）。
+func _test_b1_quest_speech_coverage() -> void:
+	const TYPES: Array = [
+		"grain_supply", "bandit_clearance", "construction",
+		"scholarship", "escort_migrants", "rebellion",
+	]
+	for type_id in TYPES:
+		var cfg: Dictionary = ContentLoader.get_quest_type(str(type_id))
+		_check(bool(QuestSpeech.accept_lines(str(type_id)).size() > 0),
+			"%s 接单有台词" % type_id)
+		_check(bool(QuestSpeech.abandon_lines(str(type_id)).size() > 0),
+			"%s 放弃有台词" % type_id)
+		# 普通分支都给一句交付
+		for branch in cfg.get("branches", []):
+			_check(bool(QuestSpeech.deliver_lines(
+				str(type_id), str(branch.get("branchId", ""))).size() > 0),
+				"%s 交付缺做法 %s" % [type_id, branch.get("branchId", "")])
+		# 带战斗的委托给每个战场结局都接上话
+		var combat: Variant = cfg.get("combat", null)
+		if combat is Dictionary:
+			for key in (combat as Dictionary).get("outcomes", {}):
+				_check(bool(QuestSpeech.deliver_lines(
+					str(type_id), "combat:%s" % str(key)).size() > 0),
+					"%s 交付缺战斗结局 %s" % [type_id, key])
+
+
+## B1 文风闸：接 A1 的 MenuStyle，套路腔台词被拦，有荒诞细节的台词过关。
+func _test_b1_quest_speech_style_gate() -> void:
+	# 套路腔（主角光环 / 教程腔 / 终极真相混在台词里）判不通过。
+	var sloppy: Dictionary = QuestSpeech.audit([
+		"命中注定，你只需记住——真相是这一切自有安排。"
+	], 80)
+	_check(not bool(sloppy["ok"]), "套路腔委托台词过不了文风闸")
+	_check((sloppy["flags"] as Array).size() >= 3, "套路腔标出三类以上 flag")
+	# 交付模板接得住即有荒诞细节的台词：当前全部委托台词不含套路腔触发词。
+	for type_id in ["grain_supply", "bandit_clearance", "rebellion"]:
+		var lines: Array = QuestSpeech.accept_lines(type_id)
+		lines.append_array(QuestSpeech.abandon_lines(type_id))
+		var audit: Dictionary = QuestSpeech.audit(lines, 200)
+		_check((audit["flags"] as Array).is_empty(),
+			"%s 交付台词无套路腔 flag" % type_id)
