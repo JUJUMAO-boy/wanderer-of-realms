@@ -283,6 +283,10 @@ func run_all() -> int:
 	_test_pontiff_bestow_and_sync()
 	_test_pontiff_convert_revert()
 	_test_soul_relics_cross_lives()
+	print("=== A1 口碑·传闻·文风验收（第三阶段 / D-160）===")
+	_test_a1_rumors_pool()
+	_test_a1_rumors_pick_no_leak()
+	_test_a1_menu_style_audit()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -9469,3 +9473,47 @@ func _test_soul_relics_cross_lives() -> void:
 	# to_dict/from_dict 往返后圣物还在。
 	var round: SoulRecord = SoulRecord.from_dict(soul.to_dict())
 	_eq(round.relics.size(), 2, "往返后圣物仍 2 件")
+
+
+# --- 第三阶段 A1：口碑·传闻·文风验收（D-160）---
+
+## 传闻池：非空、按 id 有序、且"假"占至少三分之一（口径，只测试断言不外露）。
+func _test_a1_rumors_pool() -> void:
+	var pool: Array = Rumors.pool()
+	_check(not pool.is_empty(), "传闻池非空")
+	_eq(pool.size(), 9, "传闻池 9 条")
+	_check(Rumors.has_false_at_least(3), "假传闻≥3 条（占 9 条的 1/3）")
+	# 按 id 有序
+	for i in range(pool.size() - 1):
+		_check(str(pool[i].get("id", "")) < str(pool[i + 1].get("id", "")), "池按 id 升序")
+
+
+## 抽取确定性 + 字面不漏真假：同种子同条、line() 只带正文与出处。
+func _test_a1_rumors_pick_no_leak() -> void:
+	var a: Dictionary = Rumors.pick(20261001)
+	var b: Dictionary = Rumors.pick(20261001)
+	_eq(str(a.get("id", "")), str(b.get("id", "")), "同种子抽同一条（确定性）")
+	var line_a: String = Rumors.line(a)
+	_check(not line_a.is_empty(), "line 有字面")
+	_check(not line_a.contains("true") and not line_a.contains("false"), "line 不漏真假字面")
+	_check(not line_a.contains("category") and not line_a.contains("reliability"),
+		"line 不带数据口径字段")
+
+## 文风验收筛：一段有荒诞细节的传闻口风 → ok；一段套路腔 → 判不通过并列出 flag。
+func _test_a1_menu_style_audit() -> void:
+	# 取两条已知带荒诞标记的口风，拼成一段"有味道"的块。
+	var ok_copy: String = "%s%s" % [
+		Rumors.line(ContentLoader.get_rumor("rumor_edland_none")),
+		Rumors.line(ContentLoader.get_rumor("rumor_snowline_bells")),
+	]
+	var audit_ok: Dictionary = MenuStyle.audit(ok_copy, 80)
+	_check(bool(audit_ok["ok"]), "有荒诞细节的口风块过文风筛")
+	_check((audit_ok["flags"] as Array).is_empty(), "口风块无套路腔")
+	# 套路腔：主角光环 / 教程腔 / 终极真相一个不少 → 必不过。
+	var bad_copy: String = "命中注定，你只需记住——真相是这一切自有安排。"
+	var audit_bad: Dictionary = MenuStyle.audit(bad_copy, 80)
+	_check(not bool(audit_bad["ok"]), "套路腔文案判不通过")
+	_check((audit_bad["flags"] as Array).size() >= 3, "套路腔标出三类以上 flag")
+	# 纯说明目录腔（无任何荒诞细节）也要被拦。
+	var flat_copy: String = "打开仓库，取出物品，检查属性。"
+	_check(not bool(MenuStyle.audit(flat_copy, 80)["ok"]), "纯说明腔无荒诞细节判不通过")

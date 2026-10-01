@@ -1,0 +1,14 @@
+{
+	"_comment": "传闻表（第三阶段 A1 / D-160）。抽取进 VIEW_EVENT/同行文案时绝不外露 category（真假口径）与 reliability，只对这些字面的『口风』本身——玩家听到的是互相矛盾、真假难辨的流言。category 仅供测试断言『至少 1/3 为假』；reliability 0..2 是这条口风在人群里的可信厚薄，抽取可按它加权。",
+	"rumors": [
+		{ "id": "rumor_harbor_blackmarket", "category": "true", "reliability": 2, "subject": "索恩港", "text": "索恩港的黑市昨天又涨了一截——可那截涨的，是一条专走盐袋路的湿货，船老大们宁可让它烂在舱底。", "origin": "脚行二队的碎嘴" },
+		{ "id": "rumor_harbor_cold", "category": "false", "reliability": 1, "subject": "索恩港", "text": "索恩港的黑市这个月冷清得让人张不开嘴，据说连常年在码头等客的野猫都搬去赤沙了。", "origin": "客栈账房的借口" },
+		{ "id": "rumor_edland_baron", "category": "true", "reliability": 2, "subject": "艾德兰", "text": "艾德兰那位不挂名的领主，夜里总往旧钟楼顶层跑——据说他在那数城底下漏的风，比数进项的账还勤。", "origin": "钟楼守夜人的幻听" },
+		{ "id": "rumor_edland_none", "category": "false", "reliability": 0, "subject": "艾德兰", "text": "艾德兰压根没有领主，管事的是一头会算账的老羊，每个月把税额舔进肚里再屙出铜板。", "origin": "过路羊倌的胡话" },
+		{ "id": "rumor_frontier_ore", "category": "true", "reliability": 1, "subject": "赤沙", "text": "赤沙最近被人从地下掏出一截会自己发热的铁轨，焊进谁的车厢谁就跑得比信鸽快——可没人见过那车厢还装着货。", "origin": "矿锤工的一句话" },
+		{ "id": "rumor_frontier_cursed", "category": "false", "reliability": 1, "subject": "赤沙", "text": "赤沙的矿法定在雨日封一百年，谁要偷出一块煤，谁家井口的月亮就少一牙。", "origin": "酒馆赌桌的闲谈" },
+		{ "id": "rumor_crossroad_road", "category": "true", "reliability": 2, "subject": "十字路口", "text": "十字路口那条直道最近会自己改向——夜里朝东走，天亮时脚下的车辙却朝西，商人们说是这条路在躲一笔烂账。", "origin": "半夜赶路的车把式" },
+		{ "id": "rumor_crossroad_bandits", "category": "false", "reliability": 1, "subject": "十字路口", "text": "十字路口的劫匪昨天被一整队宪兵马踏平了，现在就剩几个蹲在路口问旅人要火的人。", "origin": "驿站马夫的顺口话" },
+		{ "id": "rumor_snowline_bells", "category": "true", "reliability": 0, "subject": "雪线村", "text": "雪线村的钟换了一副哑铃似的旧铁，敲起来不出声，只让全村人后槽牙一阵一阵发酥——可没人肯换回去。", "origin": "牧人回忆里的一声" }
+	]
+}

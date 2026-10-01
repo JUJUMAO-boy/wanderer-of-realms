@@ -28,6 +28,7 @@ const RECIPE_FILE: String = "recipes.json"
 const HIDDEN_EVENT_FILE: String = "hidden_events.json"
 const PERSONALITY_FILE: String = "personality.json"
 const GOD_FILE: String = "gods.json"
+const RUMOR_FILE: String = "rumors.json"
 const WEATHER_FILE: String = "weather.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
@@ -109,6 +110,7 @@ var _personalities: Dictionary = {}
 var _faiths: Dictionary = {}
 var _gods: Dictionary = {}
 var _weather: Dictionary = {}
+var _rumors: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -155,6 +157,7 @@ func load_all() -> Dictionary:
 	_faiths = {}
 	_gods = {}
 	_weather = {}
+	_rumors = {}
 	_loaded = false
 
 	# 先读 balance：城市校验要用到世界网格尺寸与六维范围
@@ -272,6 +275,13 @@ func load_all() -> Dictionary:
 		_gods = gods_root
 	else:
 		_errors.append("神系配置为空或读取失败")
+
+	var rumor_root: Dictionary = _read_json(RUMOR_FILE, "传闻表")
+	if not rumor_root.is_empty():
+		_validate_rumors(rumor_root)
+		_rumors = rumor_root
+	else:
+		_errors.append("传闻表为空或读取失败")
 
 	var weather_root: Dictionary = _read_json(WEATHER_FILE, "天候配置")
 	if not weather_root.is_empty():
@@ -852,6 +862,24 @@ func get_god(god_id: String) -> Dictionary:
 	return {}
 
 
+## 传闻配置（第三阶段 A1 / D-160）。返回 rumors.json 的根对象。
+func get_rumor_config() -> Dictionary:
+	return _rumors
+
+
+## 全部传闻。数据里的 category 是真假口径（测试用），渲染与抽取绝不外露真假。
+func get_rumors() -> Array:
+	return _rumors.get("rumors", [])
+
+
+## 按 id 取一条传闻；查不到给空字典。
+func get_rumor(rumor_id: String) -> Dictionary:
+	for entry in get_rumors():
+		if str(entry.get("id", "")) == rumor_id:
+			return entry
+	return {}
+
+
 ## 天候配置（M25/M-A）。Weather 规则层读取。
 func get_weather_config() -> Dictionary:
 	return _weather
@@ -939,6 +967,39 @@ func _validate_personalities(root: Dictionary) -> void:
 				_errors.append("信仰 faithId 重复：%s" % fid)
 			else:
 				seen_f[fid] = true
+
+
+## 传闻表（第三阶段 A1 / D-160）。查会"静默失效"的错：id 重复、缺正文、
+## category 真假口径非法、可靠性星级越界 [0,2]。
+func _validate_rumors(root: Dictionary) -> void:
+	var list: Variant = root.get("rumors", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("传闻表缺少非空的 rumors 数组")
+		return
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "rumors[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("传闻 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var rid: String = str(config.get("id", ""))
+		if rid.is_empty():
+			_errors.append("传闻缺少字段：%s.id" % path)
+		elif seen.has(rid):
+			_errors.append("传闻 id 重复：%s" % rid)
+		else:
+			seen[rid] = true
+			path = "rumors[%s]" % rid
+		if str(config.get("text", "")).is_empty():
+			_errors.append("传闻缺少正文：%s.text" % path)
+		var cat: String = str(config.get("category", ""))
+		if cat != "true" and cat != "false":
+			_errors.append("传闻 category 非法（须 true/false）：%s" % path)
+		var stars: int = int(config.get("reliability", 1))
+		if stars < 0 or stars > 2:
+			_errors.append("传闻可靠性越界 [0,2]：%s" % path)
 
 
 ## 神系配置（M25/M-A）。查的是会"静默失效"的错：id 重复、恩惠三档门槛没递增
