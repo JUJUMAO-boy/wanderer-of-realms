@@ -71,7 +71,7 @@ static func build(
 		"selected": selected,
 		"mode": mode,
 		"activeCount": _count_kind(rows, ROW_KIND_ACTIVE),
-		"branches": branch_rows(selected),
+		"branches": branch_rows(selected, world, world.avatar),
 		"selectedIsActive": str(selected.get("kind", "")) == ROW_KIND_ACTIVE,
 	}
 
@@ -170,7 +170,9 @@ static func _rumor_row(rumor_state: Dictionary, city_label: String) -> Dictionar
 
 ## 这件事可以怎么处置，以及各选各的后果。带战斗的那条只说明"打完再定"，
 ## 但把赢与输两套后果都先摊开——玩家要的是"这一仗值不值得打"，而不是猜。
-static func branch_rows(selected: Dictionary) -> Array:
+static func branch_rows(
+	selected: Dictionary, world: WorldState = null, avatar: PlayerAvatar = null
+) -> Array:
 	if str(selected.get("kind", "")) != ROW_KIND_ACTIVE:
 		return []
 	if not bool(selected.get("canResolve", false)):
@@ -178,21 +180,42 @@ static func branch_rows(selected: Dictionary) -> Array:
 	var config: Dictionary = ContentLoader.get_event_template(str(selected.get("templateId", "")))
 	if config.is_empty():
 		return []
+	var system: EventSystem = null if world == null else EventSystem.create(world)
 	var out: Array = []
 	for branch in config.get("branches", []):
 		var branch_id: String = str(branch.get("branchId", ""))
 		var preview: Dictionary = EventSystem.branch_preview(config, branch_id)
 		var is_combat: bool = bool(branch.get("isCombat", false))
+		var is_trial: bool = branch.has("trial")
 		out.append({
 			"branchId": branch_id,
 			"isCombat": is_combat,
+			"isTrial": is_trial,
 			"label": str(preview.get("label", branch_id)),
 			"detail": str(preview.get("detail", "")),
-			"effectLabel": combat_effect_text(preview) if is_combat \
-				else EventSystem.effect_label(preview),
+			"effectLabel": _branch_effect_text(system, config, branch, preview, is_combat, is_trial, avatar),
 			"enabled": true,
 		})
 	return out
+
+
+## 一条分支的后果说明。交会分支（D3）不摆原始后果，改摆"判定会落在哪一档 + 折后的后果"——
+## 判定是确定性的，选之前就能算出来，摊开比让玩家猜诚实。
+static func _branch_effect_text(
+	system: EventSystem, config: Dictionary, branch: Dictionary, preview: Dictionary,
+	is_combat: bool, is_trial: bool, _avatar: PlayerAvatar
+) -> String:
+	if is_combat:
+		return combat_effect_text(preview)
+	if is_trial and system != null:
+		var tp: Dictionary = system.trial_preview(config, branch)
+		if not tp.is_empty():
+			return "交会：%s → %s（%s）" % [
+				str(tp.get("scoreText", "")),
+				str(tp.get("tierLabel", "")),
+				EventSystem.effect_label(tp.get("preview", {})),
+			]
+	return EventSystem.effect_label(preview)
 
 
 ## 战斗分支的后果说明。两套都写出来，中间用「／」隔开——一行里说清

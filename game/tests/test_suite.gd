@@ -349,6 +349,15 @@ func run_all() -> int:
 	_test_d1_chronicle_entry_and_style()
 	_test_d1_view_model_and_panel()
 	_test_d1_settle_death_keeps_shards()
+	print("=== D3 乱入者×城市事件交叉（第四阶段 / D-197）===")
+	_test_d3_crossover_data_wellformed()
+	_test_d3_crossover_gate()
+	_test_d3_ensemble_judge_and_fold()
+	_test_d3_match_judge()
+	_test_d3_trigger_requires_comer()
+	_test_d3_resolve_trial_applies()
+	_test_d3_comer_affinity_branch()
+	_test_d3_event_view_trial_preview()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -11079,4 +11088,199 @@ func _test_d1_settle_death_keeps_shards() -> void:
 	_eq(ShardLine.collected_count(soul.main_quest_progress), 2, "转生后碎片不丢")
 	_check(ShardLine.has_clue(soul.main_quest_progress, "clue_echo"), "高 SOU 线索完整保留")
 	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_SHARDS, "转生后幕次保持")
+
+
+# --- D3 乱入者×城市事件交叉（第四阶段 / D-197~D-199）---
+
+## 六条交会装载：模板唯一、绑的乱入者存在、城市等于其相遇城、交会分支带档位表。
+func _test_d3_crossover_data_wellformed() -> void:
+	_eq(ContentLoader.get_crossovers().size(), 6, "六条交会")
+	var ids: Dictionary = {}
+	var all_ok: bool = true
+	for cx in ContentLoader.get_crossovers():
+		var tid: String = str(cx.get("templateId", ""))
+		ids[tid] = true
+		var comer: Dictionary = ContentLoader.get_comer(str(cx.get("comerId", "")))
+		if comer.is_empty():
+			all_ok = false
+		elif str(comer.get("meetCity", "")) != str(cx.get("cityId", "")):
+			all_ok = false
+		var has_trial: bool = false
+		for branch in cx.get("branches", []):
+			if branch.has("trial") and not (branch.get("tiers", []) as Array).is_empty():
+				has_trial = true
+		if not has_trial:
+			all_ok = false
+		_eq(str(ContentLoader.get_event_template(tid).get("templateId", "")), tid,
+			"事件模板查询能取回交会 %s" % tid)
+	_eq(ids.size(), 6, "交会模板 id 唯一")
+	_check(all_ok, "每条交会都绑了相遇城里的乱入者、且带交会分支档位")
+
+
+## 入场门槛：好感未到 minAffinity 不发生，够了才发生。
+func _test_d3_crossover_gate() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var cfg: Dictionary = ContentLoader.get_crossover("cx_01_poem_dragon")
+	var need: int = int(cfg.get("minAffinity", 0))
+	_check(need > 0, "交会配了入场好感门槛")
+	_check(not bool(Crossover.gate_for(world, cfg).get("ok", false)), "好感为 0 时不发生")
+	ComerFavor.set_affinity(world, "comer_taibai", need - 1)
+	_check(not bool(Crossover.gate_for(world, cfg).get("ok", false)), "差一点不发生")
+	ComerFavor.set_affinity(world, "comer_taibai", need)
+	_check(bool(Crossover.gate_for(world, cfg).get("ok", false)), "刚好到门槛就发生")
+
+
+## 判定与折算：同一化身恒得同一档；effectMilli 与 balance 档位一致；折后后果成比例。
+func _test_d3_ensemble_judge_and_fold() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d3"
+	world.avatar = avatar
+	var cfg: Dictionary = ContentLoader.get_crossover("cx_01_poem_dragon")
+	var branch: Dictionary = _crossover_trial_branch(cfg)
+	_check(not branch.is_empty(), "取到诗剑镇龙的交会分支")
+	if branch.is_empty():
+		return
+	var j1: Dictionary = Crossover.judge(world, avatar, cfg, branch)
+	var j2: Dictionary = Crossover.judge(world, avatar, cfg, branch)
+	_eq(str(j1["key"]), str(j2["key"]), "同一化身恒得同一档")
+	_eq(int(j1["effectMilli"]), int(j2["effectMilli"]), "效力倍率可复现")
+	var ens: Dictionary = ContentLoader.get_balance_section("crossTrial").get("ensemble", {})
+	var bands: Dictionary = ens.get("bandEffectMilli", {})
+	_eq(int(j1["effectMilli"]), int(bands.get(str(j1["key"]), 0)), "倍率取自 balance 的档位表")
+	var spec: Dictionary = Crossover.effective_spec(cfg, branch, j1)
+	var base: Dictionary = branch.get("changes", {})
+	var ok_fold: bool = true
+	for dim in spec["changes"]:
+		var expected: int = int(round(float(int(base[dim])) * float(int(j1["effectMilli"])) / 1000.0))
+		if expected == 0:
+			expected = 1 if int(base[dim]) > 0 else -1
+		if int(spec["changes"][dim]) != expected:
+			ok_fold = false
+	_check(ok_fold, "成功套的增量按 effectMilli 折了")
+	var fail_keys: Array = branch.get("failKeys", [])
+	if not fail_keys.is_empty():
+		var failed_judge: Dictionary = j1.duplicate()
+		failed_judge["key"] = str(fail_keys[0])
+		failed_judge["failed"] = true
+		var fail_spec: Dictionary = Crossover.effective_spec(cfg, branch, failed_judge)
+		_eq(bool(fail_spec["resolved"]), bool(branch.get("fail", {}).get("resolved", true)),
+			"失败档用 fail 套（未了结）")
+
+
+## 一场球：大空翼交会走 match，档位是胜/负/平，净胜球折效力。
+func _test_d3_match_judge() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d3m"
+	world.avatar = avatar
+	var cfg: Dictionary = ContentLoader.get_crossover("cx_06_football_spirit")
+	var branch: Dictionary = _crossover_trial_branch(cfg)
+	_check(not branch.is_empty(), "取到足球精神的交会分支")
+	if branch.is_empty():
+		return
+	_eq(str(branch.get("trial", {}).get("kind", "")), Crossover.TRIAL_MATCH, "这条交会是球赛判定")
+	var judged: Dictionary = Crossover.judge(world, avatar, cfg, branch)
+	var valid: Array = [CrossTrial.MATCH_HOME, CrossTrial.MATCH_AWAY, CrossTrial.MATCH_DRAW]
+	_check(valid.has(str(judged["key"])), "球赛档位是胜/负/平")
+	_eq(int(judged["effectMilli"]),
+		int(Crossover.judge(world, avatar, cfg, branch)["effectMilli"]), "净胜折算可复现")
+	_check(not str(judged["scoreText"]).is_empty(), "有比分说明")
+
+
+## 触发要过乱入者那道门：好感够了，交会才作为城市事件触发。
+func _test_d3_trigger_requires_comer() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var cfg: Dictionary = ContentLoader.get_crossover("cx_01_poem_dragon")
+	_check(not sim.events.conditions_met(cfg, "crossroad", 1), "好感不够：交会不触发")
+	ComerFavor.set_affinity(world, "comer_taibai", int(cfg.get("minAffinity", 0)))
+	_check(sim.events.conditions_met(cfg, "crossroad", 1), "好感够了：交会触发")
+	sim.settle_month(1)
+	var event: CityEvent = world.find_event("ev-cx_01_poem_dragon-1")
+	_check(event != null, "交会作为事件实例落在世界")
+	if event != null:
+		_eq(event.city_id, "crossroad", "交会发生在乱入者的相遇城")
+
+
+## 交会分支结算：判 → 折 → 复用事件落账通路；结算与预览落在同一档。
+func _test_d3_resolve_trial_applies() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d3r"
+	world.avatar = avatar
+	var cfg: Dictionary = ContentLoader.get_crossover("cx_01_poem_dragon")
+	ComerFavor.set_affinity(world, "comer_taibai", 30)
+	sim.settle_month(1)
+	var event: CityEvent = world.find_event("ev-cx_01_poem_dragon-1")
+	if event == null:
+		_check(false, "交会没触发，后面的断言无从谈起")
+		return
+	var branch: Dictionary = _crossover_trial_branch(cfg)
+	var judged: Dictionary = Crossover.judge(world, avatar, cfg, branch)
+	var result: Dictionary = sim.events.resolve(event.event_id, str(branch["branchId"]), 1)
+	_check(bool(result.get("ok", false)), "交会分支处置成功：" + str(result.get("error", "")))
+	var trial: Dictionary = result.get("trial", {})
+	_eq(str(trial.get("key", "")), str(judged["key"]), "结算与预览落在同一档")
+	_check(not (result.get("changes", []) as Array).is_empty(), "成功时产出城市变更请求")
+	if not trial.is_empty():
+		_check(not bool(trial.get("failed", true)) or not (result.get("changes", []) as Array).is_empty(),
+			"交会结果带档位说明")
+
+
+## 交会的非判定分支能动乱入者好感：鲁莽讨伐 -10。
+func _test_d3_comer_affinity_branch() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d3a"
+	world.avatar = avatar
+	var cfg: Dictionary = ContentLoader.get_crossover("cx_01_poem_dragon")
+	ComerFavor.set_affinity(world, "comer_taibai", 30)
+	sim.settle_month(1)
+	var event: CityEvent = world.find_event("ev-cx_01_poem_dragon-1")
+	if event == null:
+		_check(false, "交会没触发，后面的断言无从谈起")
+		return
+	var before: int = ComerFavor.affinity(world, "comer_taibai")
+	var result: Dictionary = sim.events.resolve(event.event_id, "hunt", 1)
+	_check(bool(result.get("ok", false)), "讨伐分支处置成功：" + str(result.get("error", "")))
+	_eq(int(result.get("comerAffinity", 0)), -10, "结果里带着乱入者好感的变化")
+	_eq(ComerFavor.affinity(world, "comer_taibai"), before - 10, "鲁莽讨伐让乱入者好感 -10")
+
+
+## 事件界面把交会分支的"预计档位 + 折后后果"摊开，而不是原始后果。
+func _test_d3_event_view_trial_preview() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d3v"
+	world.avatar = avatar
+	ComerFavor.set_affinity(world, "comer_taibai", 30)
+	sim.settle_month(1)
+	var view: Dictionary = EventViewModel.build(
+		world, world.get_events(), "crossroad", "crossroad",
+		{"crossroad": "十字路"}, 0, EventViewModel.MODE_LIST, {})
+	var branches: Array = view.get("branches", [])
+	var trial_label: String = ""
+	for branch in branches:
+		if bool(branch.get("isTrial", false)):
+			trial_label = str(branch.get("effectLabel", ""))
+	_check(not trial_label.is_empty(), "交会分支在事件界面里被标出")
+	_check(trial_label.begins_with("交会："), "交会分支摆的是判定档位 + 折后后果")
+
+
+func _crossover_trial_branch(cfg: Dictionary) -> Dictionary:
+	for branch in cfg.get("branches", []):
+		if branch.has("trial"):
+			return branch
+	return {}
 

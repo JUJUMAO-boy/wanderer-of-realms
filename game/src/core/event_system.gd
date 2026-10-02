@@ -108,7 +108,12 @@ func check_triggers(month: int) -> Dictionary:
 	var triggered: Array = []
 	var changes: Array = []
 	var notices: Array = []
-	for config in ContentLoader.get_events():
+	# 城市事件与交叉任务同形状，一并在触发判定里过一遍（交叉任务多一道乱入者门槛，
+	# 见 conditions_met）。
+	var templates: Array = []
+	templates.append_array(ContentLoader.get_events())
+	templates.append_array(ContentLoader.get_crossovers())
+	for config in templates:
 		var template_id: String = str(config.get("templateId", ""))
 		var city_id: String = str(config.get("cityId", ""))
 		if template_id.is_empty() or city_id.is_empty():
@@ -151,6 +156,10 @@ func conditions_met(config: Dictionary, city_id: String, month: int) -> bool:
 	var dimension: String = str(trigger.get("dimension", ""))
 	if not dimension.is_empty() and city.get_dimension(dimension) < int(trigger.get("atLeast", 0)):
 		return false
+	# 交叉任务多绑一位乱入者（D3）：他得跟玩家够熟，这场交会才发生。
+	if not str(config.get("comerId", "")).is_empty():
+		if not bool(Crossover.gate_for(world, config).get("ok", false)):
+			return false
 	return _smell_condition_met(trigger, city_id)
 
 
@@ -293,7 +302,33 @@ func resolve(event_id: String, branch_id: String, month: int) -> Dictionary:
 		return _fail(ERROR_INVALID_ARGUMENT, "「%s」要打完才知道结果，先在战场上分胜负" % [
 			str(branch.get("label", branch_id))
 		])
+	# 交叉任务的交会分支（D3）：先跑 CrossTrial 判一句奏/一场球，再按该档 effectMilli
+	# 折这一分支的后果。判定与折算出在规则层 Crossover。
+	if branch.has("trial"):
+		return _resolve_trial(event, config, branch, month)
 	return _apply(event, config, branch, {}, month)
+
+
+## 交会分支的结算。判 → 折 → 复用既有的 _apply 落账通路（后果套 already 折好）。
+func _resolve_trial(
+	event: CityEvent, config: Dictionary, branch: Dictionary, month: int
+) -> Dictionary:
+	var judged: Dictionary = Crossover.resolve(world, world.avatar, config, branch)
+	if not bool(judged.get("ok", false)):
+		return _fail(ERROR_CONTENT_MISSING, str(judged.get("error", "")))
+	var spec: Dictionary = judged.get("spec", {})
+	# spec 已含折好的 changes / 定好的 label·detail，直接摊成预览交给 _apply。
+	var result: Dictionary = _apply(event, config, branch, spec, month, _outcome_preview(spec))
+	result["trial"] = {
+		"kind": str(judged.get("judgement", {}).get("kind", "")),
+		"key": str(spec.get("trialKey", "")),
+		"label": str(spec.get("trialLabel", "")),
+		"detail": str(spec.get("trialDetail", "")),
+		"scoreText": str(spec.get("trialScore", "")),
+		"failed": bool(spec.get("trialFailed", false)),
+		"effectMilli": int(spec.get("effectMilli", 1000)),
+	}
+	return result
 
 
 ## 战斗分支的收尾（M5 的战果 → 事件的结局）。won 决定走 victory 还是 defeat。
@@ -338,12 +373,16 @@ func _check_branch(event: CityEvent, branch_id: String) -> Dictionary:
 ## 把选定的后果落到世界上。分支与战斗结局走的是同一条路：战斗结局是"分支的
 ## 两套后果之一"，字段形状与分支完全一样（changes / reputation / karma / flags）。
 func _apply(
-	event: CityEvent, config: Dictionary, branch: Dictionary, outcome: Dictionary, month: int
+	event: CityEvent, config: Dictionary, branch: Dictionary, outcome: Dictionary, month: int,
+	preview_override: Dictionary = {}
 ) -> Dictionary:
 	var branch_id: String = str(branch.get("branchId", ""))
 	# 非战斗分支的后果直接写在分支上；战斗分支的两套后果写在 outcomes 里
 	var spec: Dictionary = branch if outcome.is_empty() else outcome
-	var preview: Dictionary = branch_preview(config, branch_id, _outcome_key_of(branch, outcome))
+	# 交会分支（D3）的后果是"折过、且 label/detail 出自档位"的，预览由调用方直接给，
+	# 免得这里再去 branch_preview 拿一份未折的原始值（那就对不上账了）。
+	var preview: Dictionary = preview_override if not preview_override.is_empty() \
+		else branch_preview(config, branch_id, _outcome_key_of(branch, outcome))
 
 	var changes: Array = _changes_of(spec, event, branch_id, month)
 	var avatar: PlayerAvatar = world.avatar
@@ -352,6 +391,13 @@ func _apply(
 	if avatar != null:
 		avatar.set_reputation(event.city_id, avatar.get_reputation(event.city_id) + reputation)
 		avatar.karma += karma
+
+	# 交会分支还能动乱入者的好感（D3）：与他合奏成功就更亲近，鲁莽讨伐就更疏远。
+	var comer_affinity: int = int(spec.get("comerAffinity", 0))
+	var comer_id: String = str(config.get("comerId", ""))
+	if comer_affinity != 0 and not comer_id.is_empty():
+		ComerFavor.set_affinity(
+			world, comer_id, ComerFavor.affinity(world, comer_id) + comer_affinity)
 
 	var flags: Array = _write_flags(event, spec)
 	var unlock: Dictionary = _route_unlock_of(spec, event)
@@ -385,6 +431,7 @@ func _apply(
 		"flags": flags,
 		"unlockRoute": unlock,
 		"recurrence": bool(spec.get("recurrence", false)),
+		"comerAffinity": comer_affinity,
 		"errorCode": ERROR_NONE,
 		"error": "",
 	}
@@ -422,6 +469,25 @@ static func branch_preview(
 			}
 		branch = outcome_of(branch, key)
 	return _outcome_preview(branch)
+
+
+## 交会分支的预览（D3）：判定是确定性的，所以选之前就能算出"会落在哪一档、后果大约如何"。
+## 返回 {tierKey, tierLabel, tierDetail, scoreText, effectMilli, failed, preview}；
+## 非交会分支返回 {}。
+func trial_preview(config: Dictionary, branch: Dictionary) -> Dictionary:
+	if not branch.has("trial"):
+		return {}
+	var judged: Dictionary = Crossover.judge(world, world.avatar, config, branch)
+	var spec: Dictionary = Crossover.effective_spec(config, branch, judged)
+	return {
+		"tierKey": str(judged.get("key", "")),
+		"tierLabel": str(judged.get("label", "")),
+		"tierDetail": str(judged.get("detail", "")),
+		"scoreText": str(judged.get("scoreText", "")),
+		"effectMilli": int(judged.get("effectMilli", 1000)),
+		"failed": bool(judged.get("failed", false)),
+		"preview": _outcome_preview(spec),
+	}
 
 
 ## 结算用的一套后果（分支本身或战斗的某个结局）。

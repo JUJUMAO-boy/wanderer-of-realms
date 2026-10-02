@@ -1,0 +1,410 @@
+{
+  "_comment": "乱入者×城市事件的交叉任务（第四阶段 D3 / D-197~D-199）。这六条（《乱入者交叉任务剧本》CX-01~CX-06）不做独立的新流程，而是**接进既有的城市事件流程**：每条交会就是一张事件模板（沿用 events.json 的 templateId/cityId/trigger/blockade/dialogue/branches 形状），额外多两样——①绑一位乱入者（comerId/minAffinity）：该乱入者得跟玩家够熟、且交会发生在他所在的相遇城；②交会分支（分岔里的 'trial' 块）：选它时不直接给后果，而是先用 B4 的 CrossTrial 判一句奏/一场球，再按该档的 effectMilli 折这一分支的后果。判定与折算出在规则层 Crossover 为单一来源。",
+  "_comment_place": "cityId 恒等于该乱入者的相遇城（meetCity）——本轮乱入者尚无『入队随行』，出场即『在相遇城且好感达标』，故交会只能发生在那座城。剧本里个别事件（如泰坦苏醒）本在别的城，这里随乱入者落到他的相遇城，主题随之就地取材。",
+  "_comment_nocommit": "本轮不设战斗分支：交会分支（trial）与其余分支一律当场结算，复用 EventSystem 既有的分支后果通路，不引战斗与平衡表，先把『判定 + effectMilli 折后果』这条骨架钉死。",
+  "crossovers": [
+    {
+      "templateId": "cx_01_poem_dragon",
+      "scriptRef": "CX-01",
+      "baseScriptRef": "EV-04",
+      "displayName": "诗剑镇龙",
+      "comerId": "comer_taibai",
+      "minAffinity": 25,
+      "cityId": "crossroad",
+      "summary": "元素龙被界缝激怒，压向十字路。李白望着天空说：『这龙不是在愤怒，是在恐惧。』",
+      "chronicleBp": 400,
+      "trigger": { "dimension": "development", "atLeast": 0 },
+      "blockade": {
+        "changes": { "security": -12, "development": -8 },
+        "haltRoutes": false,
+        "drainPerMonth": { "dimension": "security", "delta": -2 },
+        "text": "元素龙的影子压在城头，市集没人敢开张"
+      },
+      "dialogue": [
+        "李白（按住剑柄，却没拔）：『这龙，不是在愤怒，是在恐惧。』",
+        "元素龙（俯冲的势头一滞）：『那声音……很旧。像……我母亲哼过的调子。』",
+        "李白（回头看你）：『来，与我合完这半阙诗——还是你想用剑说话？』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 14, "dexterity": 16, "constitution": 12, "intelligence": 14, "perception": 12, "charisma": 18, "soul": 22 },
+        "skills": { "soul_poem": 28 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "harmonize",
+          "label": "与李白合奏完成剑诗",
+          "detail": "以剑吟诗，把半阙《将进酒》接完，让诗声盖过龙的惧意。",
+          "changes": { "culture": 12, "security": 16, "development": 8 },
+          "reputation": 7,
+          "karma": 3,
+          "flags": ["dragon_calmed"],
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "诗与剑落成一个音，元素龙垂下头，转身退回云里。" },
+            { "key": "resonance", "label": "声气相通", "detail": "半阙剑诗吟成，龙的怒火散了大半，退去。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "诗声断续，龙迟疑了一阵，到底还是走了。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "剑光乱了拍子，龙被激怒，俯冲下来。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "changes": { "security": -8, "development": -6 }, "reputation": -3, "karma": 0, "flags": ["dragon_enraged"], "resolved": false }
+        },
+        {
+          "branchId": "hunt",
+          "label": "坚持讨伐",
+          "detail": "不管什么诗不诗，把龙打下来才是正事。",
+          "changes": { "security": 10 },
+          "reputation": 4,
+          "karma": 2,
+          "flags": ["dragon_slain"],
+          "comerAffinity": -10
+        },
+        {
+          "branchId": "alone",
+          "label": "让李白独自面对",
+          "detail": "退到城垛后面，看这位诗剑客能走到哪一步。",
+          "changes": { "security": 6 },
+          "reputation": 3,
+          "karma": 1,
+          "flags": ["poet_scarred"],
+          "comerAffinity": 8
+        }
+      ]
+    },
+    {
+      "templateId": "cx_02_forge_titan",
+      "scriptRef": "CX-02",
+      "baseScriptRef": "EV-05",
+      "displayName": "异火锻地",
+      "comerId": "comer_xiaoyan",
+      "minAffinity": 25,
+      "cityId": "red_sands",
+      "summary": "赤沙脚下的火脉被挖穿，压着的东西要醒了。萧炎说：『这火，我见过。』",
+      "chronicleBp": 400,
+      "trigger": { "dimension": "development", "atLeast": 0 },
+      "blockade": {
+        "changes": { "development": -15, "security": -8 },
+        "haltRoutes": false,
+        "drainPerMonth": { "dimension": "development", "delta": -2 },
+        "text": "地底的火脉翻涌，赤沙的地面在颤"
+      },
+      "dialogue": [
+        "萧炎（蹲下身，掌心燃起一缕异火）：『这火，我见过。大地之下有火脉。』",
+        "玩家：『能把它重新压下去吗？』",
+        "萧炎：『能。用我的火，重锻这条被挖穿的矿脉——但过程里，谁都不能打扰我。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 16, "dexterity": 14, "constitution": 16, "intelligence": 12, "perception": 12, "charisma": 12, "soul": 18 },
+        "skills": { "soul_flame": 30 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "forge",
+          "label": "助萧炎异火锻地",
+          "detail": "守在他身边，不让任何人打扰这次重锻。",
+          "changes": { "development": 16, "security": 8, "wealth": 6 },
+          "reputation": 6,
+          "karma": 2,
+          "flags": ["titan_lulled"],
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "你与他同息，异火顺着矿脉一路封下去，地底的动静彻底静了。" },
+            { "key": "resonance", "label": "声气相通", "detail": "重锻成了，地底那道翻涌的火脉被压回原处。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "多花了几次工夫，到底还是把矿脉堵上了。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "你没能护住他的手势，火脉炸开一道新裂。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "changes": { "development": -10, "security": -8 }, "reputation": -3, "karma": 0, "flags": ["titan_awoke"], "resolved": false }
+        },
+        {
+          "branchId": "face",
+          "label": "正面迎击泰坦",
+          "detail": "不等它彻底醒来，先下手为强。",
+          "changes": { "security": 6, "development": -6 },
+          "reputation": 3,
+          "karma": 1,
+          "flags": ["titan_driven"],
+          "comerAffinity": -6
+        },
+        {
+          "branchId": "reinforce",
+          "label": "请矮人帮忙加固",
+          "detail": "与杜瓦那些石匠一起，把裂缝暂时撑住。",
+          "changes": { "development": 6 },
+          "reputation": 2,
+          "karma": 1,
+          "flags": ["titan_sealed_weak"],
+          "comerAffinity": 4
+        }
+      ]
+    },
+    {
+      "templateId": "cx_03_force_ask",
+      "scriptRef": "CX-03",
+      "baseScriptRef": "EV-06",
+      "displayName": "原力问道",
+      "comerId": "comer_luke",
+      "minAffinity": 25,
+      "cityId": "silvermoon_spire",
+      "summary": "天使虚影悬在法师塔顶，念着早已失效的旧命令。卢克说：『它没有恶意。』",
+      "chronicleBp": 400,
+      "trigger": { "dimension": "culture", "atLeast": 0 },
+      "blockade": {
+        "changes": { "culture": -6 },
+        "haltRoutes": false,
+        "text": "光柱悬在法师塔顶，没人敢靠近"
+      },
+      "dialogue": [
+        "卢克（闭眼，伸出一只手，原力如涟漪荡开）：『它没有恶意。它只是一道……被遗忘的指令，在等一个不会再来的发令者。』",
+        "天使（虚影微微震颤）：『……你是谁？你的力量，很像……旧日的神。』",
+        "卢克（睁眼看向你）：『帮我按住这道光——或者，替我把它关掉。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 12, "dexterity": 14, "constitution": 12, "intelligence": 16, "perception": 16, "charisma": 12, "soul": 24 },
+        "skills": { "soul_force": 26 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "ask",
+          "label": "与卢克一同『原力问道』",
+          "detail": "把原力送进虚影里，试着问一句『神为何离开』。",
+          "changes": { "culture": 16 },
+          "reputation": 5,
+          "karma": 2,
+          "flags": ["angel_truth"],
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "问句与虚影同频，天使吐出一句『神已化作轮回』，随即散去。" },
+            { "key": "resonance", "label": "声气相通", "detail": "虚影应了你的问，露出一点真相的碎片，慢慢淡去。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "问成了，只是答得含糊，光柱缓缓收回塔顶。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "原力与虚影撞了一下，光柱炸散，什么都没问出来。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "changes": { "culture": -6 }, "reputation": -2, "karma": 0, "flags": ["angel_silent"], "resolved": false }
+        },
+        {
+          "branchId": "alone",
+          "label": "让卢克独自质问",
+          "detail": "退到一边，把这道光交给他一个人。",
+          "changes": { "culture": 8 },
+          "reputation": 3,
+          "karma": 1,
+          "flags": ["luke_enlightened"],
+          "comerAffinity": 8
+        },
+        {
+          "branchId": "stop",
+          "label": "阻止卢克",
+          "detail": "这东西太邪门，别去碰它。",
+          "changes": {},
+          "reputation": 0,
+          "karma": 0,
+          "flags": ["angel_ritual_normal"],
+          "comerAffinity": -8
+        }
+      ]
+    },
+    {
+      "templateId": "cx_04_dragon_guard",
+      "scriptRef": "CX-04",
+      "baseScriptRef": "EV-01",
+      "displayName": "降龙守城",
+      "comerId": "comer_qiaofeng",
+      "minAffinity": 25,
+      "cityId": "frostspeak_keep",
+      "summary": "亡灵如潮涌向城门。乔峰放下酒碗：『守城之事，交给我。』",
+      "chronicleBp": 400,
+      "trigger": { "dimension": "security", "atLeast": 0 },
+      "blockade": {
+        "changes": { "security": -18, "development": -10 },
+        "haltRoutes": false,
+        "drainPerMonth": { "dimension": "security", "delta": -3 },
+        "text": "亡灵如潮，城门昼夜不闭"
+      },
+      "dialogue": [
+        "乔峰（一掌拍在城垛上，掌风如龙，把攀墙的亡灵尽数震落）：『守城之事，交给我。』",
+        "乔峰（望着尸潮中央的死亡骑士，眼神一凝）：『那剑上的纹章……我好像在哪见过。』",
+        "玩家：『你要我怎么配合？』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 22, "dexterity": 16, "constitution": 20, "intelligence": 12, "perception": 14, "charisma": 14, "soul": 20 },
+        "skills": { "soul_dragon": 27 },
+        "morale": 70
+      },
+      "branches": [
+        {
+          "branchId": "stand",
+          "label": "与乔峰并肩守城",
+          "detail": "站上城头，与他一同接住这波尸潮。",
+          "changes": { "security": 20, "development": 8 },
+          "reputation": 8,
+          "karma": 4,
+          "flags": ["city_held"],
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "你与他掌风相接，尸潮在城下碎成两半，城头一步未退。" },
+            { "key": "resonance", "label": "声气相通", "detail": "两人配合有度，亡灵难越雷池，城守住了。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "几处险些失守，好在最后压了回去。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "你与他各守一边，接应不上，城门破了口。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "changes": { "security": -14, "development": -10 }, "reputation": -4, "karma": 0, "flags": ["city_breached"], "resolved": false }
+        },
+        {
+          "branchId": "flank",
+          "label": "让乔峰守城，自己去清剿源头",
+          "detail": "他守城门，你去尸潮尽头看看是谁在驱赶死人。",
+          "changes": { "security": 12 },
+          "reputation": 6,
+          "karma": 3,
+          "flags": ["zombie_source_broken"],
+          "comerAffinity": 6
+        },
+        {
+          "branchId": "evacuate",
+          "label": "组织平民撤离",
+          "detail": "城可以丢，人不能丢。先把百姓送出去。",
+          "changes": { "development": 6, "security": -4 },
+          "reputation": 4,
+          "karma": 5,
+          "flags": ["people_saved"],
+          "comerAffinity": 4
+        }
+      ]
+    },
+    {
+      "templateId": "cx_05_future_gadget",
+      "scriptRef": "CX-05",
+      "baseScriptRef": "EV-02",
+      "displayName": "未来道具",
+      "comerId": "comer_bluecat",
+      "minAffinity": 25,
+      "cityId": "port_thorne",
+      "summary": "海怪盘踞航道。圆手蓝猫半个身子钻进四次元口袋：『我记得有个「海怪探测器」……』",
+      "chronicleBp": 400,
+      "trigger": { "dimension": "wealth", "atLeast": 0 },
+      "blockade": {
+        "changes": { "wealth": -22 },
+        "haltRoutes": true,
+        "drainPerMonth": { "dimension": "wealth", "delta": -3 },
+        "text": "利维坦盘踞航道，商船不敢进出"
+      },
+      "dialogue": [
+        "圆手蓝猫（掏出一堆稀奇古怪的道具）：『海怪探测器！……不对，这是钓鱼竿。』",
+        "圆手蓝猫（终于掏出一样东西）：『啊，找到了！说明书上说，它能让海怪「冷静下来」。大概？』",
+        "玩家：『大概？』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 8, "dexterity": 12, "constitution": 10, "intelligence": 20, "perception": 14, "charisma": 14, "soul": 16 },
+        "skills": { "soul_gadget": 24 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "probe",
+          "label": "用道具探测海怪",
+          "detail": "先弄清它为什么来，再决定怎么办。",
+          "changes": { "wealth": 10, "development": 6 },
+          "reputation": 5,
+          "karma": 2,
+          "flags": ["kraken_truth"],
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "探测仪与你同频，一下指到外海那批『货』——海怪是被血腥引来的。" },
+            { "key": "resonance", "label": "声气相通", "detail": "探测仪亮了，虽然噪声大，源头却指得明白。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "信号断断续续，只探出个大概方向。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "道具在你手里『啪』地冒了烟，什么也没探到。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "changes": { "wealth": -6 }, "reputation": -2, "karma": 0, "flags": ["gadget_backfired"], "resolved": false }
+        },
+        {
+          "branchId": "disperse",
+          "label": "用道具驱散海怪",
+          "detail": "赌一把，看这道具到底管不管用。",
+          "changes": { "wealth": 16 },
+          "reputation": 5,
+          "karma": 2,
+          "flags": ["kraken_driven"]
+        },
+        {
+          "branchId": "drive_off",
+          "label": "组织行会驱赶海怪",
+          "detail": "不靠那来路不明的道具，靠船和人。",
+          "changes": { "wealth": 12, "security": 4 },
+          "reputation": 4,
+          "karma": 1,
+          "flags": ["kraken_chased"]
+        }
+      ]
+    },
+    {
+      "templateId": "cx_06_football_spirit",
+      "scriptRef": "CX-06",
+      "baseScriptRef": "EV-07",
+      "displayName": "足球精神",
+      "comerId": "comer_tsubasa",
+      "minAffinity": 25,
+      "cityId": "greenwade",
+      "summary": "城被毁了，难民散在废墟里。大空翼把一颗足球放在空地中央：『只要还有一块空地，就有希望。』",
+      "chronicleBp": 400,
+      "trigger": { "dimension": "development", "atLeast": 0 },
+      "blockade": {
+        "changes": { "development": -14, "culture": -8 },
+        "haltRoutes": false,
+        "drainPerMonth": { "dimension": "development", "delta": -2 },
+        "text": "城被毁了，难民散在废墟里等着谁来牵头"
+      },
+      "dialogue": [
+        "大空翼（把球挑起来）：『来！跟我踢一场！输了的人，去帮隔壁搭帐篷！』",
+        "难民孩子（怯生生地站出来）：『……我、我可以吗？』",
+        "大空翼（咧嘴笑）：『当然！足球，是朋友啊！』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 14, "dexterity": 18, "constitution": 16, "intelligence": 14, "perception": 14, "charisma": 16, "soul": 14 },
+        "skills": { "ball_shot": 24 },
+        "morale": 70
+      },
+      "branches": [
+        {
+          "branchId": "organize",
+          "label": "支持他举办球赛",
+          "detail": "把空地清出来，陪这群没了家的人踢一场。",
+          "changes": { "culture": 14, "development": 10 },
+          "reputation": 5,
+          "karma": 3,
+          "flags": ["football_spirit"],
+          "trial": { "kind": "match" },
+          "tiers": [
+            { "key": "home", "label": "大空翼队胜", "detail": "哨响，他那一队人人高喊，废墟上第一次有了笑声。" },
+            { "key": "away", "label": "你带的队胜", "detail": "你赢了球，大空翼却比谁都高兴——人心已经聚回来了。" },
+            { "key": "draw", "label": "握手言和", "detail": "终场哨响，双方握手，谁也没输，重建的号子却响了起来。" }
+          ],
+          "failKeys": []
+        },
+        {
+          "branchId": "sponsor",
+          "label": "赞助物资但不出面",
+          "detail": "把料备齐，人就不必亲自下场了。",
+          "changes": { "development": 8 },
+          "reputation": 2,
+          "karma": 2,
+          "flags": ["football_sponsored"],
+          "comerAffinity": -4
+        },
+        {
+          "branchId": "ignore",
+          "label": "无视",
+          "detail": "重建要紧，一场球解决不了什么。",
+          "changes": { "development": 4 },
+          "reputation": 0,
+          "karma": 0,
+          "flags": ["football_solo"],
+          "comerAffinity": -8
+        }
+      ]
+    }
+  ]
+}

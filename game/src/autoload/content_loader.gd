@@ -31,6 +31,7 @@ const GOD_FILE: String = "gods.json"
 const RUMOR_FILE: String = "rumors.json"
 const WEATHER_FILE: String = "weather.json"
 const COMER_FILE: String = "comers.json"
+const CROSSOVER_FILE: String = "crossovers.json"
 const MAINLINE_FILE: String = "mainline.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
@@ -114,6 +115,7 @@ var _gods: Dictionary = {}
 var _weather: Dictionary = {}
 var _rumors: Dictionary = {}
 var _comers: Dictionary = {}
+var _crossovers: Dictionary = {}
 var _mainline: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
@@ -156,6 +158,7 @@ func load_all() -> Dictionary:
 	_events = {}
 	_affixes = {}
 	_monsters = {}
+	_crossovers = {}
 	_hidden_events.clear()
 	_personalities = {}
 	_faiths = {}
@@ -308,6 +311,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("主线碎片配置为空或读取失败")
 
+	var crossover_root: Dictionary = _read_json(CROSSOVER_FILE, "交叉任务配置")
+	if not crossover_root.is_empty():
+		_validate_crossovers(crossover_root)
+		_crossovers = crossover_root
+	else:
+		_errors.append("交叉任务配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -332,6 +342,7 @@ func load_all() -> Dictionary:
 			"personalities": _personalities.get("personalities", []).size(),
 			"faiths": _personalities.get("faiths", []).size(),
 			"comers": _comers.get("comers", []).size(),
+			"crossovers": _crossovers.get("crossovers", []).size(),
 			"shards": _mainline.get("shards", []).size(),
 		},
 		"errors": _errors.duplicate(),
@@ -816,6 +827,29 @@ func get_events() -> Array:
 
 func get_event_template(template_id: String) -> Dictionary:
 	for entry in get_events():
+		if str(entry.get("templateId", "")) == template_id:
+			return entry
+	# 交叉任务（D3）也是事件模板形状、走同一套事件流程，这里一并查回，
+	# 免得消费方（EventSystem / EventViewModel）还要各自记着去问第二张表。
+	for entry in get_crossovers():
+		if str(entry.get("templateId", "")) == template_id:
+			return entry
+	return {}
+
+
+## 交叉任务配置（第四阶段 D3 / D-197~D-199）。返回 crossovers.json 的根对象。
+func get_crossover_config() -> Dictionary:
+	return _crossovers
+
+
+## 全部交叉任务模板。它们与城市事件同形状，EventSystem 的触发判定一并过。
+func get_crossovers() -> Array:
+	return _crossovers.get("crossovers", [])
+
+
+## 按 templateId 取一条交叉任务；查不到给空字典。
+func get_crossover(template_id: String) -> Dictionary:
+	for entry in get_crossovers():
 		if str(entry.get("templateId", "")) == template_id:
 			return entry
 	return {}
@@ -1345,6 +1379,135 @@ func _validate_mainline(root: Dictionary) -> void:
 		var ratio: float = float((inh as Dictionary).get("clueLossRatio", -1.0))
 		if ratio < 0.0 or ratio > 1.0:
 			_errors.append("inheritance.clueLossRatio 越界 [0,1]：%f" % ratio)
+
+
+## 交叉任务配置（第四阶段 D3 / D-197~D-199）。
+##
+## 交叉任务与城市事件**同形状**（templateId/cityId/trigger/blockade/dialogue/branches），
+## 所以触发/冲击/分支的校验直接复用 `_validate_event_*`。这里只补交叉特有的四道：
+##   1. 多绑一位乱入者（comerId 必须在 comers.json），且交会只能落在他的相遇城；
+##   2. 交会发生时他得跟玩家够熟（minAffinity 非负）；
+##   3. 交会判定的一侧（comerProfile）得有属性/技能，否则 CrossTrial 判不出东西；
+##   4. 交会分支（trial）的档位与失败档写对——failKeys 必须落在 tiers 的 key 里，
+##      否则「输/没对上」永远触发不到，玩家只会拿到"成功"那一份后果。
+func _validate_crossovers(root: Dictionary) -> void:
+	var dim_min: int = int(_balance.get("cityDimension", {}).get("min", DEFAULT_DIM_MIN))
+	var dim_max: int = int(_balance.get("cityDimension", {}).get("max", DEFAULT_DIM_MAX))
+	var event_ids: Dictionary = {}
+	for event in get_events():
+		event_ids[str(event.get("templateId", ""))] = true
+
+	var list: Variant = root.get("crossovers", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("交叉任务配置缺少非空的 crossovers 数组")
+		return
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "crossovers[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("交叉任务配置 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+
+		var template_id: String = str(config.get("templateId", ""))
+		if template_id.is_empty():
+			_errors.append("交叉任务配置缺少字段：%s.templateId" % path)
+		elif event_ids.has(template_id):
+			_errors.append("交叉任务 templateId 与城市事件撞名：%s" % template_id)
+		elif seen.has(template_id):
+			_errors.append("交叉任务 templateId 重复：%s" % template_id)
+		else:
+			seen[template_id] = true
+			path = "crossovers[%s]" % template_id
+
+		if str(config.get("displayName", "")).is_empty():
+			_errors.append("交叉任务缺少字段：%s.displayName" % path)
+		if str(config.get("summary", "")).is_empty():
+			_errors.append("交叉任务缺少字段：%s.summary" % path)
+
+		var comer_id: String = str(config.get("comerId", ""))
+		var comer: Dictionary = get_comer(comer_id)
+		if comer_id.is_empty():
+			_errors.append("交叉任务缺少绑定的乱入者：%s.comerId" % path)
+		elif comer.is_empty():
+			_errors.append("交叉任务绑定了不存在的乱入者：%s.comerId = %s" % [path, comer_id])
+		if int(config.get("minAffinity", -1)) < 0:
+			_errors.append("交叉任务 minAffinity 不能为负：%s.minAffinity" % path)
+
+		var city_id: String = str(config.get("cityId", ""))
+		if city_id.is_empty():
+			_errors.append("交叉任务缺少字段：%s.cityId" % path)
+		elif get_city_config(city_id).is_empty():
+			_errors.append("交叉任务指向不存在的城市：%s.cityId = %s" % [path, city_id])
+		elif not comer.is_empty() and str(comer.get("meetCity", "")) != city_id:
+			_errors.append("交叉任务的城市必须等于乱入者的相遇城：%s.cityId = %s（%s 在 %s）" % [
+				path, city_id, comer_id, str(comer.get("meetCity", ""))
+			])
+
+		var dialogue: Variant = config.get("dialogue", null)
+		if not (dialogue is Array) or (dialogue as Array).is_empty():
+			_errors.append("交叉任务缺少非空的 dialogue：%s" % path)
+
+		_validate_crossover_profile(config, path)
+		_validate_event_trigger(config, path, dim_min, dim_max)
+		_validate_event_blockade(config, path)
+		_validate_event_branches(config, path, city_id)
+
+
+## 交会判定里乱入者一侧的规格（comerProfile）。缺属性/技能 → CrossTrial 判出空结果。
+func _validate_crossover_profile(config: Dictionary, path: String) -> void:
+	var raw: Variant = config.get("comerProfile", null)
+	if not (raw is Dictionary):
+		_errors.append("交叉任务缺少乱入者判定规格：%s.comerProfile" % path)
+		return
+	var profile: Dictionary = raw
+	var attrs: Variant = profile.get("attributes", null)
+	if not (attrs is Dictionary) or (attrs as Dictionary).is_empty():
+		_errors.append("交叉任务乱入者缺少属性：%s.comerProfile.attributes" % path)
+	var skills: Variant = profile.get("skills", null)
+	if not (skills is Dictionary) or (skills as Dictionary).is_empty():
+		_errors.append("交叉任务乱入者缺少技能：%s.comerProfile.skills" % path)
+	# 交会分支的档位与失败档。
+	for branch in config.get("branches", []):
+		if not (branch is Dictionary):
+			continue
+		var bpath: String = "%s.branches[%s]" % [path, str(branch.get("branchId", ""))]
+		if not (branch as Dictionary).has("trial"):
+			continue
+		var trial: Variant = (branch as Dictionary).get("trial", null)
+		if not (trial is Dictionary):
+			_errors.append("交叉任务交会分支的 trial 必须是对象：%s.trial" % bpath)
+			continue
+		var kind: String = str((trial as Dictionary).get("kind", ""))
+		if kind != Crossover.TRIAL_ENSEMBLE and kind != Crossover.TRIAL_MATCH:
+			_errors.append("交叉任务交会判定类型非法：%s.trial.kind = %s" % [bpath, kind])
+		var tiers: Variant = (branch as Dictionary).get("tiers", null)
+		if not (tiers is Array) or (tiers as Array).is_empty():
+			_errors.append("交叉任务交会分支缺少档位表：%s.tiers" % bpath)
+			continue
+		var tier_keys: Dictionary = {}
+		for tier in (tiers as Array):
+			if not (tier is Dictionary):
+				_errors.append("交叉任务交会档位必须是对象：%s.tiers" % bpath)
+				continue
+			var key: String = str((tier as Dictionary).get("key", ""))
+			if key.is_empty():
+				_errors.append("交叉任务交会档位缺少 key：%s.tiers" % bpath)
+			elif str((tier as Dictionary).get("label", "")).is_empty():
+				_errors.append("交叉任务交会档位缺少 label：%s.tiers.%s" % [bpath, key])
+			else:
+				tier_keys[key] = true
+		for fail_key in (branch as Dictionary).get("failKeys", []):
+			if not tier_keys.has(str(fail_key)):
+				_errors.append("交叉任务失败档不在档位表里：%s.failKeys = %s" % [bpath, fail_key])
+		var fail: Variant = (branch as Dictionary).get("fail", null)
+		if fail is Dictionary:
+			if (fail as Dictionary).has("changes"):
+				_validate_event_changes((fail as Dictionary)["changes"], "%s.fail.changes" % bpath)
+			_validate_event_rewards(fail, "%s.fail" % bpath, str(config.get("cityId", "")))
+		if (branch as Dictionary).has("comerAffinity") and not ((branch as Dictionary)["comerAffinity"] is int):
+			_errors.append("交叉任务分支的 comerAffinity 必须是整数：%s.comerAffinity" % bpath)
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。

@@ -1512,6 +1512,14 @@ func _event_unlock_route(result: Dictionary) -> String:
 ## 不是"已经涨了"——与委托交付的状态行同一个口径。
 func _event_outcome_text(result: Dictionary) -> String:
 	var parts: Array = [str(result.get("label", ""))]
+	# 交会分支（D3）：把判定与档位一并说清——玩家要看见"这一句奏/这场球落到了哪一档"。
+	var trial: Dictionary = result.get("trial", {})
+	if not trial.is_empty():
+		parts.append("交会%s（%s%s）" % [
+			str(trial.get("tierLabel", "")),
+			str(trial.get("scoreText", "")),
+			"，没合上" if bool(trial.get("failed", false)) else "",
+		])
 	for entry in result.get("deltas", []):
 		parts.append("%s %+d（月末落账）" % [
 			str(City.DIMENSION_LABELS.get(str(entry.get("dimension", "")), "")),
@@ -1521,6 +1529,8 @@ func _event_outcome_text(result: Dictionary) -> String:
 		parts.append("声誉 %+d" % int(result.get("reputation", 0)))
 	if int(result.get("karma", 0)) != 0:
 		parts.append("善恶 %+d" % int(result.get("karma", 0)))
+	if int(result.get("comerAffinity", 0)) != 0:
+		parts.append("乱入者好感 %+d" % int(result.get("comerAffinity", 0)))
 	if bool(result.get("recurrence", false)):
 		parts.append("病根未除，日后可能再犯")
 	if not bool(result.get("eventEnded", true)):
