@@ -382,7 +382,7 @@ static func _portable_repair_info(
 	return {
 		"canRepair": true,
 		"actionLabel": "用修补工具修理",
-		"actionLine": "就地修「%s」：回至上限的 50%、封顶九成，工具不消耗也不花钱。按 R。" % \
+		"actionLine": "就地修「%s」：回至上限的 50%%、封顶九成，工具不消耗也不花钱。按 R。" % \
 			str(selected.get("label", "")),
 		"durabilityLabel": str(selected.get("durabilityText", "")),
 	}
