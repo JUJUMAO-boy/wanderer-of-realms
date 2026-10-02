@@ -35,6 +35,7 @@ const CROSSOVER_FILE: String = "crossovers.json"
 const MAINLINE_FILE: String = "mainline.json"
 const ANCHOR_FILE: String = "anchors.json"
 const MAINLINE_CROSSOVER_FILE: String = "mainline_crossovers.json"
+const FINAL_BATTLE_FILE: String = "final_battle.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -121,6 +122,7 @@ var _crossovers: Dictionary = {}
 var _mainline: Dictionary = {}
 var _anchors: Dictionary = {}
 var _mainline_crossovers: Dictionary = {}
+var _final_battle: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -165,6 +167,7 @@ func load_all() -> Dictionary:
 	_crossovers = {}
 	_anchors = {}
 	_mainline_crossovers = {}
+	_final_battle = {}
 	_hidden_events.clear()
 	_personalities = {}
 	_faiths = {}
@@ -338,6 +341,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("主线交叉配置为空或读取失败")
 
+	var final_battle_root: Dictionary = _read_json(FINAL_BATTLE_FILE, "终局战役配置")
+	if not final_battle_root.is_empty():
+		_validate_final_battle(final_battle_root)
+		_final_battle = final_battle_root
+	else:
+		_errors.append("终局战役配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -365,6 +375,7 @@ func load_all() -> Dictionary:
 			"crossovers": _crossovers.get("crossovers", []).size(),
 			"anchors": _anchors.get("anchors", []).size(),
 			"mainlineCrossovers": _mainline_crossovers.get("crossovers", []).size(),
+			"finalBattleWaves": (_final_battle.get("waves", []) as Array).size(),
 			"shards": _mainline.get("shards", []).size(),
 		},
 		"errors": _errors.duplicate(),
@@ -927,6 +938,11 @@ func get_mainline_crossover_of_comer(comer_id: String) -> Dictionary:
 		if str(entry.get("comerId", "")) == comer_id:
 			return entry
 	return {}
+
+
+## 终局战役配置（第四阶段 D5 / D-206~D-209）。返回 final_battle.json 的根对象。
+func get_final_battle_config() -> Dictionary:
+	return _final_battle
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。三属性各一例，走内容表描述，代码不写死。
@@ -1767,6 +1783,122 @@ func _validate_mainline_crossovers(root: Dictionary) -> void:
 				for key in b.get("failKeys", []):
 					if not tier_keys.has(str(key)):
 						_errors.append("主线交叉失败档不在档位表里：%s.failKeys = %s" % [bpath, key])
+
+
+## 终局战役配置（第四阶段 D5 / D-206~D-209）。
+##
+## 校验的落点：幕次门槛引用真实幕次、波次各条敌人要么能查到生物要么带完整内联 profile、
+## 灰袍者两阶段的倍率/召唤自洽、动摇的线索存在、共鸣回合数为正、助阵锚点存在。
+## 缺了任何一项，总攻要么打不起来、要么某一阶段拼出空对手。
+func _validate_final_battle(root: Dictionary) -> void:
+	var need_act: String = str(root.get("requiresAct", ""))
+	if not need_act.is_empty():
+		var act_ids: Dictionary = {}
+		for act in get_mainline_acts():
+			act_ids[str(act.get("actId", ""))] = true
+		if not act_ids.has(need_act):
+			_errors.append("终局战役引用了不存在的幕次：requiresAct = %s" % need_act)
+
+	var waves: Variant = root.get("waves", null)
+	if not (waves is Array) or (waves as Array).is_empty():
+		_errors.append("终局战役缺少非空的 waves 数组")
+	else:
+		for i in range((waves as Array).size()):
+			var wave: Variant = (waves as Array)[i]
+			var wpath: String = "waves[%d]" % i
+			if not (wave is Dictionary):
+				_errors.append("终局战役 %s 必须是对象" % wpath)
+				continue
+			var w: Dictionary = wave
+			if str(w.get("stageId", "")).is_empty():
+				_errors.append("终局战役波次缺少 stageId：%s" % wpath)
+			if str(w.get("label", "")).is_empty():
+				_errors.append("终局战役波次缺少 label：%s" % wpath)
+			var enemies: Variant = w.get("enemies", null)
+			if not (enemies is Array) or (enemies as Array).is_empty():
+				_errors.append("终局战役波次缺少敌人：%s.enemies" % wpath)
+			else:
+				for j in range((enemies as Array).size()):
+					_validate_final_enemy((enemies as Array)[j], "%s.enemies[%d]" % [wpath, j])
+
+	var boss: Variant = root.get("boss", null)
+	if not (boss is Dictionary):
+		_errors.append("终局战役缺少 boss 段")
+	else:
+		var b: Dictionary = boss
+		if not _valid_profile(b.get("profile", null)):
+			_errors.append("终局战役灰袍者缺少完整 profile（含七维与数值）")
+		var phases: Variant = b.get("phases", null)
+		if not (phases is Array) or (phases as Array).is_empty():
+			_errors.append("终局战役灰袍者缺少 phases（应为两阶段）")
+		else:
+			for k in range((phases as Array).size()):
+				var phase: Variant = (phases as Array)[k]
+				var ppath: String = "boss.phases[%d]" % k
+				if not (phase is Dictionary):
+					_errors.append("终局战役 %s 必须是对象" % ppath)
+					continue
+				var ph: Dictionary = phase
+				if str(ph.get("stageId", "")).is_empty():
+					_errors.append("终局战役灰袍者阶段缺少 stageId：%s" % ppath)
+				for key in ["hpMult", "attackMult", "armorMult"]:
+					if float(ph.get(key, 1.0)) <= 0.0:
+						_errors.append("终局战役灰袍者阶段的 %s 必须为正：%s.%s" % [key, ppath, key])
+				if int(ph.get("selfDrainBp", 0)) < 0:
+					_errors.append("终局战役灰袍者阶段的自损不能为负：%s.selfDrainBp" % ppath)
+				for m in range((ph.get("summons", []) as Array).size()):
+					_validate_final_enemy((ph.get("summons", []) as Array)[m], "%s.summons[%d]" % [ppath, m])
+		var wavering: Variant = b.get("wavering", null)
+		if wavering is Dictionary:
+			var cl: String = str((wavering as Dictionary).get("requiresClue", ""))
+			if not cl.is_empty() and get_mainline_clue(cl).is_empty():
+				_errors.append("终局战役动摇引用了不存在的主线线索：boss.wavering.requiresClue = %s" % cl)
+			if int((wavering as Dictionary).get("requiresSoul", 0)) < 0:
+				_errors.append("终局战役动摇 requiresSoul 不能为负")
+
+	var resonance: Variant = root.get("resonance", null)
+	if resonance is Dictionary and int((resonance as Dictionary).get("everyRounds", 0)) < 1:
+		_errors.append("终局战役碎片共鸣 everyRounds 必须为正")
+
+	var allies: Variant = root.get("allies", null)
+	if allies is Dictionary:
+		for key in (allies as Dictionary):
+			var cfg: Variant = (allies as Dictionary)[key]
+			if not (cfg is Dictionary):
+				continue
+			var aid: String = str((cfg as Dictionary).get("requiresAnchor", ""))
+			if not aid.is_empty() and get_anchor(aid).is_empty():
+				_errors.append("终局战役助阵绑定了不存在的锚点：allies.%s.requiresAnchor = %s" % [key, aid])
+
+
+## 一条终局战役敌人：要么能查到生物、要么带完整内联 profile。
+func _validate_final_enemy(entry: Variant, path: String) -> void:
+	if not (entry is Dictionary):
+		_errors.append("终局战役敌人条目必须是对象：%s" % path)
+		return
+	var e: Dictionary = entry
+	var mid: String = str(e.get("monsterId", ""))
+	if mid.is_empty():
+		_errors.append("终局战役敌人缺少 monsterId：%s" % path)
+		return
+	if int(e.get("count", 0)) < 1:
+		_errors.append("终局战役敌人数量必须为正：%s.count" % path)
+	if get_monster(mid).is_empty() and not _valid_profile(e.get("profile", null)):
+		_errors.append("终局战役敌人既不在生物表里、也没带完整内联 profile：%s.monsterId = %s" % [path, mid])
+
+
+## 内联生物 profile 是否完整（七维齐 + hp/attack/attackRange 有效）。
+func _valid_profile(raw: Variant) -> bool:
+	if not (raw is Dictionary):
+		return false
+	var p: Dictionary = raw
+	var attributes: Variant = p.get("attributes", null)
+	if not (attributes is Dictionary):
+		return false
+	for attribute in PlayerAvatar.ALL_ATTRIBUTES:
+		if int((attributes as Dictionary).get(attribute, 0)) <= 0:
+			return false
+	return int(p.get("hp", 0)) > 0 and int(p.get("attack", 0)) > 0 and int(p.get("attackRange", 0)) >= 1
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。

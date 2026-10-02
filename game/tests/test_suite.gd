@@ -378,6 +378,19 @@ func run_all() -> int:
 	_test_d4_fail_does_not_reveal()
 	_test_d4_available_listing()
 	_test_d4_branch_done_cross_soul()
+	print("=== D5 终局战役（第四阶段 / D-206）===")
+	_test_d5_final_battle_data_wellformed()
+	_test_d5_stage_chain()
+	_test_d5_gate_requires_act()
+	_test_d5_advance_stage()
+	_test_d5_wave_spec()
+	_test_d5_boss_spec_and_phases()
+	_test_d5_wavering_gate()
+	_test_d5_boss_wavering_applied()
+	_test_d5_resonance_deterministic()
+	_test_d5_ally_supports()
+	_test_d5_mark_won_cross_soul()
+	_test_d5_chronicle_entry_and_style()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -11745,4 +11758,215 @@ func _mainline_cross_trial_branch(cfg: Dictionary) -> Dictionary:
 		if branch.has("trial"):
 			return branch
 	return {}
+
+
+# --- D5 终局战役（第四阶段 / D-206~D-209）---
+
+## final_battle.json 装载：两波 + 灰袍者两阶段；敌人要么查到生物、要么带内联 profile。
+func _test_d5_final_battle_data_wellformed() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	_check(not cfg.is_empty(), "终局战役数据已装载")
+	_eq(str(cfg.get("requiresAct", "")), ShardLine.ACT_CYCLE, "总攻挂在第三幕·轮回")
+	_eq((cfg.get("waves", []) as Array).size(), 2, "两波敌人")
+	var resolve_ok: bool = true
+	for wave in cfg.get("waves", []):
+		for entry in (wave as Dictionary).get("enemies", []):
+			var mid: String = str((entry as Dictionary).get("monsterId", ""))
+			if ContentLoader.get_monster(mid).is_empty() and not _final_profile_ok((entry as Dictionary).get("profile", null)):
+				resolve_ok = false
+	_check(resolve_ok, "波次敌人要么在生物表里、要么带完整内联 profile")
+	var boss: Dictionary = cfg.get("boss", {})
+	_eq((boss.get("phases", []) as Array).size(), 2, "灰袍者两阶段")
+	_check(_final_profile_ok(boss.get("profile", null)), "灰袍者带完整 profile")
+
+
+## 阶段链：波次在前、BOSS 阶段在后，index/total 齐。
+func _test_d5_stage_chain() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var list: Array = FinalBattle.stages(cfg)
+	_eq(list.size(), 4, "阶段链共四段")
+	_eq(str(list[0]["stageId"]), "wave1", "第一段是第一波")
+	_eq(str(list[1]["stageId"]), "wave2", "第二段是第二波")
+	_eq(str(list[2]["kind"]), FinalBattle.KIND_BOSS, "第三段是灰袍者一阶段")
+	_eq(str(list[3]["stageId"]), "boss2", "第四段是灰袍者二阶段")
+	_eq(int(list[3]["index"]), 3, "末段 index 为 3")
+	_eq(int(list[0]["total"]), 4, "每段 total 都是 4")
+	_check(FinalBattle.is_final_stage(cfg, 3), "第 3 段是末段")
+	_check(not FinalBattle.is_final_stage(cfg, 0), "第 0 段不是末段")
+	_eq(FinalBattle.stage_count(cfg), 4, "stage_count = 4")
+
+
+## 门槛以主线幕次为前置：幕次不到不发起；到了可发起；打赢过就不能再发起。
+func _test_d5_gate_requires_act() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	_check(not bool(FinalBattle.gate(soul, cfg).get("ok", false)), "第一幕时总攻不可发起")
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	for shard in ContentLoader.get_shards():
+		ShardLine.collect_shard(soul.main_quest_progress, str((shard as Dictionary)["shardId"]), main_cfg)
+	for clue in ["clue_echo", "clue_identity"]:
+		ShardLine.reveal_clue(soul.main_quest_progress, str(clue), main_cfg)
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_CYCLE, "已进第三幕")
+	_check(bool(FinalBattle.gate(soul, cfg).get("ok", false)), "进第三幕后总攻可发起")
+	FinalBattle.mark_won(soul)
+	_check(not bool(FinalBattle.gate(soul, cfg).get("ok", false)), "打赢过就不能再发起")
+
+
+## 阶段推进：从第 0 段走到末段、再 advance 即 done。
+func _test_d5_advance_stage() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var state: Dictionary = {"index": -1}
+	var seen: Array = []
+	for _i in range(4):
+		var step: Dictionary = FinalBattle.advance(state, cfg)
+		_check(not bool(step.get("done", true)), "推进到第 %d 段" % (int(step.get("index", -1)) + 1))
+		state = {"index": int(step.get("index", 0))}
+		seen.append(str((step.get("stage", {}) as Dictionary).get("stageId", "")))
+	_eq(seen, ["wave1", "wave2", "boss1", "boss2"], "推进次序正确")
+	var done: Dictionary = FinalBattle.advance(state, cfg)
+	_check(bool(done.get("done", false)), "走完四段后 done")
+
+
+## 波次对手规格：条目按 count 展开，落成可被 EncounterSystem 消费的形状。
+func _test_d5_wave_spec() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var wave1: Dictionary = FinalBattle.stage_at(cfg, 0)
+	var spec: Dictionary = FinalBattle.enemy_spec(cfg, wave1, false)
+	_eq((spec.get("opponents", []) as Array).size(), 13, "第一波 5+5+3=13 只")
+	var first: Dictionary = (spec["opponents"] as Array)[0]
+	_check(not (first.get("attributes", {}) as Dictionary).is_empty(), "对手带七维")
+	_check(int(first.get("hp", 0)) > 0, "对手有血量")
+	_check(not str(first.get("unitId", "")).is_empty(), "对手有唯一 unitId")
+	_eq(str(first.get("category", "")), "undead", "第一波是亡灵")
+	var ids: Dictionary = {}
+	for opp in spec["opponents"]:
+		ids[str((opp as Dictionary).get("unitId", ""))] = true
+	_eq(ids.size(), 13, "unitId 互不重复")
+	var wave2: Dictionary = FinalBattle.stage_at(cfg, 1)
+	_eq((FinalBattle.enemy_spec(cfg, wave2, false).get("opponents", []) as Array).size(), 6, "第二波 3+3=6 只")
+
+
+## 灰袍者两阶段规格：hp/攻击/防御按阶段倍率，二阶段狂暴且带自损；各阶段召唤到位。
+func _test_d5_boss_spec_and_phases() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var base: Dictionary = cfg["boss"]["profile"]
+	var p1: Dictionary = FinalBattle.enemy_spec(cfg, FinalBattle.stage_at(cfg, 2), false)
+	var boss1: Dictionary = (p1["opponents"] as Array)[0]
+	_eq(int(boss1["hp"]), roundi(float(int(base["hp"])) * 0.55), "一阶段 HP 按 hpMult")
+	_eq(int(boss1["attack"]), int(base["attack"]), "一阶段攻击不变")
+	_eq(int(boss1.get("selfDrainBp", 0)), 0, "一阶段不自损")
+	_check(bool(boss1.get("isBoss", false)), "灰袍者标为 BOSS")
+	_eq((p1["opponents"] as Array).size(), 3, "一阶段含两只召唤堕落者")
+	var p2: Dictionary = FinalBattle.enemy_spec(cfg, FinalBattle.stage_at(cfg, 3), false)
+	var boss2: Dictionary = (p2["opponents"] as Array)[0]
+	_check(int(boss2["attack"]) > int(base["attack"]), "二阶段狂暴，攻击提升")
+	_check(int(boss2["armor"]) < int(base["armor"]), "二阶段防御下降")
+	_eq(int(boss2.get("selfDrainBp", 0)), 500, "二阶段带碎片反噬自损")
+	_eq((p2["opponents"] as Array).size(), 2, "二阶段含一只召唤缚魂者")
+
+
+## 动摇判定：要已揭示 clue_grey 且灵魂之力 ≥ 60。
+func _test_d5_wavering_gate() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var boss: Dictionary = cfg["boss"]
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d5w"
+	_check(not bool(FinalBattle.wavering(soul, avatar, cfg).get("ok", false)), "未揭示真相时不动摇")
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_grey", ContentLoader.get_mainline_config())
+	_check(not bool(FinalBattle.wavering(soul, avatar, cfg).get("ok", false)), "灵魂之力不足时不动摇")
+	avatar.set_attribute(PlayerAvatar.ATTR_SOUL, int((boss["wavering"] as Dictionary).get("requiresSoul", 60)))
+	_check(bool(FinalBattle.wavering(soul, avatar, cfg).get("ok", false)), "真相 + 灵魂之力齐了才动摇")
+	_eq(FinalBattle.soul_power(avatar), int((boss["wavering"] as Dictionary).get("requiresSoul", 60)),
+		"灵魂之力取灵魂属性")
+
+
+## 动摇落到灰袍者数值：攻击 -30%、防御 -20%；二阶段不再狂暴、不再自损。
+func _test_d5_boss_wavering_applied() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var base: Dictionary = cfg["boss"]["profile"]
+	var w: Dictionary = cfg["boss"]["wavering"]
+	var p1: Dictionary = FinalBattle.enemy_spec(cfg, FinalBattle.stage_at(cfg, 2), true)
+	var boss1: Dictionary = (p1["opponents"] as Array)[0]
+	_eq(int(boss1["attack"]), roundi(float(int(base["attack"])) * float(w["attackMult"])), "动摇后一阶段攻击 -30%")
+	_eq(int(boss1["armor"]), roundi(float(int(base["armor"])) * float(w["armorMult"])), "动摇后防御 -20%")
+	var p2: Dictionary = FinalBattle.enemy_spec(cfg, FinalBattle.stage_at(cfg, 3), true)
+	var boss2: Dictionary = (p2["opponents"] as Array)[0]
+	_eq(int(boss2["attack"]), roundi(float(int(base["attack"])) * float(w["attackMult"])),
+		"动摇后二阶段不再狂暴（攻击不升）")
+	_eq(int(boss2.get("selfDrainBp", 0)), 0, "动摇后二阶段不再自损")
+
+
+## 碎片共鸣：每 N 回合给玩家/灰袍者之一增益，确定性交替。
+func _test_d5_resonance_deterministic() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	_check(not bool(FinalBattle.resonance(1, cfg).get("fires", false)), "非周期回合不触发")
+	_check(not bool(FinalBattle.resonance(4, cfg).get("fires", false)), "4 不是 3 的倍数，不触发")
+	var r3: Dictionary = FinalBattle.resonance(3, cfg)
+	_check(bool(r3.get("fires", false)), "第 3 回合触发")
+	_eq(str(r3.get("side", "")), "player", "第一次给玩家")
+	var r6: Dictionary = FinalBattle.resonance(6, cfg)
+	_eq(str(r6.get("side", "")), "boss", "第二次给灰袍者")
+	var r9: Dictionary = FinalBattle.resonance(9, cfg)
+	_eq(str(r9.get("side", "")), "player", "第三次又给玩家")
+	_eq(str(FinalBattle.resonance(3, cfg).get("side", "")), "player", "同一回合数恒得同一结果")
+
+
+## 锚点助阵：瓦洛克要三世盟约符文、伊莉丝要好感到档。
+func _test_d5_ally_supports() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	_eq(FinalBattle.ally_supports(soul, world, cfg).size(), 0, "未结盟时无人助阵")
+	soul.known_runes.append("rune_dov_true")
+	var with_varok: Array = FinalBattle.ally_supports(soul, world, cfg)
+	_eq(with_varok.size(), 1, "结盟瓦洛克后他来助阵")
+	_eq(str((with_varok[0] as Dictionary).get("anchorId", "")), "varok", "助阵的是瓦洛克")
+	AnchorLine.set_affinity(soul, "elise", 50)
+	var both: Array = FinalBattle.ally_supports(soul, world, cfg)
+	_eq(both.size(), 2, "伊莉丝好感达档后也来")
+
+
+## 达成标记跨世保留：记进 SoulRecord.main_quest_progress["finalWon"]。
+func _test_d5_mark_won_cross_soul() -> void:
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	_check(not FinalBattle.has_won(soul), "初始未打赢")
+	FinalBattle.mark_won(soul)
+	_check(FinalBattle.has_won(soul), "记下后即可查")
+	var restored := SoulRecord.from_dict(soul.to_dict())
+	_check(FinalBattle.has_won(restored), "存档往返后仍记着打赢过")
+
+
+## 总攻史书条目：kind 正确、权重达标、文案过 A1 去套路筛。
+func _test_d5_chronicle_entry_and_style() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var stage: Dictionary = FinalBattle.stage_at(cfg, 2)
+	var se: Dictionary = FinalBattle.stage_entry(world, stage, 12, "第 2 年")
+	_eq(str(se["kind"]), Chronicle.KIND_MAINLINE, "阶段条目 kind 正确")
+	_check(int(se["weight"]) >= Chronicle.DEFAULT_MIN_WEIGHT, "阶段权重达标进史书")
+	var ve: Dictionary = FinalBattle.victory_entry(world, 12, "第 2 年")
+	_eq(str(ve["kind"]), Chronicle.KIND_MAINLINE, "功成条目 kind 正确")
+	var audit: Dictionary = MenuStyle.audit(
+		str(se["title"]) + "\n" + str(se["detail"]) + "\n" + str(ve["title"]) + "\n" + str(ve["detail"]), 40)
+	_check((audit["flags"] as Array).is_empty(), "总攻文案无套路腔 flag")
+
+
+func _final_profile_ok(raw: Variant) -> bool:
+	if not (raw is Dictionary):
+		return false
+	var p: Dictionary = raw
+	var attrs: Variant = p.get("attributes", null)
+	if not (attrs is Dictionary):
+		return false
+	for attribute in PlayerAvatar.ALL_ATTRIBUTES:
+		if int((attrs as Dictionary).get(attribute, 0)) <= 0:
+			return false
+	return int(p.get("hp", 0)) > 0 and int(p.get("attack", 0)) > 0 and int(p.get("attackRange", 0)) >= 1
 

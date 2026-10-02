@@ -1,0 +1,119 @@
+{
+  "_comment": "第三幕总攻战役（第四阶段 D5 / D-206~D-209，《永恒者灵魂碎片主线剧本》11 节）。第三幕『轮回』揭开魂之碎片与玩家身份后，深渊教团倾巢而出，玩家向『轮回之轮核心』发起总攻。这是一场**多阶段遭遇**（11.1 三波 + 11.3 灰袍者两阶段）：本表把波次与 BOSS 阶段摊成一条**有序阶段链**，每阶段是一场独立战斗（复用 M29 副本/BOSS 那套『多阶段遭遇』的承载方式——一场打完再进下一场），阶段推进与阶段切换判定出在规则层 FinalBattle 为单一来源。",
+  "_comment_enemies": "敌人条目两种写法：①引 monsters.json 既有生物（僵尸/骷髅）——只写 monsterId + count；②终局专属敌人（堕落者/死灵法师/缚魂者/灰袍者）——**不**写进 monsters.json（免得它们漏进野外/副本的随机怪池），改在本条目内联 profile（字段形状与 monsters.json 完全一致，见 _comment_profile）。规则层解析时先查 monsters.json，查不到再用内联 profile。",
+  "_comment_profile": "内联 profile 的字段与 monsters.json 逐字对齐：monsterId/displayName/category/threatLevel/attributes/hp/armor/magicResist/attack/attackRange。数值取剧本 11.2 的敌人强度表。",
+  "_comment_boss": "灰袍者（11.3）：2 阶段。一阶段以暗系法术与教徒献祭撑着（人形尚在）；二阶段（原设定 HP<50%）暗之碎片反噬、进入狂暴（攻击 +30%、防御 -20%、每回合自损 5% HP）。这里把两阶段落成**两场相邻的战斗**（boss1/boss2），各自带 hpMult（两阶段 HP 相加 ≈ 灰袍者总量）、攻击/防御倍率、自损 bp、以及本阶段召唤的助战。技能表（11.4）作为 `skills` 描述保留——本作敌人 AI 只走基础攻击（见 combat.auto_action），技能目前是**展示与后续扩展的锚点**，真正影响战局的阶段倍率/自损/召唤已落到字段上。",
+  "_comment_wavering": "灰袍者的动摇（11.5）：玩家若已揭示『灰袍者是被残魂操纵』的真相（clue_grey）且灵魂之力 ≥ 60，战斗中把他说穿——他动摇，攻击 -30%、防御 -20%，且二阶段不再狂暴（breakEnrage，忽略 phase 的攻击/自损）。",
+  "_comment_resonance": "碎片共鸣（11.5）：玩家持有的碎片与灰袍者共鸣，每 everyRounds 回合为双方**之一**随机提供一个增益——这里做成确定性：按回合数推、玩家与灰袍者交替（同一回合数恒得同一结果，不掷骰，可无头钉测）。",
+  "_comment_allies": "锚点助阵（11.5）：已结盟的锚点 NPC（古龙瓦洛克 / 返魂者伊莉丝）可参战，各提供一次支援。判定条件读灵魂侧状态：瓦洛克要『三世盟约』符文（B2 结盟的落点），伊莉丝要锚点好感达档（D2）。",
+  "requiresAct": "cycle",
+  "chronicleBp": 500,
+  "waves": [
+    {
+      "stageId": "wave1",
+      "label": "第一波·低级信徒",
+      "summary": "教团的乌合之众顺着界缝涌出来，密密麻麻堵在轮核之前。",
+      "enemies": [
+        { "monsterId": "mon_skeleton", "count": 5 },
+        { "monsterId": "mon_zombie", "count": 5 },
+        {
+          "monsterId": "mon_fallen", "count": 3,
+          "profile": {
+            "monsterId": "mon_fallen", "displayName": "堕落者", "category": "undead", "threatLevel": 4,
+            "attributes": { "strength": 16, "dexterity": 8, "constitution": 14, "intelligence": 4, "perception": 8, "charisma": 3, "soul": 10 },
+            "hp": 150, "armor": 4, "magicResist": 2, "attack": 18, "attackRange": 1
+          }
+        }
+      ]
+    },
+    {
+      "stageId": "wave2",
+      "label": "第二波·教团精英",
+      "summary": "低阶信徒溃退，穿灰袍的术士与缚魂者压了上来——他们才是教团真正的家底。",
+      "enemies": [
+        {
+          "monsterId": "mon_soulbinder", "count": 3,
+          "profile": {
+            "monsterId": "mon_soulbinder", "displayName": "缚魂者", "category": "undead", "threatLevel": 12,
+            "attributes": { "strength": 22, "dexterity": 20, "constitution": 22, "intelligence": 24, "perception": 24, "charisma": 10, "soul": 40 },
+            "hp": 350, "armor": 10, "magicResist": 14, "attack": 35, "attackRange": 2
+          }
+        },
+        {
+          "monsterId": "mon_necromancer", "count": 3,
+          "profile": {
+            "monsterId": "mon_necromancer", "displayName": "死灵法师", "category": "undead", "threatLevel": 8,
+            "attributes": { "strength": 10, "dexterity": 14, "constitution": 12, "intelligence": 28, "perception": 18, "charisma": 10, "soul": 30 },
+            "hp": 200, "armor": 6, "magicResist": 12, "attack": 25, "attackRange": 3
+          }
+        }
+      ]
+    }
+  ],
+  "boss": {
+    "monsterId": "mon_grey_robed",
+    "label": "灰袍者",
+    "summary": "灰袍者亲临。他身后是暗之碎片，他本人也早已不是人。",
+    "profile": {
+      "monsterId": "mon_grey_robed", "displayName": "灰袍者", "category": "humanoid", "threatLevel": 18,
+      "attributes": { "strength": 30, "dexterity": 26, "constitution": 30, "intelligence": 40, "perception": 32, "charisma": 20, "soul": 60 },
+      "hp": 600, "armor": 16, "magicResist": 20, "attack": 50, "attackRange": 3
+    },
+    "phases": [
+      {
+        "stageId": "boss1",
+        "label": "灰袍者·一阶段",
+        "summary": "他以暗系法术与教众的献祭之血撑着，尚存人形，声音里还听得出一个『我』。",
+        "hpMult": 0.55, "attackMult": 1.0, "armorMult": 1.0, "selfDrainBp": 0,
+        "summons": [ { "monsterId": "mon_fallen", "count": 2, "profile": {
+          "monsterId": "mon_fallen", "displayName": "堕落者", "category": "undead", "threatLevel": 4,
+          "attributes": { "strength": 16, "dexterity": 8, "constitution": 14, "intelligence": 4, "perception": 8, "charisma": 3, "soul": 10 },
+          "hp": 150, "armor": 4, "magicResist": 2, "attack": 18, "attackRange": 1
+        } } ],
+        "skills": [
+          { "skillId": "shadow_bolt", "label": "暗影箭", "ap": 2, "cooldown": 0, "effect": "单体暗属性伤害" },
+          { "skillId": "shadow_veil", "label": "暗影帷幕", "ap": 3, "cooldown": 3, "effect": "范围致盲，降低玩家命中" },
+          { "skillId": "summon_cultist", "label": "召唤教徒", "ap": 2, "cooldown": 4, "effect": "召唤两名堕落者助战" },
+          { "skillId": "shard_whisper", "label": "碎片低语", "ap": 3, "cooldown": 5, "effect": "单体灵魂伤害，概率恐惧" },
+          { "skillId": "sacrifice", "label": "献祭", "ap": 4, "cooldown": 6, "effect": "献祭一名教徒，恢复自身 HP 并提升攻击" }
+        ]
+      },
+      {
+        "stageId": "boss2",
+        "label": "灰袍者·二阶段·反噬",
+        "summary": "暗之碎片反噬了他。他不再是灰袍者，只是一段暴躁的、想成为轮回的执念。",
+        "hpMult": 0.45, "attackMult": 1.3, "armorMult": 0.8, "selfDrainBp": 500,
+        "summons": [ { "monsterId": "mon_soulbinder", "count": 1, "profile": {
+          "monsterId": "mon_soulbinder", "displayName": "缚魂者", "category": "undead", "threatLevel": 12,
+          "attributes": { "strength": 22, "dexterity": 20, "constitution": 22, "intelligence": 24, "perception": 24, "charisma": 10, "soul": 40 },
+          "hp": 350, "armor": 10, "magicResist": 14, "attack": 35, "attackRange": 2
+        } } ],
+        "skills": [
+          { "skillId": "shard_backlash", "label": "碎片反噬", "ap": 0, "cooldown": 0, "effect": "被动：每回合消耗自身 5% HP 换攻击 +30%" },
+          { "skillId": "shadow_burst", "label": "暗影爆发", "ap": 4, "cooldown": 4, "effect": "大范围暗属性伤害" },
+          { "skillId": "soul_rend", "label": "灵魂撕裂", "ap": 5, "cooldown": 6, "effect": "单体高额灵魂伤害，无视部分护甲" },
+          { "skillId": "shard_call", "label": "碎片的呼唤", "ap": 3, "cooldown": 5, "effect": "召唤缚魂者助战" },
+          { "skillId": "abyss_devour", "label": "深渊吞噬", "ap": 6, "cooldown": 8, "effect": "终极技，大范围伤害并吸取玩家生命" }
+        ]
+      }
+    ],
+    "wavering": {
+      "requiresClue": "clue_grey",
+      "requiresSoul": 60,
+      "attackMult": 0.7,
+      "armorMult": 0.8,
+      "breakEnrage": true,
+      "label": "动摇",
+      "summary": "你把他是谁说穿了。他愣了一瞬——那半秒，就是你全部的胜算。"
+    }
+  },
+  "resonance": {
+    "everyRounds": 3,
+    "playerBuff": { "label": "碎片为你提点命中", "hitBonus": 8 },
+    "bossBuff": { "label": "碎片为灰袍者涨一分攻势", "attackBonusBp": 150 }
+  },
+  "allies": {
+    "varok": { "requiresRune": "rune_dov_true", "label": "古龙瓦洛克", "support": "一口旧龙息从战场边缘落下，教众成片倒伏。" },
+    "elise": { "requiresAnchor": "elise", "requiresAnchorAffinity": 50, "label": "返魂者伊莉丝", "support": "她念出帝国封印术的最后一个音节，把死者的潮头按了回去。" }
+  }
+}
