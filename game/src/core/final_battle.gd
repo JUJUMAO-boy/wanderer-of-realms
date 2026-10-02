@@ -349,6 +349,33 @@ static func ally_supports(soul: SoulRecord, world: WorldState, cfg: Dictionary) 
 	return out
 
 
+# --- 总攻简报（接线/界面共用）---
+
+## 把门槛、动摇、助阵、阶段链组装成接线与界面能直接用的结构。返回：
+##   { available, reason, won, actId, needAct, wavering:{ok,...}, allies:[...],
+##     stages:[{stageId,label,kind,summary}] }
+static func briefing(soul: SoulRecord, world: WorldState, avatar: PlayerAvatar, cfg: Dictionary) -> Dictionary:
+	var checked: Dictionary = gate(soul, cfg)
+	var rows: Array = []
+	for stage in stages(cfg):
+		rows.append({
+			"stageId": str(stage.get("stageId", "")),
+			"label": str(stage.get("label", "")),
+			"kind": str(stage.get("kind", "")),
+			"summary": str(stage.get("summary", "")),
+		})
+	return {
+		"available": bool(checked.get("ok", false)),
+		"reason": str(checked.get("reason", "")),
+		"won": has_won(soul),
+		"actId": str(checked.get("actId", "")),
+		"needAct": str(checked.get("needAct", "")),
+		"wavering": wavering(soul, avatar, cfg),
+		"allies": ally_supports(soul, world, cfg),
+		"stages": rows,
+	}
+
+
 # --- 达成标记 ---
 
 static func has_won(soul: SoulRecord) -> bool:

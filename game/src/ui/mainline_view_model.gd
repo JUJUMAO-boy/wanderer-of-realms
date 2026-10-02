@@ -6,7 +6,8 @@ extends RefCounted
 ## 幕次进度、七片碎片格、线索揭示、下一道门槛。不加工数值、不碰渲染。
 
 ## 七片碎片的槽位列（界面按元素排，与剧本 3 节表的顺序一致）。
-static func build(progress: Dictionary, cfg: Dictionary) -> Dictionary:
+## battle —— 终局战役简报（FinalBattle.briefing 的产出，第四阶段 D5）。缺省不摆总攻段。
+static func build(progress: Dictionary, cfg: Dictionary, battle: Dictionary = {}) -> Dictionary:
 	var order: Array = ShardLine.act_order(cfg)
 	var cur: String = ShardLine.current_act(progress)
 	var cur_idx: int = order.find(cur)
@@ -65,4 +66,5 @@ static func build(progress: Dictionary, cfg: Dictionary) -> Dictionary:
 		"next": ShardLine.next_requirement(progress, cfg),
 		"complete": ShardLine.is_complete(progress, cfg),
 		"endings": cfg.get("endings", []),
+		"battle": battle,
 	}

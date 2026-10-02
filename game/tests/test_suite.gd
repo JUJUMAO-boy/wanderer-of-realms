@@ -391,6 +391,8 @@ func run_all() -> int:
 	_test_d5_ally_supports()
 	_test_d5_mark_won_cross_soul()
 	_test_d5_chronicle_entry_and_style()
+	_test_d5_briefing()
+	_test_d5_panel_battle_button()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -11956,6 +11958,60 @@ func _test_d5_chronicle_entry_and_style() -> void:
 	var audit: Dictionary = MenuStyle.audit(
 		str(se["title"]) + "\n" + str(se["detail"]) + "\n" + str(ve["title"]) + "\n" + str(ve["detail"]), 40)
 	_check((audit["flags"] as Array).is_empty(), "总攻文案无套路腔 flag")
+
+
+## 总攻简报（接线/界面共用）：门槛、阶段链、动摇、助阵一并组出。
+func _test_d5_briefing() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d5b"
+	world.avatar = avatar
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var b0: Dictionary = FinalBattle.briefing(soul, world, avatar, cfg)
+	_check(not bool(b0.get("available", false)), "第一幕时简报标为不可发起")
+	_check(not str(b0.get("reason", "")).is_empty(), "不可发起时给出原因")
+	_eq((b0.get("stages", []) as Array).size(), 4, "简报列四段")
+	# 推进到第三幕（七片 + clue_echo + clue_identity）。
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	for shard in ContentLoader.get_shards():
+		ShardLine.collect_shard(soul.main_quest_progress, str((shard as Dictionary)["shardId"]), main_cfg)
+	for clue in ["clue_echo", "clue_identity"]:
+		ShardLine.reveal_clue(soul.main_quest_progress, str(clue), main_cfg)
+	var b1: Dictionary = FinalBattle.briefing(soul, world, avatar, cfg)
+	_check(bool(b1.get("available", false)), "第三幕后简报标为可发起")
+	_check(not bool(b1.get("won", false)), "还没打赢")
+	_check(not bool((b1.get("wavering", {}) as Dictionary).get("ok", false)), "未揭示真相时不动摇")
+
+
+## 主线面板在门槛过了才摆「发起总攻」按钮；返回按钮恒在首位。
+func _test_d5_panel_battle_button() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	var no_battle: Dictionary = MainlineViewModel.build(progress, cfg)
+	var rect: Rect2 = Rect2(0.0, 0.0, 1200.0, 560.0)
+	var plain: Array = MainlinePanel.buttons(rect, no_battle)
+	_eq(str((plain[0] as Dictionary)["id"]), "back", "返回恒在首位")
+	var no_final: bool = false
+	for b in plain:
+		if str((b as Dictionary)["id"]) == "final":
+			no_final = true
+	_check(not no_final, "门槛没过时不摆总攻按钮")
+	var battle: Dictionary = {"available": true, "won": false, "stages": [], "wavering": {}, "allies": []}
+	var view: Dictionary = MainlineViewModel.build(progress, cfg, battle)
+	var with_final: Array = MainlinePanel.buttons(rect, view)
+	var found: Dictionary = {}
+	for b in with_final:
+		if str((b as Dictionary)["id"]) == "final":
+			found = b
+	_check(not found.is_empty(), "门槛过了就摆总攻按钮")
+	_eq(str((with_final[0] as Dictionary)["id"]), "back", "加了总攻按钮后返回仍在首位")
+	if not found.is_empty():
+		var center: Vector2 = (found["rect"] as Rect2).get_center()
+		var hit: Dictionary = MainlinePanel.hit_test(view, rect, center)
+		_eq(str(hit.get("id", "")), "final", "点中总攻按钮")
 
 
 func _final_profile_ok(raw: Variant) -> bool:

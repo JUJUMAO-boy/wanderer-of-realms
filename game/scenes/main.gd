@@ -179,6 +179,18 @@ var _city_space: Dictionary = {}     ## { city_id, layout, player:Vector2i }
 var _city_space_view: Dictionary = {} ## CitySpaceViewModel 的成品
 var _family_view: Dictionary = {}     ## FamilyViewModel 的成品（A3）
 var _mainline_view: Dictionary = {}   ## MainlineViewModel 的成品（第四阶段 D1）
+
+# 终局战役（第四阶段 D5 / D-206~D-209）。会话级、不落盘——阶段推进只活在这一屏，
+# 达成标记落 _soul.main_quest_progress["finalWon"]（跨世保留，供 D6 分结局）。
+var _final_combat: bool = false       ## 当前这场战斗是不是总攻的某一阶段
+var _final_stage_index: int = -1      ## 正在打第几段（-1 = 还没开打）
+var _final_wavering: bool = false     ## 本场总攻里灰袍者是否已动摇（开场判一次）
+const FINAL_BATTLE_SPAWNS: Array = [
+	[9, 1], [10, 1], [11, 1], [12, 1],
+	[9, 3], [10, 3], [11, 3], [12, 3],
+	[9, 5], [10, 5], [11, 5], [12, 5],
+	[10, 7], [11, 7],
+]
 var _notable: Array = []
 var _last_deltas: Dictionary = {}
 var _panel: Dictionary = {}
@@ -3105,6 +3117,9 @@ func _settle_combat() -> void:
 		return
 	if _dungeon_combat:
 		_resolve_dungeon_combat()
+		return
+	if _final_combat:
+		_resolve_final_combat()
 		return
 	_status.text = "交手结束（%d 轮）：%s" % [
 			_combat.round, "你赢了" if _combat.winner == Combat.RESULT_PLAYER else "你输了"
@@ -6732,20 +6747,155 @@ func _refresh_mainline() -> void:
 	if _soul == null:
 		_mainline_view = {}
 		return
+	var battle: Dictionary = {}
+	if _world != null and _world.avatar != null:
+		battle = FinalBattle.briefing(
+			_soul, _world, _world.avatar, ContentLoader.get_final_battle_config())
 	_mainline_view = MainlineViewModel.build(
-		_soul.main_quest_progress, ContentLoader.get_mainline_config())
+		_soul.main_quest_progress, ContentLoader.get_mainline_config(), battle)
 
 
 func _mainline_input(key_event: InputEventKey) -> void:
 	match key_event.keycode:
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_mainline_start_final()
 		KEY_ESCAPE, KEY_T, KEY_L:
 			_switch_view(VIEW_MAP)
 
 
 func _mainline_click(point: Vector2) -> void:
 	var hit: Dictionary = MainlinePanel.hit_test(_mainline_view, _content_rect(), point)
-	if str(hit.get("kind", "")) == "button" and str(hit.get("id", "")) == "back":
+	if str(hit.get("kind", "")) != "button":
+		return
+	match str(hit.get("id", "")):
+		"back":
+			_switch_view(VIEW_MAP)
+		"final":
+			_start_final_battle()
+
+
+## 从地图/面板发起总攻：门槛过了就从简报直接进第一波。
+func _mainline_start_final() -> void:
+	_start_final_battle()
+
+
+# --- 终局战役接线（第四阶段 D5 / D-206~D-209）---
+# 多阶段遭遇串成一场接一场：发起 → 起一段战斗 → 赢了记史书并推进 → 末段功成。
+# 灰袍者的动摇在开场判一次，贯穿整场总攻。
+
+func _start_final_battle() -> void:
+	if _world == null or _world.avatar == null or _soul == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var brief: Dictionary = FinalBattle.briefing(_soul, _world, _world.avatar, cfg)
+	if not bool(brief.get("available", false)):
+		_status.text = str(brief.get("reason", "现在还不能发起总攻。"))
+		_refresh()
+		return
+	_final_stage_index = -1
+	_final_wavering = bool((brief.get("wavering", {}) as Dictionary).get("ok", false))
+	_start_final_stage()
+
+
+## 起当前阶段的战斗（内部按阶段链推进一格）；已到末段之后则收尾。
+func _start_final_stage() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var step: Dictionary = FinalBattle.advance({"index": _final_stage_index}, cfg)
+	if bool(step.get("done", false)):
+		_finish_final_battle()
+		return
+	_final_stage_index = int(step.get("index", 0))
+	var stage: Dictionary = step.get("stage", {})
+	var spec: Dictionary = FinalBattle.enemy_spec(cfg, stage, _final_wavering)
+	if spec.is_empty():
+		_status.text = "这一波没拼出对手，总攻中断了。"
+		_final_combat = false
 		_switch_view(VIEW_MAP)
+		return
+	_combat_seq += 1
+	var rng := DeterministicRNG.new(_world.world_seed ^ (_combat_seq * 2246822519))
+	_combat = Combat.new(
+		_derived,
+		ContentLoader.get_balance_section("combat"),
+		ContentLoader.get_skills(),
+		ContentLoader.get_items(),
+		rng
+	)
+	var units: Array = [_player_unit_spec(_world.avatar)]
+	_append_follower(units)
+	units.append_array(_encounter_system.units_of(spec, FINAL_BATTLE_SPAWNS))
+	var started: Dictionary = _combat.start({
+		"sessionId": "final-%s" % str(stage.get("stageId", "")),
+		"units": units,
+		"obstacles": _battle_obstacles(),
+	})
+	if not bool(started.get("ok", false)):
+		_status.text = "战斗没能开始：%s" % str(started.get("reason", ""))
+		_combat = null
+		_final_combat = false
+		_switch_view(VIEW_MAP)
+		return
+	_final_combat = true
+	_encounter_combat = false
+	_dungeon_combat = false
+	_combat_menu_mode = CombatViewModel.MENU_MAIN
+	_combat_cursor = 0
+	_combat_pending = {}
+	_combat_cursor_tile = Vector2i.ZERO
+	_switch_view(VIEW_COMBAT)
+	_status.text = _final_stage_status(cfg, stage)
+
+
+func _final_stage_status(cfg: Dictionary, stage: Dictionary) -> String:
+	var text: String = "总攻·%s（第 %d / %d 段）" % [
+		str(stage.get("label", "")),
+		_final_stage_index + 1, FinalBattle.stage_count(cfg),
+	]
+	if str(stage.get("kind", "")) == FinalBattle.KIND_BOSS and _final_wavering:
+		text += "　——灰袍者已动摇。"
+	var allies: Array = FinalBattle.ally_supports(_soul, _world, cfg)
+	if not allies.is_empty():
+		var names: Array = []
+		for ally in allies:
+			names.append(str((ally as Dictionary).get("label", "")))
+		text += "　助阵：%s。" % "、".join(PackedStringArray(names))
+	return text
+
+
+## 总攻战斗收尾：赢了记阶段史书并推进/功成；输了总攻到此为止（可再来）。
+func _resolve_final_combat() -> void:
+	_sync_combat_skills_to_avatar()
+	var won: bool = _combat.winner == Combat.RESULT_PLAYER
+	_final_combat = false
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	if not won:
+		_status.text = "总攻败了。你在轮核之前失去了知觉——轮回会等你，但这一次，到此为止。"
+		_final_stage_index = -1
+		_switch_view(VIEW_MAP)
+		return
+	var stage: Dictionary = FinalBattle.stage_at(cfg, _final_stage_index)
+	if _sim != null:
+		var month: int = Clock.total_months()
+		_sim.chronicle.record(_world, FinalBattle.stage_entry(
+			_world, stage, month, _sim.chronicle.year_label(month)))
+	if FinalBattle.is_final_stage(cfg, _final_stage_index):
+		_finish_final_battle()
+	else:
+		_status.text = "这一段过去了。%s" % str(FinalBattle.advance(
+			{"index": _final_stage_index}, cfg).get("text", ""))
+		_start_final_stage()
+
+
+## 总攻功成：落跨世标记、记史书。四种结局留给 D6。
+func _finish_final_battle() -> void:
+	FinalBattle.mark_won(_soul)
+	if _sim != null:
+		var month: int = Clock.total_months()
+		_sim.chronicle.record(_world, FinalBattle.victory_entry(
+			_world, month, _sim.chronicle.year_label(month)))
+	_status.text = "灰袍者倒下了。轮核之前，再没有人挡路——你终于站到了轮回之轮的核心前。"
+	_final_stage_index = -1
+	_switch_view(VIEW_MAP)
 
 
 func _npc_input(key_event: InputEventKey) -> void:

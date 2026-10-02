@@ -30,26 +30,31 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 		"subtitleY": 58.0,
 		"titleColor": COLOR_TEXT,
 	})
-	for button in buttons(rect):
+	for button in buttons(rect, view):
 		var hovered: bool = str(hover.get("kind", "")) == "button" \
 			and str(hover.get("id", "")) == str(button["id"])
 		UiTheme.draw_button(canvas, font, button["rect"], str(button["label"]), true, hovered)
 	_draw_body(canvas, font, view, rect)
 
 
-static func buttons(rect: Rect2) -> Array:
+## 按钮行。返回按钮恒在首位（index 0），门槛过了（view.battle.available）再追加「发起总攻」。
+static func buttons(rect: Rect2, view: Dictionary = {}) -> Array:
+	var list: Array = [{"id": "back", "label": "返回地图"}]
+	var battle: Dictionary = view.get("battle", {})
+	if bool(battle.get("available", false)):
+		list.append({"id": "final", "label": "发起总攻"})
 	return UiTheme.button_row(
 		UiTheme.draw_font(),
 		rect.position.x + rect.size.x - MARGIN,
 		rect.position.y + BACK_BUTTON_TOP,
-		[{"id": "back", "label": "返回地图"}]
+		list
 	)
 
 
 static func hit_test(view: Dictionary, rect: Rect2, point: Vector2) -> Dictionary:
 	if view.is_empty() or not rect.has_point(point):
 		return {}
-	var button: Dictionary = UiTheme.hit_button(buttons(rect), point)
+	var button: Dictionary = UiTheme.hit_button(buttons(rect, view), point)
 	if not button.is_empty():
 		return {"kind": "button", "id": str(button["id"]), "enabled": bool(button.get("enabled", true))}
 	return {}
@@ -116,6 +121,40 @@ static func _draw_body(canvas: CanvasItem, font: Font, view: Dictionary, rect: R
 				str(clue.get("label", "")),
 			]
 		_text(canvas, font, Vector2(x, y), need, COLOR_DIM, 14.0)
+		y += LINE_HEIGHT * 1.5
+
+	_draw_battle(canvas, font, view, Vector2(x, y))
+
+
+## 总攻段（第四阶段 D5）：门槛未到时写一句「还差什么」；到了就把阶段链、动摇、助阵摊开。
+static func _draw_battle(canvas: CanvasItem, font: Font, view: Dictionary, pos: Vector2) -> void:
+	var battle: Dictionary = view.get("battle", {})
+	if battle.is_empty() or bool(battle.get("won", false)):
+		return
+	var y: float = pos.y
+	if not bool(battle.get("available", false)):
+		var reason: String = str(battle.get("reason", ""))
+		if not reason.is_empty():
+			_text(canvas, font, Vector2(pos.x, y), "总攻轮核：" + reason, COLOR_DIM, 14.0)
+		return
+	_text(canvas, font, Vector2(pos.x, y), "总攻轮核·可发起", COLOR_ACCENT, 15.0)
+	y += LINE_HEIGHT
+	var parts: Array = []
+	for stage in battle.get("stages", []):
+		parts.append(str((stage as Dictionary).get("label", "")))
+	if not parts.is_empty():
+		_text(canvas, font, Vector2(pos.x, y), "阶段：" + " → ".join(PackedStringArray(parts)), COLOR_DIM, 14.0)
+		y += LINE_HEIGHT
+	var wavering: Dictionary = battle.get("wavering", {})
+	if bool(wavering.get("ok", false)):
+		_text(canvas, font, Vector2(pos.x, y), "灰袍者已动摇：攻 -30%、防 -20%，二阶段不再狂暴。", COLOR_ACCENT, 14.0)
+		y += LINE_HEIGHT
+	var allies: Array = battle.get("allies", [])
+	if not allies.is_empty():
+		var names: Array = []
+		for ally in allies:
+			names.append(str((ally as Dictionary).get("label", "")))
+		_text(canvas, font, Vector2(pos.x, y), "助阵：" + "、".join(PackedStringArray(names)), COLOR_ACCENT, 14.0)
 
 
 static func _text(canvas: CanvasItem, font: Font, pos: Vector2, text: String,
