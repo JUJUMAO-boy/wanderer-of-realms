@@ -50,6 +50,7 @@ static func count_kinds(rows: Array) -> Dictionary:
 		Chronicle.KIND_CITY_EVENT: 0,
 		Chronicle.KIND_TIER: 0,
 		Chronicle.KIND_SOUL: 0,
+		Chronicle.KIND_WAR: 0,
 	}
 	for row in rows:
 		var kind: String = str(row.get("kind", ""))
@@ -67,4 +68,6 @@ static func kind_label(kind: String) -> String:
 			return "跨档"
 		Chronicle.KIND_SOUL:
 			return "转生"
+		Chronicle.KIND_WAR:
+			return "战事"
 	return "纪事"

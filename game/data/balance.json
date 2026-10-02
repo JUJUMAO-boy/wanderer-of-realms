@@ -43,6 +43,13 @@
     "priceFactorBySeverity": [1.0, 1.25, 1.5],
     "yieldFactorBySeverity": [1.0, 0.85, 0.7]
   },
+  "cityAmbition": {
+    "_comment": "城市野心·势力（C1，D-191~D-193）：每城按六维派生一种野心（尚武/经商/自守/崇文，得分与相冲对在规则层 CityAmbition），野心相冲的两城才可能开战。关系由 (世界种子 ⊕ 纪元 ⊕ 城对) 确定性掷出，不落盘——同世界同一纪元读到的邦交完全一致。era 0（第 1 年）恒无战也无通商，新开局零行为变化。开战即掐断交战城之间的正规商路与走私航线（传奇航线豁免），新的也修不起来（establish_route 拒建）。",
+    "_comment_warChanceBp": "野心相冲的两城在本纪元开战的概率，基点。4500 = 45%：相冲是「可能打」不是「一定打」，给和平留多数余地。",
+    "warChanceBp": 4500,
+    "_comment_accordChanceBp": "同野心（政策相投）的两城结成通商关系的概率，基点。6000 = 60%：同道中人多数走得近。",
+    "accordChanceBp": 6000
+  },
   "training": {
     "_comment": "训练师双币种（M-B 剩余，D-135）：受训花铜币 + 从灵魂刨一丝业力（karma 递减，不透透支死就还能练）。校验用 PlayerAvatar 的 karma 下限，因此 karmaCost 别大到一次扣穿 -100。",
     "copper": 200,

@@ -23,19 +23,23 @@ const DEFAULT_TREND_DIMENSION: String = City.DIM_POPULATION
 
 
 ## 左侧城市列表。deltas 为最近一次结算的 cityDeltas（可为空）。
-static func build_list(world: WorldState, deltas: Dictionary = {}) -> Array:
+## era 为当前派生纪元（城市野心由六维派生，纪元只用于平手择一）。
+static func build_list(world: WorldState, deltas: Dictionary = {}, era: int = 0) -> Array:
 	var out: Array = []
 	for city_id in world.get_city_ids():
 		var city: City = world.get_city(str(city_id))
 		var tier: Dictionary = city.tier_progress()
 		var slot: Dictionary = _city_delta(deltas, city.city_id)
 		var population_milli: int = _dimension_milli(slot, City.DIM_POPULATION)
+		var ambition: String = CityAmbition.ambition_for(city, era, world.world_seed)
 		out.append({
 			"cityId": city.city_id,
 			"displayName": city.display_name,
 			"tierLabel": city.get_tier_label(),
 			"tier": tier["tier"],
 			"npcCount": city.npc_ids.size(),
+			"ambition": ambition,
+			"ambitionLabel": CityAmbition.ambition_label(ambition),
 			"populationDeltaText": format_signed(population_milli),
 			"populationDeltaMilli": population_milli,
 			"mostlyRising": _mostly_rising(slot),
@@ -48,7 +52,7 @@ static func build_list(world: WorldState, deltas: Dictionary = {}) -> Array:
 ## 单座城市的详情。deltas 为最近一次结算的 cityDeltas（可为空，
 ## 读档后尚未推进月份时就是空的，此时各行只显示数值与趋势）。
 static func build_detail(
-	world: WorldState, city_id: String, deltas: Dictionary = {}
+	world: WorldState, city_id: String, deltas: Dictionary = {}, era: int = 0
 ) -> Dictionary:
 	var city: City = world.get_city(city_id)
 	if city == null:
@@ -67,6 +71,16 @@ static func build_detail(
 		history[dimension] = series
 		trends[dimension] = series_stats(series)
 
+	# 城市野心·势力（C1 / D-191~D-193）：野心由六维派生、邦交由 (世界种子⊕纪元⊕城对)
+	# 确定性掷出，两者都不落盘。详情统计行里塞两行短文本（版面已满，不再新开一行）。
+	var ambition_cfg: Dictionary = ContentLoader.get_balance_section("cityAmbition")
+	var ambition: String = CityAmbition.ambition_for(city, era, world.world_seed)
+	var relations: Array = CityAmbition.relations_for_city(
+		city_id, world, era, world.world_seed, ambition_cfg)
+	var stats: Array = _build_stats(world, city)
+	stats.append({"label": "野心", "value": CityAmbition.ambition_label(ambition)})
+	stats.append({"label": "邦交", "value": CityAmbition.diplomacy_summary(relations)})
+
 	return {
 		"cityId": city.city_id,
 		"displayName": city.display_name,
@@ -77,7 +91,16 @@ static func build_detail(
 		"tierGapText": tier_gap_text(tier),
 		"downgradeText": downgrade_text(tier),
 		"rows": rows,
-		"stats": _build_stats(world, city),
+		"stats": stats,
+		"ambition": {
+			"id": ambition,
+			"label": CityAmbition.ambition_label(ambition),
+			"trait": CityAmbition.ambition_trait(ambition),
+		},
+		"diplomacy": {
+			"rows": relations,
+			"summary": CityAmbition.diplomacy_summary(relations),
+		},
 		"buildings": _build_buildings(world, city),
 		"history": history,
 		"trends": trends,

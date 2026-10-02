@@ -750,7 +750,8 @@ func _refresh_city_panel() -> void:
 		return
 	_selected_city = clampi(_selected_city, 0, ids.size() - 1)
 	var city_id: String = str(ids[_selected_city])
-	var detail: Dictionary = CityViewModel.build_detail(_world, city_id, _last_deltas)
+	var era: int = _current_seen_era()
+	var detail: Dictionary = CityViewModel.build_detail(_world, city_id, _last_deltas, era)
 	var dimensions: Array = CityViewModel.DIMENSION_ORDER
 	_trend_dimension = clampi(_trend_dimension, 0, dimensions.size() - 1)
 	detail["trendDimension"] = str(dimensions[_trend_dimension])
@@ -761,7 +762,7 @@ func _refresh_city_panel() -> void:
 		buildings[i]["selected"] = (i == _selected_building)
 	_panel = {
 		"monthLabel": Clock.now().format(),
-		"list": CityViewModel.build_list(_world, _last_deltas),
+		"list": CityViewModel.build_list(_world, _last_deltas, era),
 		"detail": detail,
 		"selectedIndex": _selected_city,
 	}

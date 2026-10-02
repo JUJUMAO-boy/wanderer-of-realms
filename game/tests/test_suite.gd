@@ -333,6 +333,13 @@ func run_all() -> int:
 	_test_b4_match_outcome_and_score()
 	_test_b4_match_morale_decides_close_game()
 	_test_b4_match_pure_and_style_gate()
+	print("=== C1 城市野心·势力（第三阶段 / D-191）===")
+	_test_c1_ambition_derivation()
+	_test_c1_relation_era0_neutral()
+	_test_c1_relation_deterministic_and_symmetric()
+	_test_c1_war_blocks_and_breaks_routes()
+	_test_c1_war_entry_chronicle_and_style()
+	_test_c1_city_view_ambition_diplomacy()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -10765,4 +10772,150 @@ func _test_b4_match_pure_and_style_gate() -> void:
 	# 台词过 A1 文风闸（Ball 对白不该是套路腔）。
 	var audit: Dictionary = MenuStyle.audit("\n".join(PackedStringArray(r1["log"])), 80)
 	_check((audit["flags"] as Array).is_empty(), "球赛对白无套路腔 flag")
+
+
+# === C1 城市野心·势力（第三阶段 / D-191~D-193）===
+
+## 扫描纪元，返回城对首个交战的纪元（找不到返回 -1）。确定性，固定种子可复现。
+func _c1_find_war_era(a: City, b: City, seed: int, cfg: Dictionary, ceiling: int) -> int:
+	for era in range(1, ceiling + 1):
+		if CityAmbition.at_war(a, b, era, seed, cfg):
+			return era
+	return -1
+
+
+## 野心由六维派生：得分最高者当选；同世界同纪元可复现。
+func _test_c1_ambition_derivation() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var seed: int = int(world.world_seed)
+	var scores: Dictionary = CityAmbition.ambition_scores(world.get_city("port_thorne"))
+	for amb in CityAmbition.AMBITIONS:
+		_check(scores.has(amb), "野心得分表含 %s" % amb)
+	# 富庶贸易港 → 经商；法师塔 → 崇文；矮人堡垒 → 尚武。
+	_eq(CityAmbition.ambition_for(world.get_city("port_thorne"), 3, seed),
+		CityAmbition.AMB_MERCANTILE, "索恩港（财富 90）→ 经商")
+	_eq(CityAmbition.ambition_for(world.get_city("silvermoon_spire"), 3, seed),
+		CityAmbition.AMB_SCHOLARLY, "银月塔（文化 90）→ 崇文")
+	_eq(CityAmbition.ambition_for(world.get_city("hammerhold"), 3, seed),
+		CityAmbition.AMB_MARTIAL, "铁锤堡（势力 80/治安 75）→ 尚武")
+	# 确定性：同入参两次同解。
+	_eq(CityAmbition.ambition_for(world.get_city("greenwade"), 5, seed),
+		CityAmbition.ambition_for(world.get_city("greenwade"), 5, seed),
+		"同世界同纪元野心可复现")
+	_check(not CityAmbition.ambition_label(CityAmbition.AMB_MARTIAL).is_empty(), "野心标签非空")
+	_check(not CityAmbition.ambition_trait(CityAmbition.AMB_MARTIAL).is_empty(), "野心描述非空")
+
+
+## 第 1 年（era 0）零行为变化：任何城对都不交战、也不通商。
+func _test_c1_relation_era0_neutral() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var seed: int = int(world.world_seed)
+	var cfg: Dictionary = ContentLoader.get_balance_section("cityAmbition")
+	var ids: Array = Array(world.get_city_ids())
+	var all_neutral: bool = true
+	for i in range(ids.size()):
+		for j in range(i + 1, ids.size()):
+			var a: City = world.get_city(str(ids[i]))
+			var b: City = world.get_city(str(ids[j]))
+			if CityAmbition.relation_for(a, b, 0, seed, cfg) != CityAmbition.REL_NEUTRAL:
+				all_neutral = false
+	_check(all_neutral, "era 0 全城对皆中立（第 1 年零行为变化）")
+	_eq(CityAmbition.relation_for(null, null, 5, seed, cfg), CityAmbition.REL_NEUTRAL,
+		"空城返回中立")
+	_eq(CityAmbition.relation_for(world.get_city("aedran"), world.get_city("aedran"), 5, seed, cfg),
+		CityAmbition.REL_NEUTRAL, "同城返回中立")
+
+
+## 关系由 (世界种子⊕纪元⊕城对) 确定性掷出：可复现且对称（A↔B 同解）。
+func _test_c1_relation_deterministic_and_symmetric() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var seed: int = int(world.world_seed)
+	var cfg: Dictionary = ContentLoader.get_balance_section("cityAmbition")
+	var a: City = world.get_city("aedran")
+	var b: City = world.get_city("port_thorne")
+	var valid: Array = [CityAmbition.REL_WAR, CityAmbition.REL_ACCORD, CityAmbition.REL_NEUTRAL]
+	var last_rel: String = CityAmbition.REL_NEUTRAL
+	for era in [1, 4, 9, 17]:
+		var r1: String = CityAmbition.relation_for(a, b, era, seed, cfg)
+		last_rel = r1
+		_eq(r1, CityAmbition.relation_for(a, b, era, seed, cfg), "era %d 关系可复现" % era)
+		_eq(CityAmbition.relation_for(b, a, era, seed, cfg), r1, "era %d 关系对称 A↔B" % era)
+		_check(valid.has(r1), "era %d 关系取值在三档内" % era)
+	_check(not last_rel.is_empty(), "关系非空")
+
+
+## 交战城之间的商路：建不起来（establish_route 拒建），既存的被掐断（settle_month）。
+## 传奇航线豁免。用艾德兰×铁锤堡（崇文×尚武，相冲）——开局有预置正规商路。
+func _test_c1_war_blocks_and_breaks_routes() -> void:
+	var cfg: Dictionary = ContentLoader.get_balance_section("cityAmbition")
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var a: City = world.get_city("aedran")
+	var b: City = world.get_city("hammerhold")
+	_eq(CityAmbition.relation_for(a, b, 0, int(world.world_seed), cfg),
+		CityAmbition.REL_NEUTRAL, "era0 艾德兰×铁锤堡中立")
+	_check(world.find_route(a.city_id, b.city_id) != null, "开局艾德兰×铁锤堡已有预置商路")
+	var war_era: int = _c1_find_war_era(a, b, int(world.world_seed), cfg, 120)
+	_check(war_era > 0, "找到艾德兰×铁锤堡交战的纪元（%d）" % war_era)
+	if war_era <= 0:
+		return
+	var month: int = war_era * 12
+	# 掐断：结算到交战月，预置商路被战火掐断。
+	sim.settle_month(month)
+	_check(world.find_route(a.city_id, b.city_id) == null, "结算到交战月预置商路被掐断")
+	# 拒建：交战月想重建同一条正规商路，应被拒且理由点明交战。
+	var again: Dictionary = sim.establish_route(
+		a.city_id, b.city_id, TradeRoute.KIND_REGULAR, month)
+	_eq(bool(again.get("ok", true)), false, "交战月正规商路被拒建")
+	_check(str(again.get("error", "")).contains("交战"), "拒建理由点明交战")
+	# 传奇航线豁免：买到的是「不受这套规则约束」。
+	var legend: Dictionary = sim.establish_route(
+		a.city_id, b.city_id, TradeRoute.KIND_LEGENDARY, month)
+	_check(bool(legend.get("ok", false)), "传奇航线不受战争约束")
+
+
+## 战事纪年条目：kind/标题/权重达标，文案过 A1 去套路筛；史书角标为「战事」。
+func _test_c1_war_entry_chronicle_and_style() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var entry: Dictionary = CityAmbition.war_entry(world, "aedran", "hammerhold", 12, "第 2 年")
+	_eq(str(entry["kind"]), Chronicle.KIND_WAR, "战事条目 kind 正确")
+	_check(str(entry["title"]).contains("艾德兰") and str(entry["title"]).contains("铁锤堡"),
+		"战事标题含两城名")
+	_check(int(entry["weight"]) >= Chronicle.DEFAULT_MIN_WEIGHT, "战事权重达标进史书")
+	_check(not str(entry["detail"]).is_empty(), "战事详情非空")
+	var audit: Dictionary = MenuStyle.audit(str(entry["title"]) + "\n" + str(entry["detail"]), 40)
+	_check((audit["flags"] as Array).is_empty(), "战事文案无套路腔 flag")
+	_eq(ChronicleViewModel.kind_label(Chronicle.KIND_WAR), "战事", "史书角标为战事")
+
+
+## 城市面板数据：详情含野心与邦交两行，列表每城带野心标签。
+func _test_c1_city_view_ambition_diplomacy() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var detail: Dictionary = CityViewModel.build_detail(world, "aedran", {}, 3)
+	_check(detail.has("ambition") and detail.has("diplomacy"), "详情含野心与邦交")
+	_check(not str(detail["ambition"]["label"]).is_empty(), "野心标签非空")
+	_check(not str(detail["ambition"]["trait"]).is_empty(), "野心描述非空")
+	var has_ambition_row: bool = false
+	var has_diplo_row: bool = false
+	for row in detail["stats"]:
+		if str(row.get("label", "")) == "野心":
+			has_ambition_row = true
+		if str(row.get("label", "")) == "邦交":
+			has_diplo_row = true
+	_check(has_ambition_row, "统计行含野心")
+	_check(has_diplo_row, "统计行含邦交")
+	_eq((detail["diplomacy"]["rows"] as Array).size(),
+		world.get_city_ids().size() - 1, "邦交列出其余各城")
+	var rows: Array = CityViewModel.build_list(world, {}, 3)
+	var all_tagged: bool = true
+	for row in rows:
+		if str(row.get("ambitionLabel", "")).is_empty():
+			all_tagged = false
+	_check(all_tagged, "列表每行带野心标签")
 

@@ -244,6 +244,13 @@ static func _draw_list(
 		var tier_text: String = "%s · %d 人" % [str(row["tierLabel"]), int(row["npcCount"])]
 		_text(canvas, font, row_rect.position + Vector2(10.0, 38.0), tier_text, COLOR_DIM, SIZE_SMALL)
 
+		# 城市野心（C1）：右对齐挂在规模行末尾，一眼扫出这座城是尚武/经商/自守/崇文。
+		var ambition_label: String = str(row.get("ambitionLabel", ""))
+		if not ambition_label.is_empty():
+			_text_right(canvas, font,
+				row_rect.position + Vector2(row_rect.size.x - 10.0, 38.0),
+				ambition_label, COLOR_ACCENT, SIZE_SMALL)
+
 		# 阶段进度条：让"离升阶还差多少"在列表上就能扫到
 		var bar_rect := Rect2(
 			row_rect.position + Vector2(10.0, 43.0),

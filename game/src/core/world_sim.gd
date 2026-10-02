@@ -65,6 +65,9 @@ var _building_bal: Dictionary = {}
 ## 地壳变动的生意连锁（C-3 / D-174）：受扰城商路断航、建筑经营与投资收益减产
 ## 的因子源。纯派生、不落盘，纪元由当月累计月数换算（与 main 的所见纪元对齐）。
 var _tectonic: TectonicEconomy = null
+## 城市野心·势力（C1 / D-191~D-193）：城际邦交（战争/通商）的数值段。
+## 关系纯派生、不落盘，交战城之间的商路随之兴衰（拒建 / 掐断）。
+var _ambition_cfg: Dictionary = {}
 ## 建筑配置索引：buildingId -> cfg（来自 buildings.json，经 load_buildings 注入）。
 var _buildings_cfg: Dictionary = {}
 ## 按城的建筑配置：cityId -> [cfg]，每城按 buildingId 排序，保证结算确定性。
@@ -96,6 +99,7 @@ func _init(p_world: WorldState, balance: Dictionary, profession_cfg: Dictionary,
 	_legendary_player_income = int(_trade.get("legendaryPlayerIncomeCopper", 800))
 	_building_bal = balance.get("buildings", {})
 	_tectonic = TectonicEconomy.new(balance.get("tectonicEconomy", {}))
+	_ambition_cfg = balance.get("cityAmbition", {})
 
 
 ## 从 ContentLoader 取配置构造。逻辑类不继承 Node，但配置来源可以是 autoload。
@@ -186,6 +190,19 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 	for entry in broken:
 		notable.append(event(str(entry["cityId"]), month, EVENT_ROUTE,
 			"%s 与 %s 的%s因治安崩坏中断" % [
+				str(entry["cityId"]), str(entry["otherCityId"]),
+				route_kind_label(str(entry["kind"])),
+			]))
+
+	# 城际战争（C1 / D-191~D-193）：交战城之间的商路随战火兴衰。开战的当月就对
+	# 双方既存的正规商路/走私航线就地掐断（传奇航线豁免，买到的是「不受这套规则
+	# 约束」），新的由 establish_route 拒建——C4 史书里的「势力兴衰」由此咬到玩家
+	# 做买卖的那本账上。放在结算收益之前，断了的商路当月就不再产出。
+	var war_broken: Array = _break_war_routes(month)
+	for entry in war_broken:
+		broken.append(entry)
+		notable.append(event(str(entry["cityId"]), month, EVENT_ROUTE,
+			"%s 与 %s 的%s因战事中断" % [
 				str(entry["cityId"]), str(entry["otherCityId"]),
 				route_kind_label(str(entry["kind"])),
 			]))
@@ -306,6 +323,10 @@ func settle_month(month: int, detail: bool = true) -> Dictionary:
 					FactionChronicle.faction_label(old_id),
 					FactionChronicle.faction_label(fc_city.dominant_faction_id),
 					month, chronicle.year_label(month)))
+
+		# 城际战争纪年（C1 / D-191~D-193）：本年新开战的城对写进史书——「上一纪元
+		# 尚未交战、本纪元交战」才算新开战，避免一场持续多年的战事每月都刷屏。
+		_record_new_wars(month)
 
 	for city_id in world.get_city_ids():
 		_sync_city_npcs(str(city_id), false)
@@ -644,6 +665,14 @@ func establish_route(
 		if not bool(check["ok"]):
 			return _fail(str(check["errorCode"]), str(check["reason"]))
 
+	# 城市野心·势力（C1 / D-191~D-193）：交战城之间修不起商路——正规商路与走私
+	# 航线都被战火拦住。传奇航线豁免：它买到的是「不受这套规则约束」（同 9.3/9.4 口径）。
+	if kind != TradeRoute.KIND_LEGENDARY:
+		var war_era: int = TectonicEconomy.era_for_month(month, _months_per_year)
+		if CityAmbition.route_blocked(a, b, war_era, world.world_seed, _ambition_cfg):
+			return _fail(ERROR_PRECONDITION_FAILED,
+				"%s与%s正在交战，商路修不起来" % [a.display_name, b.display_name])
+
 	var route: TradeRoute = TradeRoute.make(a.city_id, b.city_id, kind, month, owner_id)
 	world.add_route(route)
 	return {
@@ -836,6 +865,55 @@ func _break_endangered_routes() -> Array:
 	for route_id in doomed:
 		world.remove_route(route_id)
 	return broken
+
+
+## 掐断交战城之间的商路（C1 / D-191~D-193）。正规商路与走私航线都被战火拦住，
+## 传奇航线豁免（「不受这套规则约束」）。关系是纯派生的，所以每月重算都得到同一
+## 张邦交图——一旦断了就不会自己长回来，要通商得等到下一个纪元双方不再交战。
+func _break_war_routes(month: int) -> Array:
+	var era: int = TectonicEconomy.era_for_month(month, _months_per_year)
+	if era <= 0:
+		return []
+	var broken: Array = []
+	var doomed: Array = []
+	for route in world.get_routes_sorted():
+		if route.is_legendary():
+			continue
+		var a: City = world.get_city(str(route.city_a))
+		var b: City = world.get_city(str(route.city_b))
+		if a == null or b == null:
+			continue
+		if not CityAmbition.at_war(a, b, era, world.world_seed, _ambition_cfg):
+			continue
+		doomed.append(str(route.route_id))
+		broken.append({
+			"routeId": str(route.route_id),
+			"cityId": a.city_id,
+			"otherCityId": b.city_id,
+			"kind": str(route.kind),
+		})
+	for route_id in doomed:
+		world.remove_route(route_id)
+	return broken
+
+
+## 本年新开战的城对写进纪年（上一纪元尚未交战、本纪元交战）。
+func _record_new_wars(month: int) -> void:
+	var era_now: int = TectonicEconomy.era_for_month(month, _months_per_year)
+	var era_prev: int = maxi(0, era_now - 1)
+	var ids: Array = Array(world.get_city_ids())
+	for i in range(ids.size()):
+		for j in range(i + 1, ids.size()):
+			var a: City = world.get_city(str(ids[i]))
+			var b: City = world.get_city(str(ids[j]))
+			if a == null or b == null:
+				continue
+			if not CityAmbition.at_war(a, b, era_now, world.world_seed, _ambition_cfg):
+				continue
+			if CityAmbition.at_war(a, b, era_prev, world.world_seed, _ambition_cfg):
+				continue
+			chronicle.record(world, CityAmbition.war_entry(
+				world, a.city_id, b.city_id, month, chronicle.year_label(month)))
 
 
 func _apply_route_yields(settlements: Dictionary, deltas: Dictionary, collect: bool) -> void:
