@@ -435,6 +435,14 @@ func settle_year(month: int = 0) -> Dictionary:
 						generator.position_display_name(str(npc.position_id)),
 						npc.display_name(),
 					]))
+			# 死亡不可逆（A3，D-181）：配偶随世界离世即丧偶——不复活、不换人顶替，
+			# 沉进家族史，转世后不挽留。拦在 remove_npc 之前，先读身份再删实体。
+			if FamilyGate.is_or_was_spouse(world.avatar, str(npc.npc_id)):
+				var bereaved: Dictionary = FamilyGate.on_spouse_gone(
+					world.avatar, world, month, FamilyGate.WIDOW_CLASS_DEATH)
+				if bool(bereaved.get("ok", false)):
+					notable.append(event(str(city_id), month, EVENT_NPC,
+						"%s 逝世，你成了未亡人。" % str(bereaved.get("spouseName", ""))))
 			world.remove_npc(str(npc.npc_id))
 			deaths += 1
 		notable.append_array(_assign_positions(str(city_id), month))

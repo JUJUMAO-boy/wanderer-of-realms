@@ -113,6 +113,14 @@ var debt_copper: int = 0
 ##   { hostNpcId, hostName, hostCityId, kin: [{npcId, value}], pending: [{kind, text, npcId}] }
 var legacy: Dictionary = {}
 
+## 现配偶（A3 婚姻，D-179）：{npcId, name, cityId, marriedAt, discountCityId}。
+## 随化身落盘——丧偶/转世后由 FamilyGate.on_spouse_gone 清空。家族史则进
+## world.family（跨世可读），这里只放"这一世的配偶是谁"。
+var family: Dictionary = {}
+## 丧偶时的一句提示（A3，D-181）。写进化身只是短暂的会话态：转世重建化身即清零，
+## 真正沉淀的是 world.family.histories 里的那段史。
+var bereaved_note: String = ""
+
 var dragonization: int = 0
 var dragon_soul: int = 0
 var known_runes: Array[String] = []
@@ -183,6 +191,8 @@ func to_dict() -> Dictionary:
 		"currentPatron": current_patron,
 		"debtCopper": debt_copper,
 		"legacy": legacy.duplicate(true),
+		"family": family.duplicate(true),
+		"bereavedNote": bereaved_note,
 		"dragonization": dragonization,
 		"dragonSoul": dragon_soul,
 		"knownRunes": known_runes.duplicate(),
@@ -228,6 +238,8 @@ static func from_dict(data: Dictionary) -> PlayerAvatar:
 	a.current_patron = str(data.get("currentPatron", ""))
 	a.debt_copper = int(data.get("debtCopper", 0))
 	a.legacy = data.get("legacy", {}).duplicate(true)
+	a.family = data.get("family", {}).duplicate(true)
+	a.bereaved_note = str(data.get("bereavedNote", ""))
 	a.dragonization = int(data.get("dragonization", 0))
 	a.dragon_soul = int(data.get("dragonSoul", 0))
 	for r in data.get("knownRunes", []):

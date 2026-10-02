@@ -35,6 +35,11 @@ const BAND_LABELS: Dictionary = {
 }
 
 
+## 亲密档键。VM 用它判断"够不够求婚"（A3），不重复写阈值。
+static func band_close() -> String:
+	return BAND_CLOSE
+
+
 static func _cfg() -> Dictionary:
 	return ContentLoader.get_balance_section("npcInteraction")
 

@@ -91,6 +91,11 @@ var wanderer_roster: Array = []
 ## （与 M31 名册生命周期同一把尺，D-149）。
 var wanderer_troubles_resolved: Dictionary = {}
 
+## 婚姻·家族史（A3，D-179~D-181）：{ histories: [{npcId, name, cityId, marriedAt,
+## widowedAt, widowClass}] }。跨世落盘——家族史的价值正在于"换了一世还能翻开"
+## （配偶落地、走人都在这里留一行），与 Chronicle 同源：真实条目而非派生窗口。
+var family: Dictionary = {}
+
 ## 补满冒险者名册到满额（空缺即补，M-E）。首次建新世界与读档后由世界模拟/主场景调用；
 ## 之后的名额流转（送医/离开/接替）随 `WandererPool.advance` 按月推进。
 func ensure_wanderer_roster(month: int) -> void:
@@ -535,6 +540,7 @@ func to_dict() -> Dictionary:
 		"hireSeq": hire_seq,
 		"wandererRoster": _wanderer_out(),
 		"wandererTroublesResolved": wanderer_troubles_resolved.duplicate(),
+		"family": family.duplicate(true),
 		"playerAvatar": avatar.to_dict() if avatar != null else {},
 	}
 
@@ -719,3 +725,5 @@ func apply_dict(data: Dictionary) -> void:
 	for key in resolved_in:
 		if str(key).contains("-"):
 			wanderer_troubles_resolved[str(key)] = true
+	# 家族史（A3，D-179~D-181）：旧档没有该键（迁移零步），按空史处理。
+	family = data.get("family", {}).duplicate(true)

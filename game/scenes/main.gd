@@ -100,6 +100,7 @@ const VIEW_NPC: int = 12
 const VIEW_CITY_SPACE: int = 13
 const VIEW_DUNGEON: int = 14
 const VIEW_MERCHANT: int = 15
+const VIEW_FAMILY: int = 16
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -121,6 +122,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_CITY_SPACE: "方向键/WASD 走动    走到建筑/居民旁按回车 互动    点城门或 ESC/T 离开    城内 T 看城市总览",
 	VIEW_DUNGEON: "方向键/WASD 或点格 行走    走到敌人旁按回车 交战    踩宝箱 拾取    到楼梯按回车 下潜    ESC/右下角 离开",
 	VIEW_MERCHANT: "↑↓ 选货    回车 成交    Tab 换买/卖    ESC/T 离开",
+	VIEW_FAMILY: "ESC 或 T 返回地图    「居民」里向亲密之人求婚",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -173,6 +175,7 @@ var _npc_view: Dictionary = {}       ## NpcInteractionViewModel 的成品（M18�
 # 布局可复现，玩家点位只活在当前会话里。
 var _city_space: Dictionary = {}     ## { city_id, layout, player:Vector2i }
 var _city_space_view: Dictionary = {} ## CitySpaceViewModel 的成品
+var _family_view: Dictionary = {}     ## FamilyViewModel 的成品（A3）
 var _notable: Array = []
 var _last_deltas: Dictionary = {}
 var _panel: Dictionary = {}
@@ -642,6 +645,8 @@ func _refresh() -> void:
 			_refresh_dungeon()
 		VIEW_MERCHANT:
 			_refresh_merchant()
+		VIEW_FAMILY:
+			_refresh_family()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -2152,6 +2157,15 @@ func _start_avatar_from_rebirth(rebirth: Dictionary) -> void:
 	# 转生是在一世落幕之后才拿到的。先把落幕这世的姓名记下，供纪年史书用——
 	# 否则 _place_avatar 一换人，旧躯壳的名字就没了。
 	var ended_name: String = _world.avatar.display_name if _world.avatar != null else ""
+	# 转世不挽留（A3，D-181）：旧躯壳若有配偶，这一世落幕即丧偶——死亡不可逆，
+	# 沉进家族史，新的化身从"未成家"开始。触发在换人之前，读的还是旧化身。
+	if _world.avatar != null and FamilyGate.is_married(_world.avatar):
+		var bereaved: Dictionary = FamilyGate.on_spouse_gone(
+			_world.avatar, _world, Clock.total_months(),
+			FamilyGate.WIDOW_CLASS_REINCARNATION)
+		if bool(bereaved.get("ok", false)):
+			_status.text = "你失了 %s。这一世落幕，家族的账却留在史书里。" % str(
+				bereaved.get("spouseName", ""))
 	# 沉眠：契约要求 rebirth 只给出月数，推进世界是调用方的事。
 	# 先沉眠再落位，否则醒来时人已经不在原来的城市了。
 	var sleep_months: int = int(rebirth.get("sleepMonths", 0))
@@ -4019,6 +4033,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_dungeon_click(event.position)
 		VIEW_MERCHANT:
 			_merchant_click(event.position)
+		VIEW_FAMILY:
+			_family_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -5599,6 +5615,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_dungeon_input(key_event)
 		VIEW_MERCHANT:
 			_merchant_input(key_event)
+		VIEW_FAMILY:
+			_family_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -5999,6 +6017,25 @@ func _npc_gift_confirm() -> void:
 	_refresh()
 
 
+func _npc_marry() -> void:
+	var npc: SimNpc = _npc_selected()
+	if npc == null:
+		_status.text = "没有选中的居民。"
+		_refresh()
+		return
+	var result: Dictionary = FamilyGate.marry(_world.avatar, _world, npc, _npc_current_month())
+	if not bool(result.get("ok", false)):
+		_status.text = "求亲不成：%s" % str(result.get("reason", result.get("error", "")))
+	else:
+		_status.text = "%s应下了你的婚书。你在 %s 有了一份家族（彩礼 %s），今后找他所在城的铺子，买东西便宜 %d%%。" % [
+			npc.display_name(),
+			_world.get_city(npc.city_id).display_name if _world.get_city(npc.city_id) != null else npc.city_id,
+			AvatarViewModel.money_label(int(result.get("cost", 0))),
+			int(result.get("discount", 0)),
+		]
+	_refresh()
+
+
 func _npc_hire() -> void:
 	var npc: SimNpc = _npc_selected()
 	if npc == null:
@@ -6033,6 +6070,9 @@ func _npc_confirm_action() -> void:
 	elif id == NpcInteractionViewModel.ACTION_HIRE:
 		_npc_action_cursor = -1
 		_npc_hire()
+	elif id == NpcInteractionViewModel.ACTION_MARRY:
+		_npc_action_cursor = -1
+		_npc_marry()
 	elif id == NpcInteractionViewModel.ACTION_TALK_AMBITION:
 		_npc_action_cursor = -1
 		_npc_talk(NpcInteractionSystem.INTENT_AMBITION)
@@ -6042,6 +6082,25 @@ func _npc_confirm_action() -> void:
 	elif id == NpcInteractionViewModel.ACTION_TALK_FAITH:
 		_npc_action_cursor = -1
 		_npc_talk(NpcInteractionSystem.INTENT_FAITH)
+
+
+func _refresh_family() -> void:
+	if _world == null:
+		_family_view = {}
+		return
+	_family_view = FamilyViewModel.build(_world.avatar, _world)
+
+
+func _family_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_ESCAPE, KEY_T:
+			_switch_view(VIEW_CITY)
+
+
+func _family_click(point: Vector2) -> void:
+	var hit: Dictionary = FamilyPanel.hit_test(_family_view, _content_rect(), point)
+	if str(hit.get("kind", "")) == "button" and str(hit.get("id", "")) == "back":
+		_switch_view(VIEW_CITY)
 
 
 func _npc_input(key_event: InputEventKey) -> void:
@@ -6300,6 +6359,8 @@ func _draw() -> void:
 			DungeonPanel.draw(self, _dungeon_view, _content_rect(), _hover)
 		VIEW_MERCHANT:
 			MerchantPanel.draw(self, _merchant_view, _content_rect(), _hover)
+		VIEW_FAMILY:
+			FamilyPanel.draw(self, _family_view, _content_rect(), _hover)
 		_:
 			_draw_map()
 	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。
@@ -6329,7 +6390,8 @@ func _is_secondary_view(view: int) -> bool:
 	return view == VIEW_CITY or view == VIEW_TRADE or view == VIEW_SMUGGLING \
 		or view == VIEW_QUEST or view == VIEW_EVENT or view == VIEW_AVATAR \
 		or view == VIEW_CRAFTING or view == VIEW_HISTORY or view == VIEW_NPC \
-		or view == VIEW_CITY_SPACE or view == VIEW_DUNGEON or view == VIEW_MERCHANT
+		or view == VIEW_CITY_SPACE or view == VIEW_DUNGEON or view == VIEW_MERCHANT \
+		or view == VIEW_FAMILY
 
 
 ## 侧栏入口按下。所有入口共用切视图这一条路，「返回世界地图」（VIEW_MAP）也在列。

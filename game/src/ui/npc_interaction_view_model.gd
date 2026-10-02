@@ -14,6 +14,7 @@ const ACTION_TALK_RUMOR: String = "talk_rumor"
 const ACTION_TALK_FAITH: String = "talk_faith"
 const ACTION_GIFT: String = "gift"
 const ACTION_HIRE: String = "hire"
+const ACTION_MARRY: String = "marry"
 
 const ACTIONS: Array = [
 	{"id": ACTION_TALK_AMBITION, "label": "交谈·志向"},
@@ -21,6 +22,7 @@ const ACTIONS: Array = [
 	{"id": ACTION_TALK_FAITH, "label": "交谈·信仰"},
 	{"id": ACTION_GIFT, "label": "送礼"},
 	{"id": ACTION_HIRE, "label": "雇佣"},
+	{"id": ACTION_MARRY, "label": "求婚"},
 ]
 
 ## 名单 + 详情 + 动作三态一次成型。rules 是 NpcInteractionSystem，city_id 决定名单，
@@ -47,6 +49,19 @@ static func build(rules, avatar, world, city_id: String,
 			can = selected_hireable and int(selected.get("affinity", 0)) >= rules.hire_min_affinity()
 			if not can:
 				reason = _hire_reason(selected, rules)
+		elif id == ACTION_MARRY:
+			# 求婚（A3，D-179）：好感到亲密档 + 玩家未成家。更细的资格（同城、非
+			# 具名职位、彩礼够不够）由规则层在确认时钉死，这里只看要不要亮按钮。
+			var close: bool = str(selected.get("band", "")) == rules.band_close()
+			var unmarried: bool = avatar == null or avatar.family.is_empty()
+			can = close and unmarried
+			if not can:
+				if selected.is_empty():
+					reason = "没有选中居民"
+				elif not close:
+					reason = "得先处到亲密"
+				else:
+					reason = "你已成了家"
 		if id == ACTION_GIFT and selected.is_empty():
 			can = false
 			reason = "没有选中居民"

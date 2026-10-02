@@ -295,9 +295,13 @@ func get_price(
 			reputation_factor = _wary_factor
 	var buy_factor: float = _black_buy_factor if channel == CHANNEL_BLACK_MARKET else 1.0
 	var sell_factor: float = _black_sell_factor if channel == CHANNEL_BLACK_MARKET else 1.0
+	# 家族折扣（A3，D-180）：在配偶落脚的城，玩家买东西便宜——家族在本地脸面广，
+	# 铺子给个亲情价。只打买价不打收价：卖是铺子在收你的货，那张脸不给这头使。
+	# 这里直接乘 unit_price，界面与成交走同一条 get_price，天然同口径。
+	var family_factor: float = FamilyGate.discount_for(world.avatar if world != null else null, city_id)
 
 	var unit_price: int = maxi(1, int(round(
-		float(base) * supply * security * premium * reputation_factor * buy_factor
+		float(base) * supply * security * premium * reputation_factor * buy_factor * family_factor
 	)))
 	# 收价不吃声誉：敬重是"买得便宜"，不是"卖得贵"（D-44）。同一座城里买贵卖贱，
 	# 所以原地倒手永远亏——要赚差价只能把货搬到物价高的城去。

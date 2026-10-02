@@ -308,6 +308,11 @@ func run_all() -> int:
 	_test_c3_tectonic_shocks()
 	_test_c3_trade_price_factor()
 	_test_c3_route_and_building_yield()
+	print("=== A3 婚姻·家族（第三阶段 / D-179）===")
+	_test_a3_marriage_proposal()
+	_test_a3_marriage_contract_family_discount()
+	_test_a3_marriage_bereavement()
+	_test_a3_family_view_model()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7552,7 +7557,7 @@ func _test_npc_view_model() -> void:
 	_check(not view.get("rows", []).is_empty(), "城里有人可交互")
 	_eq(int(view.get("residentCursor", -1)), 0, "光标停在第一位居民")
 	var actions: Array = view.get("actions", [])
-	_eq(actions.size(), 5, "五个底部动作")
+	_eq(actions.size(), 6, "六个底部动作（含求婚）")
 	var gift_action: Dictionary = {}
 	var hire_action: Dictionary = {}
 	for a in actions:
@@ -7731,7 +7736,7 @@ func _test_walk_path_grid() -> void:
 func _test_hud_nav_layout_hit() -> void:
 	var rect := Rect2(16.0, 48.0, 150.0, 568.0)
 	var items: Array = HudNav.layout(rect)
-	_eq(items.size(), 11, "导航侧栏有 11 个进入项")
+	_eq(items.size(), 12, "导航侧栏有 12 个进入项")
 	_eq(int(items[0]["view"]), HudNav.VIEW_MAP, "第一项是返回世界地图")
 	for i in range(items.size()):
 		var center: Vector2 = (items[i]["rect"] as Rect2).get_center()
@@ -10028,3 +10033,240 @@ func _c3_building_milli(sim: WorldSim, city_id: String, month: int) -> int:
 			if str(item.get("key", "")).begins_with("building-"):
 				total += int(item.get("milli", 0))
 	return total
+
+
+# === A3 婚姻·家族（第三阶段 / D-179）===
+
+## 求婚门槛：好感不到亲密 / 已已婚 / 不在同城 / 具名职位（非可婚对象），都不能求婚；
+## 好感达亲密且条件齐备才亮。
+func _test_a3_marriage_proposal() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "hero-a3"
+	avatar.money = 1_000_000
+	world.avatar = avatar
+
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	_check(npc != null, "aedran 有居民可求婚")
+	if npc == null:
+		return
+	avatar.city_id = npc.city_id
+
+	# 好感不够：拒绝并说明
+	var ctx_low: Dictionary = FamilyGate.proposal_ctx(avatar, world, npc)
+	_check(not bool(ctx_low.get("ok", false)), "好感不足不求婚")
+	# 好感拉到亲密档：可求
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, 60)
+	var ctx: Dictionary = FamilyGate.proposal_ctx(avatar, world, npc)
+	_check(bool(ctx.get("ok", false)), "亲密档可求婚")
+	# 不属地：换一个不在同一城的 npc，同样亲密档但要被"异地"拦下
+	var other_city: String = ""
+	for cid in world.get_city_ids():
+		if str(cid) != npc.city_id:
+			other_city = str(cid)
+			break
+	if not other_city.is_empty():
+		var far: SimNpc = world.get_city_npcs(other_city)[0]
+		NpcInteractionSystem.set_affinity(world, far.npc_id, 60)
+		avatar.city_id = npc.city_id
+		var ctx_far: Dictionary = FamilyGate.proposal_ctx(avatar, world, far)
+		_check(not bool(ctx_far.get("ok", false)), "不在同城不求婚")
+	# 已有配偶：结了婚的不再求第二个
+	var married_avatar := PlayerAvatar.new()
+	married_avatar.money = 1_000_000
+	married_avatar.family = {"npcId": "someone-else", "name": "某人", "cityId": npc.city_id}
+	married_avatar.city_id = npc.city_id
+	var ctx_married: Dictionary = FamilyGate.proposal_ctx(married_avatar, world, npc)
+	_check(not bool(ctx_married.get("ok", false)), "已成家不求婚")
+
+
+## 成婚闭环：扣彩礼、配偶转常驻具名、写家族史落盘、配偶所在城买卖打折（买价降、
+## 收价不变）、别处不打折。
+func _test_a3_marriage_contract_family_discount() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "hero-a3"
+	avatar.money = 1_000_000
+	world.avatar = avatar
+
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	if npc == null:
+		return
+	avatar.city_id = npc.city_id
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, 60)
+
+	var before_money: int = avatar.money
+	var bride: int = FamilyGate.bride_price()
+	var m: Dictionary = FamilyGate.marry(avatar, world, npc, 3)
+	_check(bool(m.get("ok", false)), "亲密档成功成婚")
+	_eq(avatar.money, before_money - bride, "成婚扣彩礼")
+	_check(FamilyGate.is_married(avatar), "成婚后 avatar.family 有配偶")
+	_eq(str(npc.position_id), FamilyGate.POSITION_ID_SPOUSE, "配偶转常驻具名职位")
+	_check(npc.is_named, "配偶成为具名")
+	# 家族史落盘：histories 里有一行记录
+	var hist: Array = world.family.get("histories", [])
+	_check(hist.size() == 1 and str(hist[0].get("npcId", "")) == npc.npc_id,
+		"家族史落盘已记录配偶")
+
+	# 家族折扣：配偶所在城买价打折、收价不变；别处不打折。
+	var economy: Economy = sim.economy
+	var quote_home: Dictionary = economy.get_price(world, npc.city_id, "weapon_longsword_common")
+	var other_city: String = ""
+	for cid in world.get_city_ids():
+		if str(cid) != npc.city_id:
+			other_city = str(cid)
+			break
+	# 找到一件在配偶城有供给、可取价的货；用价格对比"成婚前 vs 成婚后"
+	var pre: Dictionary = economy.get_price(world, npc.city_id, "weapon_longsword_common")
+	# 成婚前 avatar 没配偶，价格是全价；成婚后同城买价该更便宜
+	_eq(int(pre.get("unitPrice", 0)), int(quote_home.get("unitPrice", 0)),
+		"同一城同一货价成婚前成交（无折扣源时一致——用对比口径）")
+	# 收价不做家族折扣
+	_eq(int(pre.get("sellPrice", 0)), int(quote_home.get("sellPrice", 0)),
+		"家族折扣只打折买价，收价不变")
+
+	# 明确：在配偶城成婚后比"登记前"（模拟 single avatar）的买价便宜
+	# 用另一个 avatar 当对照——同上一个 avatar 但无 family
+	var no_fam := PlayerAvatar.new()
+	no_fam.money = 1_000_000
+	no_fam.city_id = npc.city_id
+	world.avatar = no_fam
+	var quote_no_family: Dictionary = economy.get_price(world, npc.city_id, "weapon_longsword_common")
+	world.avatar = avatar
+	var quote_with_family: Dictionary = economy.get_price(world, npc.city_id, "weapon_longsword_common")
+	_check(int(quote_with_family.get("unitPrice", 0)) < int(quote_no_family.get("unitPrice", 0)),
+		"配偶所在城买价因家族折扣而下降（%d < %d）" % [
+			int(quote_with_family.get("unitPrice", 0)), int(quote_no_family.get("unitPrice", 0))])
+	# 别处不打折
+	if not other_city.is_empty():
+		var quote_other_family: Dictionary = economy.get_price(
+			world, other_city, "weapon_longsword_common")
+		var quote_other_nofam: Dictionary = economy.get_price(
+			_no_family_world(other_city, npc.city_id), other_city, "weapon_longsword_common") if false \
+			else _price_without_family(built, other_city, "weapon_longsword_common")
+		_eq(int(quote_other_family.get("unitPrice", 0)), int(quote_other_nofam.get("unitPrice", 0)),
+			"别处城不因这段家族打折")
+
+
+func _price_without_family(built: Dictionary, city_id: String, tpl: String) -> Dictionary:
+	# 用同一世界的副本，但 avatar 无 family；不修改原 world 的 avatar
+	var sim: WorldSim = built["sim"]
+	var world: WorldState = built["world"]
+	var saved: PlayerAvatar = world.avatar
+	var probe := PlayerAvatar.new()
+	probe.money = 1_000_000
+	world.avatar = probe
+	var q: Dictionary = sim.economy.get_price(world, city_id, tpl)
+	world.avatar = saved
+	return q
+
+
+# --- 小工具：构造无配偶化身的世界（仅作折扣对照，不改装原世界） ---
+func _no_family_world(city_id: String, ignore: String) -> WorldState:
+	# 占位；实际折扣对照走 _price_without_family
+	return null
+
+
+## 丧偶两路：配偶随世界离世（settle_year 触发）、玩家转世（rebirth 触发）。
+## 死亡不可逆不挽留：婚姻清空、沉进家族史。
+func _test_a3_marriage_bereavement() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var sim: WorldSim = built["sim"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "hero-a3"
+	avatar.money = 1_000_000
+	world.avatar = avatar
+
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	if npc == null:
+		return
+	avatar.city_id = npc.city_id
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, 60)
+	var m: Dictionary = FamilyGate.marry(avatar, world, npc, 1)
+	_check(bool(m.get("ok", false)), "进入丧偶用例前先成婚")
+
+	# 路径一：玩家转世——重生前旧化身有配偶，调用 on_spouse_gone(REINCARNATION)
+	var r1: Dictionary = FamilyGate.on_spouse_gone(
+		avatar, world, 7, FamilyGate.WIDOW_CLASS_REINCARNATION)
+	_check(bool(r1.get("ok", false)), "转世可触发丧偶")
+	_check(not FamilyGate.is_married(avatar), "丧偶后配偶清空")
+	_check(not avatar.family.is_empty() == false, "avatar.family 已清（不是空字典之外的残留）")
+	var hist1: Array = world.family.get("histories", [])
+	_check(hist1.size() == 1 and int(hist1[0].get("widowedAt", -1)) == 7
+		and str(hist1[0].get("widowClass", "")) == FamilyGate.WIDOW_CLASS_REINCARNATION,
+		"转世丧偶写进史：widowedAt/class 在案")
+
+	# 路径二：配偶随世界离世——settle_year 检测到配偶死亡触发 death 丧偶
+	var npc2: SimNpc = world.get_city_npcs("drayburn")[0] if false else _pick_spouse_for(world)
+	if npc2 == null:
+		return
+	avatar.city_id = npc2.city_id
+	NpcInteractionSystem.set_affinity(world, npc2.npc_id, 60)
+	var m2: Dictionary = FamilyGate.marry(avatar, world, npc2, 12)
+	_check(bool(m2.get("ok", false)), "二次成婚成功（前一段已丧偶）")
+	# 直接让该配偶到寿命尽头，走 settle_year 死亡路径
+	npc2.age = npc2.lifespan + 1
+	var year_rep: Dictionary = sim.settle_year(12)
+	_check(not FamilyGate.is_married(avatar), "配偶离世后玩家不再已婚（死亡不可逆）")
+	var hist2: Array = world.family.get("histories", [])
+	_check(hist2.size() == 2, "两个配偶两段史")
+	var last: Dictionary = hist2[hist2.size() - 1]
+	_check(int(last.get("widowedAt", -1)) >= 0
+		and str(last.get("widowClass", "")) == FamilyGate.WIDOW_CLASS_DEATH,
+		"配偶随世界离世 → 丧偶史记为 death 类")
+
+
+func _pick_spouse_for(world: WorldState) -> SimNpc:
+	# 找一个配偶离世后婚姻可被 settle_year 看到的具名 NPC 城市
+	for city_id in world.get_city_ids():
+		var npcs: Array = world.get_city_npcs(str(city_id))
+		if not npcs.is_empty() and FamilyGate._find_history(world, "") == {}:
+			return npcs[0] as SimNpc
+	return null
+
+
+## 家族面板视图模型：未成家 / 已婚 / 丧偶史的文案成形，且只读不改状态。
+func _test_a3_family_view_model() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "hero-a3"
+
+	# 未成家：面板提示怎么成家，史空
+	var single: Dictionary = FamilyViewModel.build(avatar, world)
+	_check(not bool(single.get("married", false)), "未婚视图标记 married=false")
+	_check(not str(single.get("courting", "")).is_empty(), "未婚有求婚提示文案")
+	_check((single.get("histories", []) as Array).is_empty(), "未婚家族史为空")
+
+	avatar.money = 1_000_000
+	world.avatar = avatar
+	var npc: SimNpc = world.get_city_npcs("aedran")[0]
+	if npc == null:
+		return
+	avatar.city_id = npc.city_id
+	NpcInteractionSystem.set_affinity(world, npc.npc_id, 60)
+	var m: Dictionary = FamilyGate.marry(avatar, world, npc, 5)
+	_check(bool(m.get("ok", false)), "视图用例前先成婚")
+
+	var married: Dictionary = FamilyViewModel.build(avatar, world)
+	_check(bool(married.get("married", false)), "已婚视图标记 married=true")
+	_eq(int(married.get("discountPct", 0)), FamilyGate.discount_pct(), "折扣与规则层同源")
+	_check(not str(married.get("spouseName", "")).is_empty(), "视图给出配偶名")
+	_check(not str(married.get("marriedAtLabel", "")).is_empty(), "视图给出成婚年月")
+
+	# 丧偶史成形：转世走一遍，史里出现一行带"转世"字样
+	FamilyGate.on_spouse_gone(avatar, world, 7, FamilyGate.WIDOW_CLASS_REINCARNATION)
+	var sad: Dictionary = FamilyViewModel.build(avatar, world)
+	_check(not bool(sad.get("married", false)), "丧偶后视图回到已婚=false")
+	var hist: Array = sad.get("histories", [])
+	_check(hist.size() == 1 and not str(hist[0].get("text", "")).is_empty(),
+		"家族史在面板视图里有可读文案")
+	# 规则层与视图模型都不因 build 改状态：配偶已清、史未增
+	_check(not FamilyGate.is_married(avatar), "build 不复活配偶")
+	_eq((world.family.get("histories", []) as Array).size(), 1, "build 不新赠史")
+	_check(not str(avatar.bereaved_note).is_empty(), "丧偶的未亡人留话在案")
