@@ -254,6 +254,14 @@ var _pray_active: bool = false
 var _pray_view: Dictionary = {}
 var _pray_cursor: int = 0
 
+# 古龙瓦洛克的三幕试炼（B2）。会话级、不落盘、复用 VIEW_EVENT 的抉择形态
+# （同 D-90 那条惯例）：从龙骸冰川入口建筑走进去，三幕答完即结盟/离场/失败，
+# 记一条事件流收场。会话本身只活在这一屏，出屏即弃，与神、隐藏属性事件同处境。
+var _varok_active: bool = false
+var _varok_session: Dictionary = {}
+var _varok_view: Dictionary = {}
+var _varok_cursor: int = 0
+
 # 商铺与黑市（M8）。界面只持有"在看哪座城、买还是卖、哪条渠道、光标在哪"——
 # 价格与货架每次都按当前城市状态重算，不落盘（物价随城长，存下来就会过期）。
 var _trade_city_id: String = ""
@@ -625,6 +633,8 @@ func _refresh() -> void:
 		VIEW_EVENT:
 			if _pray_active:
 				_refresh_pray()
+			elif _varok_active:
+				_refresh_varok()
 			elif not _hidden_event.is_empty():
 				_refresh_hidden()
 			else:
@@ -3900,6 +3910,107 @@ func _pray_cancel() -> void:
 	_switch_view(VIEW_MAP)
 
 
+# --- 古龙瓦洛克的三幕试炼（B2）---
+# 会话级、不落盘，复用 VIEW_EVENT 的抉择形态（同 D-90）：从城内空间的龙骸冰川
+# 入口建筑走进去，三幕答完即结盟/离场/失败，记一条事件流回城内空间。会话本身
+# 只活在这一屏，出屏即弃——与神、隐藏属性事件同处境。
+
+func _open_varok() -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var gate: Dictionary = VarokTrial.gate(_world.avatar)
+	if not bool(gate.get("ok", false)):
+		_status.text = str(gate.get("reason", "瓦洛克还不打算见你。"))
+		_refresh()
+		return
+	_varok_active = true
+	_varok_session = VarokTrial.new_session()
+	_varok_cursor = 0
+	_switch_view(VIEW_EVENT)
+	_status.text = "龙骸冰川最深处——瓦洛克睁开一只眼。"
+	_refresh()
+
+
+func _refresh_varok() -> void:
+	if not _varok_active or _varok_session.is_empty():
+		_varok_view = {}
+		return
+	_varok_view = VarokTrial.node_view(_varok_session)
+	_varok_cursor = clampi(_varok_cursor, 0,
+		maxi(0, int(_varok_view.get("branches", []).size()) - 1))
+
+
+func _varok_input(key_event: InputEventKey) -> void:
+	if _varok_view.is_empty():
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_varok_cursor = maxi(0, _varok_cursor - 1)
+			_refresh()
+		KEY_DOWN, KEY_S:
+			_varok_cursor = mini(_varok_view.get("branches", []).size() - 1, _varok_cursor + 1)
+			_refresh()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_varok_confirm()
+		KEY_ESCAPE, KEY_T:
+			_finish_varok(VarokTrial.OUTCOME_LEAVE, "你转身离开冰川，风雪盖住了来路。")
+
+
+func _varok_click(point: Vector2) -> void:
+	var hit: Dictionary = VarokPanel.hit_test(_varok_view, _content_rect(), point)
+	if str(hit.get("kind", "")) != "choice":
+		return
+	var index: int = int(hit.get("index", -1))
+	if index != _varok_cursor:
+		_varok_cursor = index
+		_refresh()
+		return
+	_varok_confirm()
+
+
+func _varok_confirm() -> void:
+	if not _varok_active or _world == null or _world.avatar == null:
+		return
+	var branches: Array = _varok_view.get("branches", [])
+	if branches.is_empty():
+		return
+	var branch: Dictionary = branches[clampi(_varok_cursor, 0, branches.size() - 1)]
+	var result: Dictionary = VarokTrial.choose(
+		_world.avatar, _varok_session, str(branch.get("choiceId", "")))
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("notice", "这一步没能走出去。"))
+		_refresh()
+		return
+	_varok_session = result["session"]
+	if bool(result.get("finish", false)):
+		_finish_varok(str(result.get("outcome", "")), str(result.get("notice", "")))
+		return
+	_status.text = str(result.get("notice", ""))
+	_refresh()
+
+
+## 收场：把这一叩的结果记进事件流，清会话，回城内空间（从建筑走进来的）。
+## 结盟奖励已在 VarokTrial.choose 落账到化身，这里只记账。
+func _finish_varok(outcome: String, detail: String) -> void:
+	var month: int = Clock.total_months()
+	var notices: Array = []
+	match outcome:
+		VarokTrial.OUTCOME_ALLIANCE:
+			notices.append({"month": month, "text": "你以凡人之躯通过瓦洛克的三幕试炼，与他结为盟友：习得龙语符文。"})
+		VarokTrial.OUTCOME_FAIL:
+			notices.append({"month": month, "text": "你在瓦洛克面前嘴硬到底，被古龙一击送出了冰川。"})
+		_:
+			notices.append({"month": month, "text": "你离开了龙骸冰川。瓦洛克说，冰川会等你。"})
+	_varok_active = false
+	_varok_session = {}
+	_varok_view = {}
+	_varok_cursor = 0
+	_note_events(notices)
+	_switch_view(VIEW_CITY_SPACE)
+	if not detail.is_empty():
+		_status.text = str(detail)
+
+
 func _percent_bp(bp: int) -> int:
 	return int(round(float(bp) / 100.0))
 
@@ -3958,6 +4069,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 		VIEW_QUEST:
 			return QuestPanel.hit_test(_quest_view, _content_rect(), point)
 		VIEW_EVENT:
+			if _varok_active:
+				return VarokPanel.hit_test(_varok_view, _content_rect(), point)
 			return EventPanel.hit_test(
 				_hidden_view if not _hidden_event.is_empty() else _event_view,
 				_content_rect(), point
@@ -4013,6 +4126,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 		VIEW_EVENT:
 			if _pray_active:
 				_pray_click(event.position)
+			elif _varok_active:
+				_varok_click(event.position)
 			elif not _hidden_event.is_empty():
 				_hidden_click(event.position)
 			else:
@@ -4450,6 +4565,10 @@ func _city_space_interact() -> void:
 	var pos: Vector2i = _city_space["player"]
 	var near_b: Dictionary = CitySpace.near_building(layout, pos)
 	if not near_b.is_empty():
+		# 龙骸冰川入口（B2）：功能是 adventure 的建筑只有这一座，走进去就是瓦洛克。
+		if str(near_b.get("building_id", "")) == "frostspeak_glacier":
+			_open_varok()
+			return
 		_city_space_open_kind(str(near_b.get("kind", "")))
 		return
 	var npc_id: String = CitySpace.near_npc(layout, pos)
@@ -5595,6 +5714,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		VIEW_EVENT:
 			if _pray_active:
 				_pray_input(key_event)
+			elif _varok_active:
+				_varok_input(key_event)
 			elif not _hidden_event.is_empty():
 				_hidden_input(key_event)
 			else:
@@ -6340,9 +6461,12 @@ func _draw() -> void:
 		VIEW_QUEST:
 			QuestPanel.draw(self, _quest_view, _content_rect(), _hover)
 		VIEW_EVENT:
-			EventPanel.draw(self,
-				_pray_view if _pray_active else (_hidden_view if not _hidden_event.is_empty() else _event_view),
-				_content_rect(), _hover)
+			if _varok_active:
+				VarokPanel.draw(self, _varok_view, _content_rect(), _hover)
+			else:
+				EventPanel.draw(self,
+					_pray_view if _pray_active else (_hidden_view if not _hidden_event.is_empty() else _event_view),
+					_content_rect(), _hover)
 		VIEW_TRADE:
 			TradePanel.draw(self, _trade_view, _content_rect(), _hover)
 		VIEW_ENCOUNTER:

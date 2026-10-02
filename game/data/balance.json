@@ -658,6 +658,42 @@
       { "id": "pregnant", "label": "带着一个不能说的晚辈", "desc": "他身边常跟着一个半大孩子，说是亲戚家的。可孩子管他叫的辈分，他每次都答得不一致。", "resolveCost": 110, "resolveLine": "你把那孩子安顿了一桩难处。他垂着眼蹲了很久，忽然说了句不像玩笑的实话。", "rewardCopper": 42 }
     ]
   },
+  "varok": {
+    "_comment": "古龙瓦洛克试炼（B2，D-185~D-186）：冰川最深处的三幕考验，作为『单局目标支点』——瓦洛克不教人，只考验『你以凡人之躯配得上龙语』。台词在 varok_trial.gd 规则层固定为单一来源（过文风闸），这里只放数值：前置门槛、三幕限时挑战（体温随路径下降、力竭点）、诱惑的代价、结盟奖励。试炼会话不落盘，每次进冰川现算；结盟的符文/龙化/回响落账到化身。详见《轮回之书-古龙瓦洛克试炼脚本.md》。",
+    "_comment_gate": "前置门槛（脚本 2 节）：未半龙（龙化 < dragonizationMax，瓦洛克不考验『已经半龙』的人）+ 灵魂系或任一元素技能 ≥ skillMin（证明你懂『语言的重量』）。元素树取 balance.combat.elementCycle 四系同源。",
+    "dragonizationMax": 40,
+    "skillMin": 30,
+    "_comment_act1": "第一幕「寒霜」（考验意志）。体温 tempMax 起，随所选路径逐指下降：抄近路掉得快但最快、山脊居中、避风谷最稳但最慢。走到 forcePoint 时进入力竭点——咬牙坚持/停下生火/放弃呼救三选。第一幕不设死亡惩罚（脚本 4.1）：咬牙的『消耗生命』按『派生生命不落盘』惯例只作叙事不真扣血，只影响瓦洛克对你的评价（倔/稳）。",
+    "act1": {
+      "_comment_path": "三条路径的体温下降量（体温=tempMax，每段路掉对应值，掉到 forcePoint 就触动力竭点）。『限时』即体温计数：数值都在这里，改这段就能调暴风雪的致命感。",
+      "tempMax": 100,
+      "tempDrop": { "shortcut": 45, "ridge": 30, "valley": 15 },
+      "forcePoint": 40,
+      "_comment_eval": "通过后瓦洛克的评价档位（脚本 4.1）：咬牙=倔、生火=稳，各给一段台词。",
+      "evalWillful": "倔",
+      "evalSteady": "稳"
+    },
+    "_comment_act2": "第二幕「回响」（考验抉择）。诱惑 A：吸收完整龙魂——即刻 +全属性 +10、解锁一个符文，但龙化 +15（脚本 4.2）。诱惑 B：触碰被封印的『永恒者灵魂碎片』——善恶 -20，且直接进入第三幕『恶面』分支。拒绝两者：无即时奖励，但拿到瓦洛克的敬重。",
+    "act2": {
+      "soulAttrBonus": 10,
+      "soulDragonizationGain": 15,
+      "soulRune": "rune_fus_soul",
+      "eternalKarmaLoss": 20
+    },
+    "_comment_act3": "第三幕「直面我」（考验勇气与诚实）。问『你为何要学龙语』，几句回答都在，瓦洛克看的是诚实不是正解。若在第二幕骗取了力量（吸收了龙魂）却在此答非『为了力量』，判定撒谎→进入识破分支；诚实回答即可结盟。",
+    "act3": {
+      "_comment_answers": "几句回答与诚实判定。power=为了力量、guard=为了守护、cycle=为了不被轮回摆布、unknowing=不知道只是必须来。",
+      "honestAnswers": ["power", "guard", "cycle", "unknowing"],
+      "_comment_lie": "在第二幕吞了龙魂又答了非『为了力量』的回答 = 撒谎（脚本 4.3 识破），进恶面分支。",
+      "lieRefusal": "__lie__"
+    },
+    "_comment_reward": "结盟奖励（脚本 5.1）：习符文（追加龙语符文进 known_runes）、回响+1（dragon_soul）、跨世盟友（追加『三世盟约』符文以灵魂记忆随转生携带，SoulRecord.known_runes）。失败不锁死，可再来（脚本 5.2）。",
+    "reward": {
+      "runeGranted": ["rune_fus_volition", "rune_sah_soul"],
+      "dragonSoulGain": 1,
+      "allianceRune": "rune_dov_true"
+    }
+  },
   "deity": {
     "_comment": "代神机制（M-A 深化，D-152~D-155）：恩惠/改信/圣物的数值系数全部集中在这。恩惠有效期是『绝对自然日』(blessingDays)，与 DisguiseGate 的 disguise_until_day 同一套时钟通路，main 每日 boundary 调 Pontiff.sync 剥掉到期的。改信是『背一柱投另一柱』：接过多少旧圣物就按 perRelicPenalty 逐件咬善恶（karma 扣到 -100 以下就没法改），换回旧柱付 refundCost 铜币。圣物跨世保留由 SoulRecord.relics 携带。",
     "blessingDays": 3,

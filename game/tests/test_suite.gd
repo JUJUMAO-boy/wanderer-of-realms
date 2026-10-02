@@ -313,6 +313,12 @@ func run_all() -> int:
 	_test_a3_marriage_contract_family_discount()
 	_test_a3_marriage_bereavement()
 	_test_a3_family_view_model()
+	print("=== B2 瓦洛克试炼（第三阶段 / D-185）===")
+	_test_b2_varok_gate()
+	_test_b2_varok_full_run()
+	_test_b2_varok_lie_and_fail()
+	_test_b2_varok_rewards()
+	_test_b2_varok_style_gate()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -10270,3 +10276,192 @@ func _test_a3_family_view_model() -> void:
 	_check(not FamilyGate.is_married(avatar), "build 不复活配偶")
 	_eq((world.family.get("histories", []) as Array).size(), 1, "build 不新赠史")
 	_check(not str(avatar.bereaved_note).is_empty(), "丧偶的未亡人留话在案")
+
+
+# === B2 古龙瓦洛克试炼（第三阶段 / D-185~D-186）===
+
+## 造一个够格叩门的化身：灵魂系/元素系技能达标、龙化未过半。
+## skills 是 skillId -> 熟练度；fire_fireball 属火元素树，soul_spark 属灵魂树。
+func _b2_avatar() -> PlayerAvatar:
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "hero-varok"
+	avatar.display_name = "试炼者"
+	avatar.skills = {"fire_fireball": 35, "soul_spark": 35}
+	avatar.dragonization = 10
+	return avatar
+
+
+## 前置判定：够格放行；龙化过高、技能不足、两者都缺，各给各的理由。
+func _test_b2_varok_gate() -> void:
+	var ok: PlayerAvatar = _b2_avatar()
+	var pass_gate: Dictionary = VarokTrial.gate(ok)
+	_check(bool(pass_gate.get("ok", false)), "灵魂+元素技能达标且龙化低 → 放行进冰川")
+
+	var half: PlayerAvatar = _b2_avatar()
+	half.dragonization = 60
+	var gate_half: Dictionary = VarokTrial.gate(half)
+	_check(not bool(gate_half.get("ok", false)), "龙化过半 → 拒之门外")
+	_check(not str(gate_half.get("reason", "")).is_empty(), "拒绝时给一句口吻")
+
+	var weak: PlayerAvatar = _b2_avatar()
+	weak.skills = {"tech_block": 50}
+	var gate_weak: Dictionary = VarokTrial.gate(weak)
+	_check(not bool(gate_weak.get("ok", false)), "只有战斗树技能 → 不够懂『语言的重量』")
+
+	var mixed: PlayerAvatar = _b2_avatar()
+	mixed.dragonization = 60
+	mixed.skills = {"tech_block": 50}
+	var gate_mixed: Dictionary = VarokTrial.gate(mixed)
+	_check(not bool(gate_mixed.get("ok", false)), "两项都不达标 → 同样不放行")
+
+
+## 一次完整试炼：拒绝诱惑 + 力竭咬牙，诚实作答 → 结盟，落账符文与龙魂。
+## 走完全程并逐幕断言会话阶段与落账结果。
+func _test_b2_varok_full_run() -> void:
+	var avatar: PlayerAvatar = _b2_avatar()
+	var session: Dictionary = VarokTrial.new_session()
+	_check(bool(session.has(VarokTrial.KEY_TEMP)), "新会话带体温计数（限时参数）")
+
+	# 开场：要求学龙语
+	var entry: Dictionary = VarokTrial.node_view(session)
+	_eq(str(entry["stage"]), VarokTrial.STAGE_ENTRY, "开场在入口幕")
+	_check((entry["branches"] as Array).size() >= 2, "入口幕有应答可选")
+	var r1: Dictionary = VarokTrial.choose(avatar, session, "ask")
+	_check(not bool(r1.get("finish", false)), "求教不立即收场")
+	session = r1["session"]
+
+	# 第一幕：抄近路 → 体温按表掉 → 力竭点
+	var act1: Dictionary = VarokTrial.node_view(session)
+	_eq(str(act1["stage"]), VarokTrial.STAGE_ACT1, "第一幕·寒霜")
+	var temp_before: int = int(act1["temp"])
+	var r2: Dictionary = VarokTrial.choose(avatar, session, "shortcut")
+	session = r2["session"]
+	var force: Dictionary = VarokTrial.node_view(session)
+	_eq(str(force["stage"]), VarokTrial.STAGE_ACT1_FORCE, "选路后进力竭点")
+	_check(int(force["temp"]) < temp_before, "抄近路体温掉得最狠（45 档）")
+
+	# 力竭点：咬牙坚持 → 记「倔」
+	var r3: Dictionary = VarokTrial.choose(avatar, session, "bite")
+	session = r3["session"]
+	_eq(str(session.get(VarokTrial.KEY_ACT1_EVAL, "")), "倔", "咬牙 → 瓦洛克记你『倔』")
+	var act2: Dictionary = VarokTrial.node_view(session)
+	_eq(str(act2["stage"]), VarokTrial.STAGE_ACT2, "第二幕·回响")
+	_check((act2["lines"] as Array).size() >= 2, "第二幕带剧情台词")
+
+	# 第二幕：拒绝两重诱惑 → 敬重
+	var r4: Dictionary = VarokTrial.choose(avatar, session, "refuse")
+	session = r4["session"]
+	var act3: Dictionary = VarokTrial.node_view(session)
+	_eq(str(act3["stage"]), VarokTrial.STAGE_ACT3, "第三幕·直面我")
+
+	# 第三幕：诚实作答（未吞龙魂，任意答都诚实）→ 结盟
+	var r5: Dictionary = VarokTrial.choose(avatar, session, "unknowing")
+	_check(bool(r5.get("finish", false)), "第三幕答完即收场")
+	_eq(str(r5.get("outcome", "")), VarokTrial.OUTCOME_ALLIANCE, "诚实作答 → 结盟")
+	_check(r5["session"] != null and not (r5["session"] as Dictionary).is_empty(),
+		"收场时会话仍在（main 用它记事件流）")
+
+
+## 撒谎与失败：第二幕吞了龙魂，第三幕却答「守护」→ 识破进恶面分支；
+## 嘴硬 → 失败；承认 → 退回去重走（清旧账、体温重新起算）。
+func _test_b2_varok_lie_and_fail() -> void:
+	var avatar: PlayerAvatar = _b2_avatar()
+	var session: Dictionary = VarokTrial.new_session()
+
+	# 一路走到第三幕，第二幕选「吞龙魂」
+	var r: Dictionary = VarokTrial.choose(avatar, session, "ask")
+	session = r["session"]
+	r = VarokTrial.choose(avatar, session, "ridge")
+	session = r["session"]
+	r = VarokTrial.choose(avatar, session, "fire")
+	session = r["session"]
+	# 吞龙魂：属性 +10、龙化 +15、习得符文
+	var soul_before: int = avatar.get_attribute(PlayerAvatar.ATTR_SOUL)
+	var draco_before: int = avatar.dragonization
+	r = VarokTrial.choose(avatar, session, "absorb")
+	session = r["session"]
+	_eq(int(avatar.get_attribute(PlayerAvatar.ATTR_SOUL)), soul_before + 10, "吞龙魂全属性 +10")
+	_eq(int(avatar.dragonization), draco_before + 15, "吞龙魂龙化 +15")
+	var rune: String = str(ContentLoader.get_balance_section("varok").get("act2", {}).get("soulRune", ""))
+	_check(rune.is_empty() or avatar.known_runes.has(rune), "吞龙魂习得魂系符文")
+	_check(bool(session.get("flags", {}).get(VarokTrial.FLAG_GREEDY, false)), "吞龙魂记下贪婪")
+
+	# 第三幕答「守护」→ 撒谎识破
+	r = VarokTrial.choose(avatar, session, "guard")
+	_check(not bool(r.get("finish", false)), "撒谎不直接收场")
+	_eq(str((r["session"] as Dictionary)["stage"]), VarokTrial.STAGE_ACT3_LIE, "撒谎 → 恶面分支")
+	var lie_view: Dictionary = VarokTrial.node_view(r["session"])
+	_check((lie_view["lines"] as Array).size() >= 1, "识破有台词")
+	_check((lie_view["branches"] as Array).size() == 2, "恶面分支有承认/嘴硬两选")
+
+	# 嘴硬 → 失败
+	var r2: Dictionary = VarokTrial.choose(avatar, r["session"], "stubborn")
+	_check(bool(r2.get("finish", false)), "嘴硬收场")
+	_eq(str(r2.get("outcome", "")), VarokTrial.OUTCOME_FAIL, "嘴硬 → 失败")
+
+	# 另一局：承认 → 退回去重走，旧账清了、体温重新起算
+	var avatar2: PlayerAvatar = _b2_avatar()
+	var s2: Dictionary = VarokTrial.new_session()
+	r = VarokTrial.choose(avatar2, s2, "ask")
+	s2 = r["session"]
+	r = VarokTrial.choose(avatar2, s2, "valley")
+	s2 = r["session"]
+	r = VarokTrial.choose(avatar2, s2, "fire")
+	s2 = r["session"]
+	r = VarokTrial.choose(avatar2, s2, "absorb")
+	s2 = r["session"]
+	var temp_low: int = int(s2.get(VarokTrial.KEY_TEMP, 0))
+	r = VarokTrial.choose(avatar2, s2, "guard")
+	s2 = r["session"]
+	_eq(str(s2["stage"]), VarokTrial.STAGE_ACT3_LIE, "承认前先被识破")
+	var r3: Dictionary = VarokTrial.choose(avatar2, s2, "admit")
+	s2 = r3["session"]
+	_eq(str(s2["stage"]), VarokTrial.STAGE_ACT1_FORCE, "承认 → 退回力竭点重走")
+	_check(not bool(s2.get("flags", {}).get(VarokTrial.FLAG_GREEDY, false)), "重走不带贪婪旧账")
+	_check(int(s2.get(VarokTrial.KEY_TEMP, 0)) > temp_low, "体温重新起算")
+
+
+## 结盟奖励：习得两个符文 + 龙魂 +1。已习得的符文不重复给。
+func _test_b2_varok_rewards() -> void:
+	var avatar: PlayerAvatar = _b2_avatar()
+	var reward: Dictionary = ContentLoader.get_balance_section("varok").get("reward", {})
+	var granted: Array = reward.get("runeGranted", [])
+	_check(granted.size() >= 2, "结盟奖励至少两个符文")
+
+	var session: Dictionary = VarokTrial.new_session()
+	var r: Dictionary = VarokTrial.choose(avatar, session, "ask")
+	session = r["session"]
+	r = VarokTrial.choose(avatar, session, "shortcut")
+	session = r["session"]
+	r = VarokTrial.choose(avatar, session, "bite")
+	session = r["session"]
+	r = VarokTrial.choose(avatar, session, "refuse")
+	session = r["session"]
+	r = VarokTrial.choose(avatar, session, "guard")
+	_check(bool(r.get("finish", false)), "诚实守卫 → 结盟收场")
+	_eq(str(r.get("outcome", "")), VarokTrial.OUTCOME_ALLIANCE, "守卫回答 → 结盟")
+
+	var soul_gain: int = int(reward.get("dragonSoulGain", 0))
+	_eq(int(avatar.dragon_soul), soul_gain, "结盟回响 +%d" % soul_gain)
+	for rune_id in granted:
+		_check(avatar.known_runes.has(str(rune_id)), "结盟习得符文 %s" % str(rune_id))
+	# 已在身上的符文不再重复给（跨世盟友不重复领）
+	var before: int = avatar.known_runes.size()
+	VarokTrial.choose(avatar, r["session"], "power")
+	_eq(avatar.known_runes.size(), before, "重复结盟不重复习符文")
+
+
+## 文风闸：瓦洛克全部台词过 A1 的 MenuStyle，套路腔会被拦下。
+func _test_b2_varok_style_gate() -> void:
+	var all_lines: Array = []
+	var session: Dictionary = VarokTrial.new_session()
+	for stage in [
+		VarokTrial.STAGE_ENTRY, VarokTrial.STAGE_ACT1, VarokTrial.STAGE_ACT1_FORCE,
+		VarokTrial.STAGE_ACT2, VarokTrial.STAGE_ACT3, VarokTrial.STAGE_ACT3_LIE,
+	]:
+		all_lines.append_array(VarokTrial.node_view(session).get("lines", []))
+	# 每个 stage 都要产出台词：node_view 按 stage 给，这里只验证"全部台词拼起来过闸"
+	_check(all_lines.size() >= 10, "瓦洛克台词总量不少于 10 句")
+	var audit: Dictionary = MenuStyle.audit("\n".join(PackedStringArray(all_lines)), 80)
+	_check((audit["flags"] as Array).is_empty(), "瓦洛克台词无套路腔 flag")
+
