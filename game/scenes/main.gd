@@ -6144,6 +6144,9 @@ func _npc_marry() -> void:
 		_status.text = "没有选中的居民。"
 		_refresh()
 		return
+	# 求婚必当面：先记下化身现在就在该居民所在城（A3 同城判定——avatar.city_id
+	# 此前靠未声明的动态属性强撑，这里落成对声明字段的正式写入），再走规则层。
+	_world.avatar.city_id = npc.city_id
 	var result: Dictionary = FamilyGate.marry(_world.avatar, _world, npc, _npc_current_month())
 	if not bool(result.get("ok", false)):
 		_status.text = "求亲不成：%s" % str(result.get("reason", result.get("error", "")))

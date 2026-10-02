@@ -128,6 +128,10 @@ var known_runes: Array[String] = []
 var pos_x: int = 0  ## 世界网格坐标，M6.1 地图与移动
 var pos_y: int = 0
 
+## 化身当前所在城（A3 婚姻判同城用，D-179）。会话性——随进城而变化，不落盘，
+## 由调用方（main 求婚 / 各城视图切入时）按当前城填入，缺省为空串。
+var city_id: String = ""
+
 
 func _init() -> void:
 	for attr in ALL_ATTRIBUTES:

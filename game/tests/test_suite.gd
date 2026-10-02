@@ -10228,11 +10228,14 @@ func _test_a3_marriage_bereavement() -> void:
 
 
 func _pick_spouse_for(world: WorldState) -> SimNpc:
-	# 找一个配偶离世后婚姻可被 settle_year 看到的具名 NPC 城市
+	# 找一个尚未出现在家族史里的居民当第二任配偶——若娶了同一个人，两段史的
+	# npcId 相同会被 _append_history 合并成一段（丧偶史就只剩一段，断言"两段史"
+	# 会失败）。此前 avatar.city_id 走了未声明的动态属性，路径二的二次成婚可能
+	# 根本没跑到，这里补全字段后暴露，故选点必须避开已在史里的 npc。
 	for city_id in world.get_city_ids():
-		var npcs: Array = world.get_city_npcs(str(city_id))
-		if not npcs.is_empty() and FamilyGate._find_history(world, "") == {}:
-			return npcs[0] as SimNpc
+		for npc in world.get_city_npcs(str(city_id)):
+			if FamilyGate._find_history(world, npc.npc_id).is_empty():
+				return npc as SimNpc
 	return null
 
 
