@@ -34,6 +34,7 @@ const COMER_FILE: String = "comers.json"
 const CROSSOVER_FILE: String = "crossovers.json"
 const MAINLINE_FILE: String = "mainline.json"
 const ANCHOR_FILE: String = "anchors.json"
+const MAINLINE_CROSSOVER_FILE: String = "mainline_crossovers.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -119,6 +120,7 @@ var _comers: Dictionary = {}
 var _crossovers: Dictionary = {}
 var _mainline: Dictionary = {}
 var _anchors: Dictionary = {}
+var _mainline_crossovers: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -162,6 +164,7 @@ func load_all() -> Dictionary:
 	_monsters = {}
 	_crossovers = {}
 	_anchors = {}
+	_mainline_crossovers = {}
 	_hidden_events.clear()
 	_personalities = {}
 	_faiths = {}
@@ -328,6 +331,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("锚点配置为空或读取失败")
 
+	var mainline_cross_root: Dictionary = _read_json(MAINLINE_CROSSOVER_FILE, "主线交叉配置")
+	if not mainline_cross_root.is_empty():
+		_validate_mainline_crossovers(mainline_cross_root)
+		_mainline_crossovers = mainline_cross_root
+	else:
+		_errors.append("主线交叉配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -354,6 +364,7 @@ func load_all() -> Dictionary:
 			"comers": _comers.get("comers", []).size(),
 			"crossovers": _crossovers.get("crossovers", []).size(),
 			"anchors": _anchors.get("anchors", []).size(),
+			"mainlineCrossovers": _mainline_crossovers.get("crossovers", []).size(),
 			"shards": _mainline.get("shards", []).size(),
 		},
 		"errors": _errors.duplicate(),
@@ -888,6 +899,32 @@ func get_anchor(anchor_id: String) -> Dictionary:
 func get_anchor_in_city(city_id: String) -> Dictionary:
 	for entry in get_anchors():
 		if str(entry.get("cityId", "")) == city_id:
+			return entry
+	return {}
+
+
+## 主线交叉配置（第四阶段 D4 / D-203~D-205）。返回 mainline_crossovers.json 的根对象。
+func get_mainline_crossover_config() -> Dictionary:
+	return _mainline_crossovers
+
+
+## 全部主线交叉。main.gd 在乱入者对话里按幕次登场、规则层 MainlineCross 都读它。
+func get_mainline_crossovers() -> Array:
+	return _mainline_crossovers.get("crossovers", [])
+
+
+## 按 crossId 取一条主线交叉；查不到给空字典。
+func get_mainline_crossover(cross_id: String) -> Dictionary:
+	for entry in get_mainline_crossovers():
+		if str(entry.get("crossId", "")) == cross_id:
+			return entry
+	return {}
+
+
+## 绑在某位乱入者身上的主线交叉（一位乱入者至多一条）。无则空字典。
+func get_mainline_crossover_of_comer(comer_id: String) -> Dictionary:
+	for entry in get_mainline_crossovers():
+		if str(entry.get("comerId", "")) == comer_id:
 			return entry
 	return {}
 
@@ -1543,8 +1580,11 @@ func _validate_crossover_profile(config: Dictionary, path: String) -> void:
 			if (fail as Dictionary).has("changes"):
 				_validate_event_changes((fail as Dictionary)["changes"], "%s.fail.changes" % bpath)
 			_validate_event_rewards(fail, "%s.fail" % bpath, str(config.get("cityId", "")))
-		if (branch as Dictionary).has("comerAffinity") and not ((branch as Dictionary)["comerAffinity"] is int):
-			_errors.append("交叉任务分支的 comerAffinity 必须是整数：%s.comerAffinity" % bpath)
+		if (branch as Dictionary).has("comerAffinity"):
+			# JSON 里的整数会被解析成 float，故只拒非数值（如手滑写成字符串）。
+			var ca: Variant = (branch as Dictionary)["comerAffinity"]
+			if typeof(ca) != TYPE_INT and typeof(ca) != TYPE_FLOAT:
+				_errors.append("交叉任务分支的 comerAffinity 必须是整数：%s.comerAffinity" % bpath)
 
 
 ## 锚点 NPC 配置（第四阶段 D2 / D-200~D-202）。
@@ -1625,6 +1665,108 @@ func _validate_anchors(root: Dictionary) -> void:
 					_errors.append("锚点揭示分支引用了不存在的主线线索：%s.revealClues = %s" % [rpath, clue_id])
 			if int(r.get("requiresShards", 0)) < 0:
 				_errors.append("锚点揭示分支 requiresShards 不能为负：%s" % rpath)
+
+
+## 主线交叉配置（第四阶段 D4 / D-203~D-205）。
+##
+## 校验的落点：绑的乱入者存在且**城市等于其相遇城**（与 D3 同一约束）、
+## 幕次门槛引用真实幕次、揭示的线索在 mainline.json 里真实存在、交会分支的档位表与
+## failKeys 自洽。缺了任何一项，主线交叉要么永不登场、要么揭示出根本不存在的线索。
+func _validate_mainline_crossovers(root: Dictionary) -> void:
+	var clue_ids: Dictionary = {}
+	for clue in get_mainline_clues():
+		clue_ids[str(clue.get("clueId", ""))] = true
+	var act_ids: Dictionary = {}
+	for act in get_mainline_acts():
+		act_ids[str(act.get("actId", ""))] = true
+
+	var list: Variant = root.get("crossovers", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("主线交叉配置缺少非空的 crossovers 数组")
+		return
+	var seen: Dictionary = {}
+	var seen_comer: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "crossovers[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("主线交叉配置 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+
+		var cross_id: String = str(config.get("crossId", ""))
+		if cross_id.is_empty():
+			_errors.append("主线交叉配置缺少字段：%s.crossId" % path)
+		elif seen.has(cross_id):
+			_errors.append("主线交叉 crossId 重复：%s" % cross_id)
+		else:
+			seen[cross_id] = true
+			path = "crossovers[%s]" % cross_id
+
+		if str(config.get("displayName", "")).is_empty():
+			_errors.append("主线交叉缺少字段：%s.displayName" % path)
+		if str(config.get("summary", "")).is_empty():
+			_errors.append("主线交叉缺少字段：%s.summary" % path)
+
+		var comer_id: String = str(config.get("comerId", ""))
+		var comer: Dictionary = get_comer(comer_id)
+		if comer_id.is_empty():
+			_errors.append("主线交叉缺少绑定的乱入者：%s.comerId" % path)
+		elif comer.is_empty():
+			_errors.append("主线交叉绑定了不存在的乱入者：%s.comerId = %s" % [path, comer_id])
+		elif seen_comer.has(comer_id):
+			_errors.append("同一位乱入者绑了多条主线交叉：%s.comerId = %s" % [path, comer_id])
+		else:
+			seen_comer[comer_id] = true
+		if int(config.get("minAffinity", -1)) < 0:
+			_errors.append("主线交叉 minAffinity 不能为负：%s.minAffinity" % path)
+
+		var city_id: String = str(config.get("cityId", ""))
+		if city_id.is_empty():
+			_errors.append("主线交叉缺少字段：%s.cityId" % path)
+		elif get_city_config(city_id).is_empty():
+			_errors.append("主线交叉指向不存在的城市：%s.cityId = %s" % [path, city_id])
+		elif not comer.is_empty() and str(comer.get("meetCity", "")) != city_id:
+			_errors.append("主线交叉的城市必须等于乱入者的相遇城：%s.cityId = %s（%s 在 %s）" % [
+				path, city_id, comer_id, str(comer.get("meetCity", ""))
+			])
+
+		var need_act: String = str(config.get("requiresAct", ""))
+		if not need_act.is_empty() and not act_ids.has(need_act):
+			_errors.append("主线交叉引用了不存在的幕次：%s.requiresAct = %s" % [path, need_act])
+		if int(config.get("requiresShards", 0)) < 0:
+			_errors.append("主线交叉 requiresShards 不能为负：%s" % path)
+
+		var dialogue: Variant = config.get("dialogue", null)
+		if not (dialogue is Array) or (dialogue as Array).is_empty():
+			_errors.append("主线交叉缺少非空的 dialogue：%s" % path)
+
+		_validate_crossover_profile(config, path)
+		for branch in config.get("branches", []):
+			if not (branch is Dictionary):
+				_errors.append("主线交叉分支必须是对象：%s.branches" % path)
+				continue
+			var b: Dictionary = branch
+			var bpath: String = "%s.branches[%s]" % [path, str(b.get("branchId", ""))]
+			if str(b.get("branchId", "")).is_empty():
+				_errors.append("主线交叉分支缺少 branchId：%s.branches" % path)
+			if str(b.get("label", "")).is_empty():
+				_errors.append("主线交叉分支缺少 label：%s" % bpath)
+			for clue_id in b.get("revealClues", []):
+				if not clue_ids.has(str(clue_id)):
+					_errors.append("主线交叉分支引用了不存在的主线线索：%s.revealClues = %s" % [bpath, clue_id])
+			for clue_id in (b.get("fail", {}) as Dictionary).get("revealClues", []):
+				if not clue_ids.has(str(clue_id)):
+					_errors.append("主线交叉失败套引用了不存在的主线线索：%s.fail.revealClues = %s" % [bpath, clue_id])
+			# failKeys 必须落在该分支的档位表里（否则判出的失败档名对不上任何档）。
+			if b.has("trial"):
+				var tier_keys: Dictionary = {}
+				for tier in b.get("tiers", []):
+					if tier is Dictionary:
+						tier_keys[str((tier as Dictionary).get("key", ""))] = true
+				for key in b.get("failKeys", []):
+					if not tier_keys.has(str(key)):
+						_errors.append("主线交叉失败档不在档位表里：%s.failKeys = %s" % [bpath, key])
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。

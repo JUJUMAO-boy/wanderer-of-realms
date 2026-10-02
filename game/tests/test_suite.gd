@@ -368,6 +368,16 @@ func run_all() -> int:
 	_test_d2_reveal_advances_act()
 	_test_d2_available_revelations_listing()
 	_test_d2_anchor_relations_survive_reincarnation()
+	print("=== D4 主线交叉任务 CX-07~12（第四阶段 / D-203）===")
+	_test_d4_mainline_cross_data_wellformed()
+	_test_d4_gate_requires_act()
+	_test_d4_judge_reuses_crossover()
+	_test_d4_resolve_reveals_clue()
+	_test_d4_reveal_advances_act()
+	_test_d4_no_hook_cross()
+	_test_d4_fail_does_not_reveal()
+	_test_d4_available_listing()
+	_test_d4_branch_done_cross_soul()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -11507,5 +11517,232 @@ func _anchor_revelation(cfg: Dictionary, revelation_id: String) -> Dictionary:
 	for rev in cfg.get("revelations", []):
 		if str((rev as Dictionary).get("revelationId", "")) == revelation_id:
 			return rev
+	return {}
+
+
+# --- D4 主线交叉任务 CX-07~12（第四阶段 / D-203~D-205）---
+
+## mainline_crossovers.json 装载：六条主线交叉、乱入者与城市配对、requiresAct 指向真实幕次。
+func _test_d4_mainline_cross_data_wellformed() -> void:
+	_check(not ContentLoader.get_mainline_crossover_config().is_empty(), "主线交叉数据已装载")
+	_eq(ContentLoader.get_mainline_crossovers().size(), 6, "六条主线交叉")
+	var ids: Dictionary = {}
+	var comers: Dictionary = {}
+	var bad_city: bool = false
+	var bad_act: bool = false
+	var bad_clue: bool = false
+	for cross in ContentLoader.get_mainline_crossovers():
+		var cfg: Dictionary = cross
+		var cid: String = str(cfg.get("crossId", ""))
+		ids[cid] = true
+		_eq(str(ContentLoader.get_mainline_crossover(cid).get("crossId", "")), cid, "按 id 取回 %s" % cid)
+		var comer_id: String = str(cfg.get("comerId", ""))
+		comers[comer_id] = int(comers.get(comer_id, 0)) + 1
+		var comer: Dictionary = ContentLoader.get_comer(comer_id)
+		if str(cfg.get("cityId", "")) != str(comer.get("meetCity", "")):
+			bad_city = true
+		var need_act: String = str(cfg.get("requiresAct", ""))
+		if not need_act.is_empty() and not _mainline_has_act(need_act):
+			bad_act = true
+		for branch in cfg.get("branches", []):
+			for clue_id in (branch as Dictionary).get("revealClues", []):
+				if ContentLoader.get_mainline_clue(str(clue_id)).is_empty():
+					bad_clue = true
+	_eq(ids.size(), 6, "主线交叉 crossId 唯一")
+	_check(not bad_city, "每条主线交叉的城市等于乱入者的相遇城")
+	_check(not bad_act, "requiresAct 都指向真实幕次")
+	_check(not bad_clue, "揭示的线索都在 mainline.json 里真实存在")
+	var one_each: bool = true
+	for c in comers:
+		if int(comers[c]) > 1:
+			one_each = false
+	_check(one_each, "一位乱入者至多一条主线交叉")
+	_eq(str(ContentLoader.get_mainline_crossover_of_comer("comer_qiaofeng").get("crossId", "")),
+		"mx_10_old_friend", "乔峰绑的是故人乱入")
+
+
+## 门槛以主线幕次为前置：好感不够不登场；好感够但幕次不到仍不登场；两者齐才登场。
+func _test_d4_gate_requires_act() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_08_force_wheel")
+	_eq(str(cfg.get("requiresAct", "")), ShardLine.ACT_SHARDS, "原力即轮回挂在第二幕")
+	_check(not bool(MainlineCross.gate(soul, world, cfg).get("ok", false)), "好感为 0 时不登场")
+	ComerFavor.set_affinity(world, "comer_luke", int(cfg.get("minAffinity", 0)))
+	var g1: Dictionary = MainlineCross.gate(soul, world, cfg)
+	_check(not bool(g1.get("ok", false)), "好感够了但幕次不到，仍不登场")
+	_eq(str(g1.get("actId", "")), ShardLine.ACT_ECHO, "当前还在第一幕")
+	ShardLine.collect_shard(soul.main_quest_progress, "shard_fire", ContentLoader.get_mainline_config())
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_echo", ContentLoader.get_mainline_config())
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_SHARDS, "已进第二幕")
+	_check(bool(MainlineCross.gate(soul, world, cfg).get("ok", false)), "好感 + 幕次都满足才登场")
+
+
+## 判定复用 Crossover：同一化身恒得同一档，与 Crossover.judge 同源。
+func _test_d4_judge_reuses_crossover() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d4j"
+	world.avatar = avatar
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_07_scorch")
+	var branch: Dictionary = _mainline_cross_trial_branch(cfg)
+	_check(not branch.is_empty(), "取到火焰中的灼痕的判定分支")
+	if branch.is_empty():
+		return
+	var j1: Dictionary = MainlineCross.judge(world, avatar, cfg, branch)
+	var via: Dictionary = Crossover.judge(world, avatar, cfg, branch)
+	_eq(str(j1["key"]), str(via["key"]), "MainlineCross.judge 与 Crossover.judge 同源")
+	_check(not str(j1["key"]).is_empty(), "判出一个档位")
+	_check(not str(j1["detail"]).is_empty(), "档位带一句说明")
+
+
+## 揭示落账：成功分支 → 揭示主线线索（落 ShardLine）+ 加乱入者好感 + 记「已走」；不可重复结算。
+func _test_d4_resolve_reveals_clue() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d4r"
+	world.avatar = avatar
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	ShardLine.collect_shard(soul.main_quest_progress, "shard_fire", main_cfg)
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_echo", main_cfg)
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_07_scorch")
+	ComerFavor.set_affinity(world, "comer_xiaoyan", int(cfg.get("minAffinity", 0)))
+	var before_aff: int = ComerFavor.affinity(world, "comer_xiaoyan")
+	var result: Dictionary = MainlineCross.resolve(soul, world, avatar, cfg, "delve")
+	_check(bool(result.get("ok", false)), "深入灼痕可执行：" + str(result.get("error", "")))
+	_check(ShardLine.has_clue(soul.main_quest_progress, "clue_varok"), "揭示 clue_varok 落进 ShardLine")
+	_check((result.get("revealedClues", []) as Array).has("clue_varok"), "结果里报出揭示的线索")
+	_eq(ComerFavor.affinity(world, "comer_xiaoyan"), before_aff + int(result.get("comerAffinity", 0)),
+		"乱入者好感按结果落账")
+	_check(MainlineCross.branch_done(soul, "mx_07_scorch", "delve"), "成功的分支记为『已走』")
+	var again: Dictionary = MainlineCross.resolve(soul, world, avatar, cfg, "delve")
+	_check(not bool(again.get("ok", true)), "同一条分支不能重复结算")
+	_eq(ComerFavor.affinity(world, "comer_xiaoyan"), before_aff + int(result.get("comerAffinity", 0)),
+		"重复结算不再加好感")
+
+
+## 反哺主线推进：乔峰救故人揭示 clue_grey，凑齐第四幕双条件，幕次推进到抉择。
+func _test_d4_reveal_advances_act() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d4a"
+	world.avatar = avatar
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	for shard in ContentLoader.get_shards():
+		ShardLine.collect_shard(soul.main_quest_progress, str((shard as Dictionary)["shardId"]), main_cfg)
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_echo", main_cfg)
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_SHARDS,
+		"七片齐但缺 clue_identity / clue_grey，停在第二幕")
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_10_old_friend")
+	ComerFavor.set_affinity(world, "comer_qiaofeng", int(cfg.get("minAffinity", 0)))
+	var result: Dictionary = MainlineCross.resolve(soul, world, avatar, cfg, "rescue")
+	_check(bool(result.get("ok", false)), "救出故人可执行：" + str(result.get("error", "")))
+	_check(ShardLine.has_clue(soul.main_quest_progress, "clue_grey"), "揭示 clue_grey")
+	_check(bool(result.get("advanced", false)), "这次揭示把幕次往前推")
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_CHOICE, "推进到第四幕·抉择")
+
+
+## 无钩子（CX-12）：一场球不给任何线索，也不落世界标记，只留下好感与「已走」。
+func _test_d4_no_hook_cross() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d4n"
+	world.avatar = avatar
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_12_football")
+	_eq(str(cfg.get("requiresAct", "")), ShardLine.ACT_ECHO, "足球是朋友挂在第一幕")
+	ComerFavor.set_affinity(world, "comer_tsubasa", int(cfg.get("minAffinity", 0)))
+	var before_clues: int = (soul.main_quest_progress.get("clues", []) as Array).size()
+	var result: Dictionary = MainlineCross.resolve(soul, world, avatar, cfg, "play")
+	_check(bool(result.get("ok", false)), "踢一场可执行：" + str(result.get("error", "")))
+	_check((result.get("revealedClues", []) as Array).is_empty(), "一场球不揭示任何线索")
+	_eq((soul.main_quest_progress.get("clues", []) as Array).size(), before_clues, "线索数不变")
+	_check(str(result.get("worldFlag", "")).is_empty(), "无钩子不落世界标记")
+	_check(MainlineCross.branch_done(soul, "mx_12_football", "play"), "这场球也记为『已走』")
+
+
+## 失败档不揭示：判落 m_out_of_tune 时改用 fail 套、不揭示线索、不记「已走」（可再来）。
+func _test_d4_fail_does_not_reveal() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d4f"
+	world.avatar = avatar
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	# 合成一条弱乱入者（无一技之长）的主线交叉：共鸣必然落到各弹各的。
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_07_scorch").duplicate(true)
+	cfg["requiresAct"] = ""
+	cfg["minAffinity"] = 0
+	cfg["comerProfile"] = {"attributes": {}, "skills": {"soul_none": 0}, "morale": 50}
+	var result: Dictionary = MainlineCross.resolve(soul, world, avatar, cfg, "delve")
+	_check(bool(result.get("ok", false)), "弱判定仍能执行：" + str(result.get("error", "")))
+	_check(bool(result.get("failed", false)), "判落失败档")
+	_check((result.get("revealedClues", []) as Array).is_empty(), "失败不揭示线索")
+	_check(not ShardLine.has_clue(soul.main_quest_progress, "clue_varok"), "clue_varok 未被揭示")
+	_check(not MainlineCross.branch_done(soul, "mx_07_scorch", "delve"), "失败不记『已走』，可再来")
+
+
+## 面板列：门槛没过时整体不可登场、分支全不可选；门槛过了未走的分支可选。
+func _test_d4_available_listing() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover("mx_07_scorch")
+	var avail: Dictionary = MainlineCross.available(soul, world, cfg)
+	_check(not bool(avail.get("ok", false)), "幕次不到 → 整体不可登场")
+	var all_off: bool = true
+	for row in avail.get("branches", []):
+		if bool(row.get("enabled", false)):
+			all_off = false
+	_check(all_off, "门槛没过时所有分支都不可选")
+	_eq((avail.get("branches", []) as Array).size(), 3, "火焰中的灼痕列三条分支")
+	# 推进幕次 + 给好感 → 登场，未走的分支可选。
+	ShardLine.collect_shard(soul.main_quest_progress, "shard_fire", ContentLoader.get_mainline_config())
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_echo", ContentLoader.get_mainline_config())
+	ComerFavor.set_affinity(world, "comer_xiaoyan", int(cfg.get("minAffinity", 0)))
+	var avail2: Dictionary = MainlineCross.available(soul, world, cfg)
+	_check(bool(avail2.get("ok", false)), "幕次与好感都满足 → 登场")
+	var any_on: bool = false
+	for row in avail2.get("branches", []):
+		if bool(row.get("enabled", false)):
+			any_on = true
+	_check(any_on, "未走的分支可选")
+
+
+## 「已走」跨世保留：记进 SoulRecord.main_quest_progress["crossovers"]，存档往返不丢。
+func _test_d4_branch_done_cross_soul() -> void:
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	_check(not MainlineCross.branch_done(soul, "mx_07_scorch", "delve"), "初始未走")
+	MainlineCross.mark_branch_done(soul, "mx_07_scorch", "delve")
+	_check(MainlineCross.branch_done(soul, "mx_07_scorch", "delve"), "记下后即可查")
+	var restored := SoulRecord.from_dict(soul.to_dict())
+	_check(MainlineCross.branch_done(restored, "mx_07_scorch", "delve"), "存档往返后『已走』保留")
+
+
+func _mainline_has_act(act_id: String) -> bool:
+	for act in ContentLoader.get_mainline_acts():
+		if str((act as Dictionary).get("actId", "")) == act_id:
+			return true
+	return false
+
+
+func _mainline_cross_trial_branch(cfg: Dictionary) -> Dictionary:
+	for branch in cfg.get("branches", []):
+		if branch.has("trial"):
+			return branch
 	return {}
 

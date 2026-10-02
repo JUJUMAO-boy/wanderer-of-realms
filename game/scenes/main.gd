@@ -4125,13 +4125,37 @@ func _refresh_comer() -> void:
 		lines.append(greet)
 	for extra in _comer_extra_lines:
 		lines.append(str(extra))
+	# choices 与 branches 一一对应：闲聊事件（kind=event）与主线交叉分支（kind=cross）。
 	var branches: Array = []
+	var choices: Array = []
 	for e in cfg.get("events", []):
+		choices.append({"kind": "event", "eventIndex": choices.size()})
 		branches.append({
 			"label": str(e.get("label", "")),
 			"detail": str(e.get("desc", "")),
 			"enabled": true,
 		})
+	# 主线交叉（D4）：以主线幕次（+ 好感）为前置，到了才在对话里登场。
+	if _soul != null:
+		var cross: Dictionary = ContentLoader.get_mainline_crossover_of_comer(_comer_id)
+		if not cross.is_empty():
+			var avail: Dictionary = MainlineCross.available(_soul, _world, cross)
+			if bool(avail.get("ok", false)):
+				lines.append("——他忽然收了闲话，说的像是另一回事——")
+				for line in avail.get("dialogue", []):
+					lines.append(str(line))
+				for row in avail.get("branches", []):
+					choices.append({
+						"kind": "cross",
+						"crossId": str(cross.get("crossId", "")),
+						"branchId": str(row.get("branchId", "")),
+					})
+					var enabled: bool = bool(row.get("enabled", true))
+					branches.append({
+						"label": "【主线】%s" % str(row.get("label", "")),
+						"detail": str(row.get("detail", "")) if enabled else str(row.get("reason", "")),
+						"enabled": enabled,
+					})
 	var affinity: int = ComerFavor.affinity(_world, _comer_id)
 	var band_l: String = ComerFavor.band_label(ComerFavor.band(_world, _comer_id))
 	var threshold: int = ComerFavor.recruit_threshold(_comer_id)
@@ -4141,6 +4165,7 @@ func _refresh_comer() -> void:
 		"title": "「%s」·%s" % [str(cfg.get("displayName", "")), str(cfg.get("archetype", ""))],
 		"lines": lines,
 		"branches": branches,
+		"choices": choices,
 		"tempLabel": "好感 %s (%d)  招募 %s" % [band_l, affinity, recruit_txt],
 	}
 	_comer_cursor = clampi(_comer_cursor, 0, maxi(0, branches.size() - 1))
@@ -4180,14 +4205,47 @@ func _comer_confirm() -> void:
 	var cfg: Dictionary = ContentLoader.get_comer(_comer_id)
 	if cfg.is_empty():
 		return
+	var choices: Array = _comer_view.get("choices", [])
+	if choices.is_empty():
+		return
+	var choice: Dictionary = choices[clampi(_comer_cursor, 0, choices.size() - 1)]
+	if str(choice.get("kind", "")) == "cross":
+		_comer_cross_confirm(str(choice.get("crossId", "")), str(choice.get("branchId", "")))
+		return
 	var events: Array = cfg.get("events", [])
 	if events.is_empty():
 		return
-	var event: Dictionary = events[clampi(_comer_cursor, 0, events.size() - 1)]
+	var event: Dictionary = events[clampi(int(choice.get("eventIndex", 0)), 0, events.size() - 1)]
 	var result: Dictionary = ComerFavor.apply_event(_world, _world.avatar, _comer_id, event)
 	var reply: String = str(result.get("reply", ""))
 	if not reply.is_empty():
 		_comer_extra_lines.append(reply)
+	_refresh()
+
+
+## 主线交叉（D4）：在乱入者对话里选一条主线交叉分支 → 判（CrossTrial）→ 揭示主线线索
+## （反哺主线，落账走 ShardLine）。幕次若因此推进，记一条「主线」史书条目（与 D1/D2 同口径）。
+func _comer_cross_confirm(cross_id: String, branch_id: String) -> void:
+	if _world == null or _world.avatar == null or _soul == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_mainline_crossover(cross_id)
+	if cfg.is_empty():
+		_comer_extra_lines.append("这件事现在说不成。")
+		_refresh()
+		return
+	var result: Dictionary = MainlineCross.resolve(_soul, _world, _world.avatar, cfg, branch_id)
+	if not bool(result.get("ok", false)):
+		_comer_extra_lines.append(str(result.get("error", "现在还不能这么做。")))
+		_refresh()
+		return
+	for line in result.get("lines", []):
+		_comer_extra_lines.append(str(line))
+	if not (result.get("revealedClues", []) as Array).is_empty():
+		_comer_extra_lines.append("（你把这段真相记进了轮回之书。）")
+	if bool(result.get("advanced", false)) and _sim != null:
+		var month: int = Clock.total_months()
+		_sim.chronicle.record(_world, ShardLine.act_entry(
+			_world, str(result.get("act", "")), month, _sim.chronicle.year_label(month)))
 	_refresh()
 
 

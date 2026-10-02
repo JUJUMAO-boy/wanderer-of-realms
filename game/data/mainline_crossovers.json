@@ -1,0 +1,335 @@
+{
+  "_comment": "乱入者×主线的交叉任务（第四阶段 D4 / D-203~D-205）。这六条（《乱入者交叉任务剧本》CX-07~CX-12）与 D3 的城市事件交叉相反：它们**不碰城市**，而是挂在 D1 的主线节点上——以**主线幕次**（+ 乱入者好感）为前置，让乱入者在主线节点上登场；判定结果（B4 的 CrossTrial 一句奏/一场球）**反哺主线推进**（揭示主线线索，进而可能推进幕次）。判定复用 Crossover 的 judge/折档，落账落在规则层 MainlineCross。",
+  "_comment_place": "cityId 恒等于该乱入者的相遇城（与 D3 同一约束）——本轮乱入者尚无『入队随行』，出场即『在相遇城』；玩家在那座城里跟这位乱入者搭话时，若主线幕次到了，就多出一条远离闲聊的主线交叉分支。",
+  "_comment_gate": "requiresAct 是主线幕次前置（取 mainline.json 的 actId：echo/shards/cycle/choice）；requiresShards 可选，作为碎片数硬门槛；minAffinity 是乱入者好感门槛。三者都满足这条主线交叉才登场（见 MainlineCross.gate）。",
+  "_comment_clues": "揭示的线索全部取 mainline.json 既有八条（不新增）：CX-07 火焰中的灼痕→clue_varok（天坠旁证）/ CX-08 原力即轮回→clue_god_left（神为何离开）/ CX-09 未完成的诗→clue_voice（界缝里的声音，漂移者所听）/ CX-10 故人乱入→clue_grey（灰袍者的来历）。其中 clue_voice 与 clue_grey 此前没有任何内容来源——D4 补上了这两条『拼图』路径（clue_grey 正是进第四幕·抉择的唯一凭据）。CX-11/CX-12 按剧本刻意无线索：CX-11 只留一个结局预告标记，CX-12 是『无钩子』的纯治愈。",
+  "_comment_nocommit": "本轮不设战斗分支：与 D3 同一取舍，判定（trial）与其余分支一律当场结算，复用 CrossTrial 判定与折档，不引战斗与平衡表。",
+  "crossovers": [
+    {
+      "crossId": "mx_07_scorch",
+      "scriptRef": "CX-07",
+      "displayName": "火焰中的灼痕",
+      "comerId": "comer_xiaoyan",
+      "cityId": "red_sands",
+      "requiresAct": "shards",
+      "minAffinity": 25,
+      "summary": "萧炎的异火与艾尔泽拉的火焰共鸣，追到火源深处，那里有一道『永恒者碎片』烧过的灼痕。",
+      "dialogue": [
+        "萧炎（掌心异火忽然一沉）：『这火里，有别的什么。不像是天生的火脉……像是一道被烧进去的痕迹。』",
+        "玩家：『那是什么？』",
+        "萧炎（盯着岩浆深处，压低声音）：『一道灼痕。像是有什么东西，在这里烧过，又离开了。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 16, "dexterity": 14, "constitution": 16, "intelligence": 12, "perception": 12, "charisma": 12, "soul": 18 },
+        "skills": { "soul_flame": 30 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "delve",
+          "label": "与萧炎一同深入灼痕",
+          "detail": "以异火相护，走进那道半睁的眼一样的灼痕。",
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "两股火同息而入，灼痕深处那段旧火里的话被你们完整听了出来。" },
+            { "key": "resonance", "label": "声气相通", "detail": "异火护住了你们，灼痕吐出一段断断续续的旧事。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "火声嘈杂，只抓住了一句半句，但足够记下这条线索。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "两股火撞在一起，灼痕骤然发亮，你们被逼退出来。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "revealClues": [], "comerAffinity": -4, "lines": ["萧炎（喘着气）：『它……在看我们。这次先退。』"] },
+          "revealClues": ["clue_varok"],
+          "comerAffinity": 8,
+          "lines": ["萧炎（把异火收回掌心）：『这火不是天生的。是很久以前，有人想替世界做一件拦不住的事，留下的。』"]
+        },
+        {
+          "branchId": "record",
+          "label": "止步记录，不再深入",
+          "detail": "把那道灼痕的位置画下来，先不惊动它。",
+          "revealClues": ["clue_varok"],
+          "comerAffinity": 2,
+          "lines": ["萧炎（略感遗憾）：『记下来也好。总有一天，你会想回来看看它到底是什么。』"]
+        },
+        {
+          "branchId": "alone",
+          "label": "让萧炎独自深入",
+          "detail": "退到火山口外等他——这是他的火，他的路。",
+          "revealClues": [],
+          "comerAffinity": 4,
+          "worldFlag": "xiaoyan_scorched",
+          "lines": ["萧炎（出来时异火比先前更盛，肩头却多了灼伤）：『我拿到了一点东西。也欠了自己一道疤。』"]
+        }
+      ]
+    },
+    {
+      "crossId": "mx_08_force_wheel",
+      "scriptRef": "CX-08",
+      "displayName": "原力即轮回",
+      "comerId": "comer_luke",
+      "cityId": "silvermoon_spire",
+      "requiresAct": "shards",
+      "minAffinity": 25,
+      "summary": "卢克在银月塔接触灵魂系魔法，提出一个惊人猜想——轮回之轮，或许就是『原力』在这个世界的形态。",
+      "dialogue": [
+        "卢克（闭目感受灵魂系魔法，忽然睁眼）：『这里的魔法，和原力如此相似……贯穿一切，维系平衡。』",
+        "卢克（看向你）：『你们的「轮回之轮」，会不会就是原力，在这个世界的形态？』",
+        "玩家：『为什么这么想？』",
+        "卢克（很轻地）：『因为原力从不偏袒。你们的轮，也从不偏袒。它们都只是在……维持一种平衡。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 12, "dexterity": 14, "constitution": 12, "intelligence": 16, "perception": 16, "charisma": 12, "soul": 24 },
+        "skills": { "soul_force": 26 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "ask_crow",
+          "label": "与卢克一同验证猜想",
+          "detail": "以灵魂系魔法为凭，把原力与轮回之轮摆到一处细看。",
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "原力与魂系同频，你几乎『看』见了那道把神拆开、填进法则的缝。" },
+            { "key": "resonance", "label": "声气相通", "detail": "两股力对上了拍子，轮回之轮的本相露出一角。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "验证成了，只是答案含糊，但你知道这猜想不是空谈。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "原力与魂系撞了一下，什么也没验出来。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "revealClues": [], "comerAffinity": -2, "lines": ["卢克（摇头）：『这次不算。我们再找别的证据。』"] },
+          "revealClues": ["clue_god_left"],
+          "comerAffinity": 6,
+          "lines": ["卢克（缓缓收手）：『原力维系平衡……你们的轮也一样。它原本不是死物，是有意志的。』"]
+        },
+        {
+          "branchId": "alone",
+          "label": "让卢克独自沉思",
+          "detail": "退开一步，把这个猜想留给他自己去悟。",
+          "revealClues": ["clue_god_left"],
+          "comerAffinity": 4,
+          "lines": ["卢克（久久不语）：『你回去查查你们的旧史吧。『神为何离开』，也许正是这个问题的答案。』"]
+        },
+        {
+          "branchId": "doubt",
+          "label": "不信这套异乡的道理",
+          "detail": "原力也好、轮回也好，隔着两个世界的说法，未必对得上。",
+          "revealClues": [],
+          "comerAffinity": -6,
+          "lines": ["卢克（并不恼怒）：『你可以不信。但你走远了，会想起我说的。』"]
+        }
+      ]
+    },
+    {
+      "crossId": "mx_09_poem",
+      "scriptRef": "CX-09",
+      "displayName": "未完成的诗",
+      "comerId": "comer_taibai",
+      "cityId": "crossroad",
+      "requiresAct": "echo",
+      "minAffinity": 25,
+      "summary": "李白总在写一首写不完的诗，韵脚像暗合了界缝的裂缝——那诗不是写出来的，是『漏』出来的。",
+      "dialogue": [
+        "李白（又卡在同一句上，反复吟诵）：『这一句……我写不出来。不是我江郎才尽，是它自己不肯落笔。』",
+        "玩家：『什么诗？』",
+        "李白（指着纸上半阙）：『半阙。每次写到韵脚，就像有什么东西，在界缝里拽着我。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 14, "dexterity": 16, "constitution": 12, "intelligence": 14, "perception": 12, "charisma": 18, "soul": 22 },
+        "skills": { "soul_poem": 28 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "walk",
+          "label": "陪李白走遍诗中的地点",
+          "detail": "以剑为笔、以步为韵，把半阙诗一路追到界缝边上。",
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "诗与步落成一个音，界缝里的声音第一次被人完整听了去。" },
+            { "key": "resonance", "label": "声气相通", "detail": "半阙诗追到了头，那句听不全的话，露出前一半。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "韵脚断续，你只拼出个大概，却已足够记下这条线索。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "步调乱了，诗声散在风里，什么也没追上。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "revealClues": [], "comerAffinity": -3, "lines": ["李白（把纸揉回袖里）：『罢了。它不肯落笔，是我还没走够。』"] },
+          "revealClues": ["clue_voice"],
+          "comerAffinity": 8,
+          "lines": ["李白（盯着界缝看）：『这不是我写的。是它——是界缝里有什么，借我的笔在说话。』"]
+        },
+        {
+          "branchId": "alone",
+          "label": "让李白独自追诗",
+          "detail": "他的诗，他的路，你只在界缝边替他望风。",
+          "revealClues": ["clue_voice"],
+          "comerAffinity": 4,
+          "lines": ["李白（回来时满身风尘，诗却多了三句）：『界缝在唱歌。我把它记下来了。』"]
+        },
+        {
+          "branchId": "ignore",
+          "label": "不理会这半阙诗",
+          "detail": "一首写不完的诗，与眼下的事无关。",
+          "revealClues": [],
+          "comerAffinity": -6,
+          "lines": ["李白（笑了笑，把纸收好）：『无妨。它等得起，我等得起，你也跑不掉。』"]
+        }
+      ]
+    },
+    {
+      "crossId": "mx_10_old_friend",
+      "scriptRef": "CX-10",
+      "displayName": "故人乱入",
+      "comerId": "comer_qiaofeng",
+      "cityId": "frostspeak_keep",
+      "requiresAct": "shards",
+      "minAffinity": 25,
+      "summary": "乔峰在寻一个同样乱入艾尔泽拉的故人，线索却指向了深渊教团——和被教团供着的『神』。",
+      "dialogue": [
+        "乔峰（攥着一张泛黄的画像，神情复杂）：『我找的这个人，也乱入了此地。可找遍北境，都寻不到他。』",
+        "玩家：『他是谁？』",
+        "乔峰（收起画像）：『一个……我亏欠过的人。有人说，他被一群穿灰袍的人带走了。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 22, "dexterity": 16, "constitution": 20, "intelligence": 12, "perception": 14, "charisma": 14, "soul": 20 },
+        "skills": { "soul_dragon": 27 },
+        "morale": 70
+      },
+      "branches": [
+        {
+          "branchId": "rescue",
+          "label": "与乔峰一起救出故人",
+          "detail": "闯进教团的据点，把那个被卷进『神回归』的人抢回来。",
+          "trial": { "kind": "ensemble", "leader": "comer" },
+          "tiers": [
+            { "key": "resonance_crit", "label": "心有灵犀", "detail": "你与他掌风相接，教徒七零八落，故人被完好地抢了出来。" },
+            { "key": "resonance", "label": "声气相通", "detail": "配合有度，你们从灰袍手里带走了那个人。" },
+            { "key": "quaver", "label": "勉强调和", "detail": "几番周折，人到底救了出来，只是受了惊。" },
+            { "key": "m_out_of_tune", "label": "各弹各的", "detail": "接应不上，故人被教团趁乱带走，下落又断了。" }
+          ],
+          "failKeys": ["m_out_of_tune"],
+          "fail": { "revealClues": [], "comerAffinity": -4, "lines": ["乔峰（望着空据点，缓缓攥紧了拳）：『……又断了一次。』"] },
+          "revealClues": ["clue_grey"],
+          "comerAffinity": 10,
+          "lines": ["乔峰（扶起故人，看向祭坛上的空位）：『他们拜的不是神。是一个散不掉的执念——而带头的那个人，自己就是它。』"]
+        },
+        {
+          "branchId": "avenge",
+          "label": "与乔峰一起做个了断",
+          "detail": "不救，不劝——这笔旧账，今天在北境了结。",
+          "revealClues": ["clue_grey"],
+          "comerAffinity": 6,
+          "karma": -3,
+          "lines": ["乔峰（收掌，久久不语）：『……了断了。可教团拜的那个东西，我听见了它的声音。』"]
+        },
+        {
+          "branchId": "hand_over",
+          "label": "把故人交回给教团",
+          "detail": "教团要的人，还给教团，换一条安全的路。",
+          "revealClues": [],
+          "comerAffinity": -15,
+          "karma": -6,
+          "worldFlag": "qiaofeng_estranged",
+          "lines": ["乔峰（死死盯着你，一字一句）：『原来你与他们，是同一种人。』"]
+        }
+      ]
+    },
+    {
+      "crossId": "mx_11_future",
+      "scriptRef": "CX-11",
+      "displayName": "未来时间线",
+      "comerId": "comer_bluecat",
+      "cityId": "port_thorne",
+      "requiresAct": "cycle",
+      "minAffinity": 25,
+      "summary": "圆手蓝猫来自未来，他见过轮回之轮『修复后的样子』——这是主线结局的一句预告。",
+      "dialogue": [
+        "圆手蓝猫（托着下巴，努力回忆）：『我来自未来。在我们那个时代，轮回之轮……是完整的。』",
+        "圆手蓝猫（皱眉）：『可我一穿越过来，它就碎了。时间对不上了……』",
+        "玩家：『完整的轮，是什么样子？』",
+        "圆手蓝猫：『我不记得了。乱流把那段记忆搅成了碎片。我只记得，它转得很安静。』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 8, "dexterity": 12, "constitution": 10, "intelligence": 20, "perception": 14, "charisma": 14, "soul": 16 },
+        "skills": { "soul_gadget": 24 },
+        "morale": 60
+      },
+      "branches": [
+        {
+          "branchId": "believe",
+          "label": "相信他，并帮他把记忆拼起来",
+          "detail": "顺着他说的时间线，一点点把那段被打乱的记忆排回去。",
+          "revealClues": [],
+          "comerAffinity": 8,
+          "worldFlag": "foretold_wheel_mended",
+          "lines": ["圆手蓝猫（眼睛亮起来）：『对！就是这样——轮是可以修好的。我不知道怎么修的，但你一定能走到那一天。』"]
+        },
+        {
+          "branchId": "half",
+          "label": "半信半疑",
+          "detail": "未来、修复……听听就好，先记在心里。",
+          "revealClues": [],
+          "comerAffinity": 2,
+          "lines": ["圆手蓝猫（不勉强）：『不信也没关系。等它转得安静那天，你会想起来的。』"]
+        },
+        {
+          "branchId": "disbelieve",
+          "label": "不信一个来自未来的孩子",
+          "detail": "时空乱流搅乱的记忆，多半是幻觉。",
+          "revealClues": [],
+          "comerAffinity": -6,
+          "lines": ["圆手蓝猫（低下头，摆弄着口袋）：『……好吧。反正我也记不清了。』"]
+        }
+      ]
+    },
+    {
+      "crossId": "mx_12_football",
+      "scriptRef": "CX-12",
+      "displayName": "足球是朋友",
+      "comerId": "comer_tsubasa",
+      "cityId": "greenwade",
+      "requiresAct": "echo",
+      "minAffinity": 25,
+      "summary": "大空翼是唯一与主线无关的乱入者。这条『任务』没有真相、没有碎片，只有一场球和一句『足球是朋友』。",
+      "dialogue": [
+        "大空翼（把球踢给你，笑容灿烂）：『别想那么多了！有些事，踢一场球就明白了！』",
+        "玩家：『你不想回去吗？回到自己的世界。』",
+        "大空翼（追着球跑出去）：『想啊。但在回去之前——我要让这个世界，也有人踢球！』"
+      ],
+      "comerProfile": {
+        "attributes": { "strength": 14, "dexterity": 18, "constitution": 16, "intelligence": 14, "perception": 14, "charisma": 16, "soul": 14 },
+        "skills": { "ball_shot": 24 },
+        "morale": 70
+      },
+      "branches": [
+        {
+          "branchId": "play",
+          "label": "陪他踢一场，不问为什么",
+          "detail": "清出一块空地，把球门摆上——今天不谈世界，只谈球。",
+          "trial": { "kind": "match" },
+          "tiers": [
+            { "key": "home", "label": "大空翼队胜", "detail": "他一记倒钩收了尾，笑得比谁都灿烂。" },
+            { "key": "away", "label": "你带的队胜", "detail": "你赢了，他却比你还高兴，说这才是足球。" },
+            { "key": "draw", "label": "握手言和", "detail": "终场哨响，双方击掌，谁也没输。" }
+          ],
+          "failKeys": [],
+          "revealClues": [],
+          "comerAffinity": 10,
+          "lines": ["大空翼（把球抱在怀里）：『看见没？有些东西，本来就不必和世界有关。』"]
+        },
+        {
+          "branchId": "chat",
+          "label": "陪他聊聊天就好",
+          "detail": "今天没力气踢球，听他说说他的世界。",
+          "revealClues": [],
+          "comerAffinity": 4,
+          "lines": ["大空翼（也不失望）：『下次！球我留着，等你。』"]
+        },
+        {
+          "branchId": "leave",
+          "label": "有事离开",
+          "detail": "世界还在等着你，一场球太奢侈。",
+          "revealClues": [],
+          "comerAffinity": -6,
+          "lines": ["大空翼（挥挥手）：『去吧去吧。踢球这事，随时都行。』"]
+        }
+      ]
+    }
+  ]
+}
