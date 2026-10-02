@@ -358,6 +358,16 @@ func run_all() -> int:
 	_test_d3_resolve_trial_applies()
 	_test_d3_comer_affinity_branch()
 	_test_d3_event_view_trial_preview()
+	print("=== D2 锚点 NPC 完整线（第四阶段 / D-200）===")
+	_test_d2_anchor_data_wellformed()
+	_test_d2_anchor_relation_cross_world()
+	_test_d2_anchor_greeting_by_band()
+	_test_d2_anchor_event_applies_affinity()
+	_test_d2_revelation_gating()
+	_test_d2_reveal_lands_clue_and_memory()
+	_test_d2_reveal_advances_act()
+	_test_d2_available_revelations_listing()
+	_test_d2_anchor_relations_survive_reincarnation()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -11282,5 +11292,220 @@ func _crossover_trial_branch(cfg: Dictionary) -> Dictionary:
 	for branch in cfg.get("branches", []):
 		if branch.has("trial"):
 			return branch
+	return {}
+
+
+# --- D2 锚点 NPC 完整线（第四阶段 / D-200~D-202）---
+
+## anchors.json 装载：五位锚点、各有相遇城/招呼/好感事件/揭示分支，城市不重复且都在 cities.json。
+func _test_d2_anchor_data_wellformed() -> void:
+	_check(not ContentLoader.get_anchor_config().is_empty(), "锚点数据已装载")
+	_eq(ContentLoader.get_anchors().size(), 5, "五位锚点")
+	var ids: Dictionary = {}
+	var cities: Dictionary = {}
+	var city_ok: bool = true
+	for anchor in ContentLoader.get_anchors():
+		var cfg: Dictionary = anchor
+		var aid: String = str(cfg.get("anchorId", ""))
+		ids[aid] = true
+		var cid: String = str(cfg.get("cityId", ""))
+		cities[cid] = int(cities.get(cid, 0)) + 1
+		if ContentLoader.get_city_config(cid).is_empty():
+			city_ok = false
+		_eq(str(ContentLoader.get_anchor(aid).get("anchorId", "")), aid, "按 id 取回锚点 %s" % aid)
+		_check(not (cfg.get("greetings", {}) as Dictionary).is_empty(), "%s 有四档招呼" % aid)
+		_check(not (cfg.get("revelations", []) as Array).is_empty(), "%s 至少一条揭示" % aid)
+	_eq(ids.size(), 5, "锚点 id 唯一")
+	_check(city_ok, "锚点相遇城都在 cities.json")
+	var one_each: bool = true
+	for cid in cities:
+		if int(cities[cid]) > 1:
+			one_each = false
+	_check(one_each, "每座城至多一位锚点")
+	_eq(str(ContentLoader.get_anchor_in_city("crossroad").get("anchorId", "")), "crow", "十字路摆的是鸦")
+	_check(ContentLoader.get_anchor_in_city("nowhere").is_empty(), "没有锚点的城给空字典")
+
+
+## 跨世好感与记忆：落 SoulRecord.anchor_relations，可读写、可记忆、可钳制、经存档往返不丢。
+func _test_d2_anchor_relation_cross_world() -> void:
+	var soul := SoulRecord.new()
+	_eq(AnchorLine.affinity(soul, "crow"), 0, "初始好感为 0")
+	AnchorLine.set_affinity(soul, "crow", 30)
+	_eq(AnchorLine.affinity(soul, "crow"), 30, "写入好感生效")
+	_eq(str(AnchorLine.record_of(soul, "crow").get("anchorId", "")), "crow", "记录带 anchorId")
+	AnchorLine.add_memory(soul, "crow", "crow_hint_echo")
+	_check(AnchorLine.has_memory(soul, "crow", "crow_hint_echo"), "记忆标记写入即可查")
+	AnchorLine.add_memory(soul, "crow", "crow_hint_echo")
+	_eq((AnchorLine.record_of(soul, "crow").get("memoryFlags", []) as Array).size(), 1, "重复记同一件事不重复")
+	AnchorLine.set_affinity(soul, "crow", 500)
+	_eq(AnchorLine.affinity(soul, "crow"), AnchorLine.AFFINITY_MAX, "好感超上限被钳到 100")
+	_eq(AnchorLine.affinity(soul, "orta"), 0, "另一位锚点互不影响")
+	var restored := SoulRecord.from_dict(soul.to_dict())
+	_eq(AnchorLine.affinity(restored, "crow"), AnchorLine.AFFINITY_MAX, "存档往返后好感保留")
+	_check(AnchorLine.has_memory(restored, "crow", "crow_hint_echo"), "存档往返后记忆保留")
+
+
+## 招呼按好感档切换：中性/冷淡/亲密各取该档台词。
+func _test_d2_anchor_greeting_by_band() -> void:
+	var soul := SoulRecord.new()
+	var cfg: Dictionary = ContentLoader.get_anchor("crow")
+	var g: Dictionary = cfg.get("greetings", {})
+	_eq(AnchorLine.greeting(soul, cfg), str(g.get("neutral", "")), "好感 0 取中性台词")
+	AnchorLine.set_affinity(soul, "crow", -20)
+	_eq(AnchorLine.greeting(soul, cfg), str(g.get("cold", "")), "好感 -20 取冷淡台词")
+	AnchorLine.set_affinity(soul, "crow", 60)
+	_eq(AnchorLine.greeting(soul, cfg), str(g.get("close", "")), "好感 60 取亲密台词")
+	_eq(AnchorLine.band_label(AnchorLine.band(soul, "crow")), NpcInteractionSystem.band_label("close"),
+		"档位标签与 M18 同一套")
+
+
+## 好感事件：delta 落账；前置属性不满足则不落账但带回原话。
+func _test_d2_anchor_event_applies_affinity() -> void:
+	var soul := SoulRecord.new()
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d2e"
+	var cfg: Dictionary = ContentLoader.get_anchor("crow")
+	var first: Dictionary = AnchorLine.apply_event(soul, avatar, cfg, "listen")
+	_check(bool(first.get("applied", false)), "无前置事件直接落账")
+	_eq(AnchorLine.affinity(soul, "crow"), 10, "听完 +10")
+	_eq(int(first.get("delta", 0)), 10, "结果带回 delta")
+	_check(not str(first.get("reply", "")).is_empty(), "结果带回原话")
+	var blocked: Dictionary = AnchorLine.apply_event(soul, avatar, cfg, "ask_self")
+	_check(not bool(blocked.get("applied", false)), "前置不足不落账")
+	_eq(AnchorLine.affinity(soul, "crow"), 10, "前置不足好感不变")
+	_check(not str(blocked.get("reply", "")).is_empty(), "前置不足仍带回原话")
+	avatar.set_attribute(PlayerAvatar.ATTR_SOUL, 40)
+	var passed: Dictionary = AnchorLine.apply_event(soul, avatar, cfg, "ask_self")
+	_check(bool(passed.get("applied", false)), "灵魂够了就落账")
+	_eq(AnchorLine.affinity(soul, "crow"), 18, "追问再 +8")
+
+
+## 揭示门槛：幕次/碎片/好感/前置属性各拦各的，够了才 unlock。
+func _test_d2_revelation_gating() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d2g"
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var crow: Dictionary = ContentLoader.get_anchor("crow")
+	_check(bool(AnchorLine.revelation_ready(soul, world, avatar, crow, _anchor_revelation(crow, "crow_echo")).get("ok", false)),
+		"第一幕就能听回声")
+	var ident: Dictionary = AnchorLine.revelation_ready(soul, world, avatar, crow, _anchor_revelation(crow, "crow_identity"))
+	_check(not bool(ident.get("ok", true)), "碎片不够时第七片说不出口")
+	var elise: Dictionary = ContentLoader.get_anchor("elise")
+	_check(not bool(AnchorLine.revelation_ready(soul, world, avatar, elise, _anchor_revelation(elise, "elise_rite")).get("ok", true)),
+		"好感不够时仪式史说不出口")
+	AnchorLine.set_affinity(soul, "elise", 10)
+	_check(not bool(AnchorLine.revelation_ready(soul, world, avatar, elise, _anchor_revelation(elise, "elise_rite")).get("ok", true)),
+		"好感够了但幕次不到，仍拦")
+	# 推到第二幕（1 片 + clue_echo）。
+	ShardLine.collect_shard(soul.main_quest_progress, "shard_fire", ContentLoader.get_mainline_config())
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_echo", ContentLoader.get_mainline_config())
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_SHARDS, "已进第二幕")
+	_check(bool(AnchorLine.revelation_ready(soul, world, avatar, elise, _anchor_revelation(elise, "elise_rite")).get("ok", false)),
+		"进第二幕且好感够，仪式史解锁")
+	var orta: Dictionary = ContentLoader.get_anchor("orta")
+	_check(not bool(AnchorLine.revelation_ready(soul, world, avatar, orta, _anchor_revelation(orta, "orta_god_left")).get("ok", true)),
+		"灵魂/炼金不足时神为何离开说不出口")
+	avatar.set_attribute(PlayerAvatar.ATTR_SOUL, 40)
+	_check(bool(AnchorLine.revelation_ready(soul, world, avatar, orta, _anchor_revelation(orta, "orta_god_left")).get("ok", false)),
+		"灵魂够 30 就解锁")
+
+
+## 揭示落账：走 ShardLine 揭示线索 + 记记忆 + 加锚点好感；说过一次不再重复。
+func _test_d2_reveal_lands_clue_and_memory() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d2r"
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var cfg: Dictionary = ContentLoader.get_anchor("crow")
+	var result: Dictionary = AnchorLine.reveal(soul, world, avatar, cfg, "crow_echo")
+	_check(bool(result.get("ok", false)), "第一幕揭示可执行：" + str(result.get("error", "")))
+	_check(ShardLine.has_clue(soul.main_quest_progress, "clue_echo"), "揭示把 clue_echo 落进 ShardLine")
+	_check(AnchorLine.has_memory(soul, "crow", "crow_hint_echo"), "揭示记下记忆标记")
+	_eq(AnchorLine.affinity(soul, "crow"), 10, "揭示加锚点好感 10")
+	_eq((result.get("lines", []) as Array).size(), 1, "揭示带回台词")
+	var again: Dictionary = AnchorLine.reveal(soul, world, avatar, cfg, "crow_echo")
+	_check(not bool(again.get("ok", true)), "同一段揭示不重复落账")
+	_eq(ShardLine.collected_count(soul.main_quest_progress), 0, "揭示不凭空给碎片")
+
+
+## 鸦的第七片揭示是进第三幕的引信：六片在手时执行它，幕次推进到轮回。
+func _test_d2_reveal_advances_act() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d2a"
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	for shard in ContentLoader.get_shards():
+		if str((shard as Dictionary).get("shardId", "")) != "shard_soul":
+			ShardLine.collect_shard(soul.main_quest_progress, str((shard as Dictionary)["shardId"]), main_cfg)
+	var cfg: Dictionary = ContentLoader.get_anchor("crow")
+	AnchorLine.reveal(soul, world, avatar, cfg, "crow_echo")
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_SHARDS, "拿到线索后进第二幕")
+	var result: Dictionary = AnchorLine.reveal(soul, world, avatar, cfg, "crow_identity")
+	_check(bool(result.get("ok", false)), "六片在手，第七片揭示可执行：" + str(result.get("error", "")))
+	_check(bool(result.get("advanced", false)), "这次揭示把幕次往前推")
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_CYCLE, "推进到第三幕·轮回")
+	_check(ShardLine.has_clue(soul.main_quest_progress, "clue_identity"), "clue_identity 落进 ShardLine")
+
+
+## 面板列表：未解锁的带原因、已说过的标已知。
+func _test_d2_available_revelations_listing() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d2l"
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var cfg: Dictionary = ContentLoader.get_anchor("crow")
+	var rows: Array = AnchorLine.available_revelations(soul, world, avatar, cfg)
+	_eq(rows.size(), 2, "鸦有两条揭示")
+	var echo_unlocked: bool = false
+	var ident_unlocked: bool = true
+	for row in rows:
+		if str(row.get("revelationId", "")) == "crow_echo":
+			echo_unlocked = bool(row.get("unlocked", false))
+		if str(row.get("revelationId", "")) == "crow_identity":
+			ident_unlocked = bool(row.get("unlocked", true))
+	_check(echo_unlocked, "回声一开始就解锁")
+	_check(not ident_unlocked, "第七片一开始锁着")
+	AnchorLine.reveal(soul, world, avatar, cfg, "crow_echo")
+	rows = AnchorLine.available_revelations(soul, world, avatar, cfg)
+	var echo_known: bool = false
+	var echo_locked: bool = false
+	for row in rows:
+		if str(row.get("revelationId", "")) == "crow_echo":
+			echo_known = bool(row.get("known", false))
+			echo_locked = not bool(row.get("unlocked", true))
+	_check(echo_known, "说过的揭示在列表里标已知")
+	_check(echo_locked, "说过的揭示不再解锁")
+
+
+## 转生结算：锚点好感与记忆随灵魂跨世保留（锚点记得的是灵魂，不是这一世）。
+func _test_d2_anchor_relations_survive_reincarnation() -> void:
+	var reinc: Reincarnation = _new_reincarnation(11)
+	var soul := SoulRecord.new()
+	soul.soul_id = "soul-anchor"
+	soul.main_quest_progress = ShardLine.progress_template()
+	AnchorLine.set_affinity(soul, "crow", 40)
+	AnchorLine.add_memory(soul, "crow", "crow_hint_echo")
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-anchor"
+	avatar.set_attribute(PlayerAvatar.ATTR_SOUL, 80)
+	reinc.settle_death(soul, avatar, Reincarnation.CAUSE_NATURAL, 24)
+	_eq(AnchorLine.affinity(soul, "crow"), 40, "转生后锚点好感不丢")
+	_check(AnchorLine.has_memory(soul, "crow", "crow_hint_echo"), "转生后锚点记忆还在")
+
+
+func _anchor_revelation(cfg: Dictionary, revelation_id: String) -> Dictionary:
+	for rev in cfg.get("revelations", []):
+		if str((rev as Dictionary).get("revelationId", "")) == revelation_id:
+			return rev
 	return {}
 

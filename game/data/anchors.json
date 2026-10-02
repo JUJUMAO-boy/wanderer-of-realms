@@ -1,0 +1,187 @@
+{
+  "_comment": "锚点 NPC 表（第四阶段 D2 / D-200~D-202）。锚点是转生世界里不随世代消亡的固定坐标（《游戏设计文档》4.3）：守轮人「鸦」/古树精「欧尔塔」/古龙「瓦洛克」/返魂者「伊莉丝」/无貌者「收债人」。每人给三样东西：①相遇信息（在哪座城、什么地点、初见台词）；②四档招呼（按锚点好感档给不同开场白）；③好感事件（像 B3 乱入者那样，做件事涨/跌锚点好感）；④**揭示分支**（把主线真相说给玩家听——条件够了才解锁，落账走规则层 AnchorLine → ShardLine.reveal_clue，正是 D1 碎片系统等的『揭示者』）。",
+  "_comment_affinity": "锚点好感落 SoulRecord.anchor_relations（跨世保留，不随世界），与 B3 乱入者好感（落 world.player_relations）不同——这是锚点机制成立的前提：锚点记得玩家的**灵魂**，而非这一世。档位沿用 M18 的 band 分界。",
+  "_comment_city": "相遇城取『该锚点最自然出现的那座城』。剧本里鸦与收债人都近十字路，这里把收债人挪到索恩港（跨世交易的市集），让每座城至多一位锚点、不与乱入者抢太多位。",
+  "_comment_identity": "鸦的『第七片』揭示 requirementsAct 取 shards（不是 cycle）：mainline.json 里进第三幕的条件之一正是 clue_identity，而这条线索只由鸦揭示——若它再要求先到 cycle，就永远卡死。按剧本『集齐六片后鸦主动现身』，它本就是**进第三幕的引信**，故门槛放在第二幕、要求 6 片。",
+  "anchors": [
+    {
+      "anchorId": "crow",
+      "displayName": "守轮人「鸦」",
+      "title": "轮回之轮的投影",
+      "cityId": "crossroad",
+      "meetPlace": "十字路·界缝旁",
+      "meetHint": "一个戴黑鸦面具的旅者立在界缝边上，像在看一件只有他能看见的东西。",
+      "greetings": {
+        "cold": "鸦（不看你的脸）：『你不用急着认识我。反正下一世，你多半也认不出我。』",
+        "neutral": "鸦：『你总在靠近某些东西。裂缝、漂移者、还有……那些不该醒着的死人。』",
+        "friendly": "鸦（偏过头）：『又见面了。这回你想先听哪一句？』",
+        "close": "鸦：『我记着你的灵魂，比你自己记得的还多。坐吧，这次不收费。』"
+      },
+      "events": [
+        { "eventId": "listen", "label": "静静听他把话说完", "desc": "不打断，不追问，只是听。", "delta": 10, "reply": "鸦（点了点头）：『肯听的人不多了。』" },
+        { "eventId": "ask_self", "label": "追问自己的来历", "desc": "问他：我到底是谁。", "delta": 8, "needSoulOrAlchemy": 20, "reply": "鸦：『现在还问不出答案。但你能问出口，已经比上一世走得远。』" }
+      ],
+      "revelations": [
+        {
+          "revelationId": "crow_echo",
+          "label": "世界在堵着一口气",
+          "detail": "他说，亡灵该走没走、界缝一年比一年松——世界在堵着一口气，却没人说得清堵在哪。",
+          "requiresAct": "echo",
+          "revealClues": ["clue_echo"],
+          "memoryFlags": ["crow_hint_echo"],
+          "affinity": 10,
+          "lines": ["鸦：『去找那个旧帝国的书记官。她还记得一些你该知道的事。』"]
+        },
+        {
+          "revelationId": "crow_identity",
+          "label": "第七片，贴在你的灵魂上",
+          "detail": "等你把六片都攥在手里，他会摘下那副面具，说第七片一直在你自己身上。",
+          "requiresAct": "shards",
+          "requiresShards": 6,
+          "revealClues": ["clue_identity"],
+          "memoryFlags": ["crow_told_identity"],
+          "affinity": 25,
+          "lines": [
+            "鸦（摘下面具，下面没有脸，只有一片转动的光）：『第七片，一直贴在你自己的灵魂上。』",
+            "鸦：『你以为你是「觉者」，是轮回的例外。不。你是碎片擦过的灵魂。你，就是最后一把钥匙。』"
+          ]
+        }
+      ]
+    },
+    {
+      "anchorId": "orta",
+      "displayName": "古树精「欧尔塔」",
+      "title": "三千岁的记忆体",
+      "cityId": "aedran",
+      "meetPlace": "艾德兰·旧帝国王座殿外",
+      "meetHint": "一棵三人合抱的古树把根扎进了王座殿的残基里，树皮下像有字在缓缓流动。",
+      "greetings": {
+        "cold": "欧尔塔（树皮里的字停了一瞬）：『又是一个来过就问的人。你上一世也问过。』",
+        "neutral": "欧尔塔：『我什么都记得。问题从来不是我记得，是你受不受得住。』",
+        "friendly": "欧尔塔：『你的气息比上一次稳了。想听哪一段？』",
+        "close": "欧尔塔：『我这一身年轮里，你这一缕魂，是记得最牢的一道。』"
+      },
+      "events": [
+        { "eventId": "share_leaf", "label": "把一片古叶还给它", "desc": "替它接回一片被风雨打落的旧叶。", "delta": 12, "reply": "欧尔塔：『你连叶子都记得还给谁。好。』" },
+        { "eventId": "listen_history", "label": "听它讲一段旧史", "desc": "耐心听它把一段三千年的旧事讲完。", "delta": 8, "reply": "欧尔塔：『肯听旧事的人，才配知道新事。』" }
+      ],
+      "revelations": [
+        {
+          "revelationId": "orta_god_left",
+          "label": "神为何离开",
+          "detail": "它记得轮回之轮原本有意志——为封一道缝，它把自己散进了法则，从此只转、不再有『我』。",
+          "requiresAct": "shards",
+          "requiresSoulOrAlchemy": 30,
+          "revealClues": ["clue_god_left"],
+          "memoryFlags": ["orta_told_god"],
+          "affinity": 20,
+          "lines": [
+            "欧尔塔：『你问神为何离开？神没离开。它把自己拆开，填进了一道缝里。』",
+            "欧尔塔：『从那以后，轮只转，不再有「我」。你要找的答案，一直躺在它拆开的地方。』"
+          ]
+        }
+      ]
+    },
+    {
+      "anchorId": "varok",
+      "displayName": "古龙「瓦洛克」",
+      "title": "龙与巨人纪元的幸存者",
+      "cityId": "frostspeak_keep",
+      "meetPlace": "霜言堡·冰川隘口",
+      "meetHint": "隘口的风里带着一股旧龙息，像有什么庞然的东西在半睡半醒。",
+      "greetings": {
+        "cold": "瓦洛克（声音从冰层下传来）：『凡人的脚步，轻得可笑。说吧。』",
+        "neutral": "瓦洛克：『你身上有火的味道。那火，我见过。』",
+        "friendly": "瓦洛克：『又来了。冰川记得你，我也记得你。』",
+        "close": "瓦洛克：『三世盟约不是白结的。你想问什么，尽管问。』"
+      },
+      "events": [
+        { "eventId": "hold_gaze", "label": "与它对视，不避开", "desc": "承住一头古龙的注视，不退。", "delta": 12, "needSoulOrAlchemy": 20, "reply": "瓦洛克：『你眼里有火。好，至少不怯。』" },
+        { "eventId": "offer_ice", "label": "献上一块冰川的旧冰", "desc": "从龙墓边缘取一块不化的旧冰奉上。", "delta": 8, "reply": "瓦洛克：『这点心意，比多数凡人的誓言真。』" }
+      ],
+      "revelations": [
+        {
+          "revelationId": "varok_fall",
+          "label": "天坠的真相",
+          "detail": "他是龙与巨人争世界的那个纪元里活下来的。天空曾裂开过一次——世界第一次裂，就是从那时开始的。",
+          "requiresAct": "shards",
+          "requiresShards": 1,
+          "revealClues": ["clue_varok"],
+          "memoryFlags": ["varok_told_fall"],
+          "affinity": 15,
+          "lines": [
+            "瓦洛克：『龙与巨人争世界的那个纪元，天空裂开过一次。』",
+            "瓦洛克：『那不是天灾。是有人想替世界做一件谁也拦不住的事——于是世界先裂了。』"
+          ]
+        }
+      ]
+    },
+    {
+      "anchorId": "elise",
+      "displayName": "返魂者「伊莉丝·薇尔」",
+      "title": "旧帝国末代书记官",
+      "cityId": "silvermoon_spire",
+      "meetPlace": "银月塔·活档案馆",
+      "meetHint": "一位穿着旧帝国官服的女史官，正在给一段早已无人记得的年号补注。",
+      "greetings": {
+        "cold": "伊莉丝（笔没停）：『查什么？我这一天要写的，比你我这一世都长。』",
+        "neutral": "伊莉丝：『你问「永恒者」？很久没人问这个词了。它比你以为的更近。』",
+        "friendly": "伊莉丝（终于抬眼）：『你上一次来时，问到了仪式那一节。这次想接着听？』",
+        "close": "伊莉丝：『这部帝国史永远写不完。可你这一缕魂，我倒想单开一页记下来。』"
+      },
+      "events": [
+        { "eventId": "hold_lamp", "label": "替她掌灯", "desc": "在她校勘旧卷时，举着灯站上半个时辰。", "delta": 12, "reply": "伊莉丝：『肯替人掌灯的人，自己心里也得有光。』" },
+        { "eventId": "return_page", "label": "捡回一页散佚的旧史", "desc": "把被风吹散的一页旧帝国档案送回架上。", "delta": 10, "reply": "伊莉丝：『连一页散佚你都替我拾回来。这页上记的，正是一个不肯散的人。』" }
+      ],
+      "revelations": [
+        {
+          "revelationId": "elise_rite",
+          "label": "永恒者仪式史",
+          "detail": "旧帝国末代皇帝怕死，更怕像神那样失去自我，于是去吞轮回之轮的力量——仪式在最后一刻崩了，才有后来的一切。",
+          "requiresAct": "shards",
+          "minAffinity": 10,
+          "revealClues": ["clue_eternal_rite"],
+          "memoryFlags": ["elise_told_rite"],
+          "affinity": 15,
+          "lines": [
+            "伊莉丝（翻到某一页）：『末代皇帝怕死，更怕像神那样把自己拆开、失去「我」。』",
+            "伊莉丝：『于是他要去吞轮回之轮的力量。仪式做到最后一刻，崩了——你以为的七片碎片，就是从那一崩里飞出去的。』"
+          ]
+        }
+      ]
+    },
+    {
+      "anchorId": "collector",
+      "displayName": "无貌者「收债人」",
+      "title": "身份成谜的中立者",
+      "cityId": "port_thorne",
+      "meetPlace": "索恩港·外海市集",
+      "meetHint": "一个看不清脸的人坐在货箱堆上，面前摊着一本没有字名的账。",
+      "greetings": {
+        "cold": "收债人（脸上一片模糊）：『账上记着你，可这一世你还没欠我什么。』",
+        "neutral": "收债人：『记忆可以赎，代价是替人背一笔说不清的债。要听价码吗？』",
+        "friendly": "收债人：『上一世你欠我的，还了。这一世要不要再贷一笔？』",
+        "close": "收债人：『你我之间这本账，比谁都长。放心，我从不催你。』"
+      },
+      "events": [
+        { "eventId": "pay_old", "label": "替一个陌生人还一笔旧债", "desc": "不问缘由，替账上那位还了。", "delta": 12, "reply": "收债人：『替不认识的人还债……这笔账，我记你名下。』" },
+        { "eventId": "read_ledger", "label": "请求看一眼那本无字账", "desc": "翻一页那本谁也读不懂的账。", "delta": 8, "needSoulOrAlchemy": 25, "reply": "收债人（把账转过来一页）：『看得懂吗？看不懂，说明你这一世还算干净。』" }
+      ],
+      "revelations": [
+        {
+          "revelationId": "collector_memory",
+          "label": "记忆可以赎",
+          "detail": "他说，你遗落在前世的东西不是没了，是压在账上——代价是替人背一笔说不清的债，而他从不告诉你债主是谁。",
+          "requiresAct": "shards",
+          "revealClues": ["clue_memory"],
+          "memoryFlags": ["collector_told_memory"],
+          "affinity": 15,
+          "lines": [
+            "收债人：『你前世丢的东西，不是没了，是压在我账上。』",
+            "收债人：『赎回的价码不是钱，是替人背一笔债——债主是谁，我从不告诉。要赎吗？』"
+          ]
+        }
+      ]
+    }
+  ]
+}

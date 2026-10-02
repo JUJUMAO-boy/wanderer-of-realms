@@ -283,6 +283,19 @@ const _COMER_SLOT: int = 500
 ## 当前城内空间在摆的乱入者 comerId（无则空串）。只与会话相关，不落盘。
 var _comer_present: String = ""
 
+# 锚点 NPC（D2）在城内空间 visitor 层的摆点：落在 _COMER_SLOT 的下一位（index 1），
+# 与乱入者错开，一座城里可同时站着一位乱入者与一位锚点。
+const _ANCHOR_SLOT: int = 501
+## 当前城内空间在摆的锚点 anchorId（无则空串）。只与会话相关，不落盘。
+var _anchor_present: String = ""
+## 锚点对话（D2）。会话级、不落盘（锚点好感落 SoulRecord.anchor_relations，跨世保留）。
+var _anchor_active: bool = false
+var _anchor_id: String = ""
+var _anchor_view: Dictionary = {}
+var _anchor_cursor: int = 0
+## 本次会话里已回应过的台词，逐行追加在 lines 尾部（重建视图时留着）。
+var _anchor_extra_lines: Array = []
+
 # 商铺与黑市（M8）。界面只持有"在看哪座城、买还是卖、哪条渠道、光标在哪"——
 # 价格与货架每次都按当前城市状态重算，不落盘（物价随城长，存下来就会过期）。
 var _trade_city_id: String = ""
@@ -658,6 +671,8 @@ func _refresh() -> void:
 				_refresh_varok()
 			elif _comer_active:
 				_refresh_comer()
+			elif _anchor_active:
+				_refresh_anchor()
 			elif not _hidden_event.is_empty():
 				_refresh_hidden()
 			else:
@@ -4188,6 +4203,154 @@ func _finish_comer() -> void:
 	_refresh()
 
 
+# --- 锚点 NPC（D2 / D-200~D-202）---
+# 会话级、不落盘（锚点好感落 SoulRecord.anchor_relations，跨世保留）。复用 VIEW_EVENT
+# 的抉择形态与 ComerDialogPanel（同一份 {title, lines, branches} 结构），走近锚点按回车开对话。
+# 对话里两件事：做件小事涨锚点好感、或听他把一段真相说透（揭示 → ShardLine）。
+
+func _open_anchor(anchor_id: String) -> void:
+	if _world == null or _world.avatar == null or _soul == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_anchor(anchor_id)
+	if cfg.is_empty():
+		_status.text = "那位锚点不在此处。"
+		_refresh()
+		return
+	if str(cfg.get("cityId", "")) != str(_city_space.get("city_id", "")):
+		_status.text = "%s不在这座城里。" % str(cfg.get("displayName", "锚点"))
+		_refresh()
+		return
+	_anchor_active = true
+	_anchor_id = anchor_id
+	_anchor_cursor = 0
+	_anchor_extra_lines = []
+	_switch_view(VIEW_EVENT)
+	_status.text = str(cfg.get("meetHint", ""))
+	_refresh()
+
+
+func _refresh_anchor() -> void:
+	if not _anchor_active or _anchor_id.is_empty() or _world == null or _soul == null:
+		_anchor_view = {}
+		return
+	var cfg: Dictionary = ContentLoader.get_anchor(_anchor_id)
+	if cfg.is_empty():
+		_anchor_view = {}
+		return
+	var lines: Array = []
+	lines.append(str(cfg.get("meetHint", "")))
+	var greet: String = AnchorLine.greeting(_soul, cfg)
+	if not greet.is_empty():
+		lines.append(greet)
+	for extra in _anchor_extra_lines:
+		lines.append(str(extra))
+
+	# 抉择：先摆好感事件（像 B3 那样做件小事），再摆揭示分支（把真相说透）。
+	var choices: Array = []
+	var branches: Array = []
+	for ev in cfg.get("events", []):
+		choices.append({"kind": "event", "ref": str(ev.get("eventId", ""))})
+		branches.append({
+			"label": str(ev.get("label", "")),
+			"detail": str(ev.get("desc", "")),
+			"enabled": true,
+		})
+	for rev in AnchorLine.available_revelations(_soul, _world, _world.avatar, cfg):
+		choices.append({"kind": "revelation", "ref": str(rev.get("revelationId", ""))})
+		var detail: String = str(rev.get("detail", ""))
+		if not bool(rev.get("unlocked", false)):
+			detail = str(rev.get("reason", "现在还说不出口。"))
+		branches.append({
+			"label": str(rev.get("label", "")),
+			"detail": detail,
+			"enabled": bool(rev.get("unlocked", false)),
+		})
+
+	var affinity: int = AnchorLine.affinity(_soul, _anchor_id)
+	var band_l: String = AnchorLine.band_label(AnchorLine.band(_soul, _anchor_id))
+	var flags: Array = AnchorLine.record_of(_soul, _anchor_id).get("memoryFlags", [])
+	_anchor_view = {
+		"title": "「%s」·%s" % [str(cfg.get("displayName", "")), str(cfg.get("title", ""))],
+		"lines": lines,
+		"branches": branches,
+		"choices": choices,
+		"tempLabel": "锚点好感 %s (%d)  记得你 %d 件事" % [band_l, affinity, flags.size()],
+	}
+	_anchor_cursor = clampi(_anchor_cursor, 0, maxi(0, branches.size() - 1))
+
+
+func _anchor_input(key_event: InputEventKey) -> void:
+	if _anchor_view.is_empty():
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_anchor_cursor = maxi(0, _anchor_cursor - 1)
+			_refresh()
+		KEY_DOWN, KEY_S:
+			_anchor_cursor = mini(_anchor_view.get("branches", []).size() - 1, _anchor_cursor + 1)
+			_refresh()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_anchor_confirm()
+		KEY_ESCAPE, KEY_T:
+			_finish_anchor()
+
+
+func _anchor_click(point: Vector2) -> void:
+	var hit: Dictionary = ComerDialogPanel.hit_test(_anchor_view, _content_rect(), point)
+	if str(hit.get("kind", "")) != "choice":
+		return
+	var index: int = int(hit.get("index", -1))
+	if index != _anchor_cursor:
+		_anchor_cursor = index
+		_refresh()
+		return
+	_anchor_confirm()
+
+
+func _anchor_confirm() -> void:
+	if not _anchor_active or _world == null or _world.avatar == null or _soul == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_anchor(_anchor_id)
+	var choices: Array = _anchor_view.get("choices", [])
+	if cfg.is_empty() or choices.is_empty():
+		return
+	var choice: Dictionary = choices[clampi(_anchor_cursor, 0, choices.size() - 1)]
+	if str(choice.get("kind", "")) == "revelation":
+		_anchor_reveal(cfg, str(choice.get("ref", "")))
+	else:
+		var result: Dictionary = AnchorLine.apply_event(_soul, _world.avatar, cfg, str(choice.get("ref", "")))
+		var reply: String = str(result.get("reply", ""))
+		if not reply.is_empty():
+			_anchor_extra_lines.append(reply)
+	_refresh()
+
+
+## 听一段揭示：把真相说透（AnchorLine.reveal → ShardLine 揭示线索 / 记记忆 / 加锚点好感），
+## 幕次若因此推进，记一条「主线」史书条目（与 D1 的 _mainline_gain 同一处口径）。
+func _anchor_reveal(cfg: Dictionary, revelation_id: String) -> void:
+	var result: Dictionary = AnchorLine.reveal(_soul, _world, _world.avatar, cfg, revelation_id)
+	if not bool(result.get("ok", false)):
+		_anchor_extra_lines.append(str(result.get("error", "现在你还听不到这一段。")))
+		return
+	for line in result.get("lines", []):
+		_anchor_extra_lines.append(str(line))
+	if bool(result.get("advanced", false)) and _sim != null:
+		var month: int = Clock.total_months()
+		_sim.chronicle.record(_world, ShardLine.act_entry(
+			_world, str(result.get("act", "")), month, _sim.chronicle.year_label(month)))
+
+
+func _finish_anchor() -> void:
+	_anchor_active = false
+	_anchor_id = ""
+	_anchor_view = {}
+	_anchor_cursor = 0
+	_anchor_extra_lines = []
+	_switch_view(VIEW_CITY_SPACE)
+	_status.text = "你告辞。锚点不会走，他在下一世也还认得你。"
+	_refresh()
+
+
 func _percent_bp(bp: int) -> int:
 	return int(round(float(bp) / 100.0))
 
@@ -4250,6 +4413,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 				return VarokPanel.hit_test(_varok_view, _content_rect(), point)
 			if _comer_active:
 				return ComerDialogPanel.hit_test(_comer_view, _content_rect(), point)
+			if _anchor_active:
+				return ComerDialogPanel.hit_test(_anchor_view, _content_rect(), point)
 			return EventPanel.hit_test(
 				_hidden_view if not _hidden_event.is_empty() else _event_view,
 				_content_rect(), point
@@ -4311,6 +4476,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 				_varok_click(event.position)
 			elif _comer_active:
 				_comer_click(event.position)
+			elif _anchor_active:
+				_anchor_click(event.position)
 			elif not _hidden_event.is_empty():
 				_hidden_click(event.position)
 			else:
@@ -4667,9 +4834,13 @@ func _enter_city_space(city_id: String) -> void:
 	_leave_wanderer_menu()
 	# 相遇城在摆的乱入者，摆进 visitor 层的大 slot（B3），避开 WandererPool 的 0..5。
 	_comer_present = _comer_id_for_city(city_id)
+	# 锚点 NPC（D2）同样摆进 visitor 层，但用另一个 slot，与乱入者并存。
+	_anchor_present = str(ContentLoader.get_anchor_in_city(city_id).get("anchorId", ""))
 	var visitors: Array = WandererPool.city_visitors(int(_world.world_seed), city_id, _seen_bucket)
 	if not _comer_present.is_empty():
 		visitors.append(_COMER_SLOT)
+	if not _anchor_present.is_empty():
+		visitors.append(_ANCHOR_SLOT)
 	_city_space = {
 		"city_id": city_id,
 		"layout": CitySpace.layout(city_id, building_ids, npc_ids, visitors),
@@ -4690,6 +4861,7 @@ func _comer_id_for_city(city_id: String) -> String:
 
 func _leave_city_space() -> void:
 	_comer_present = ""
+	_anchor_present = ""
 	_city_space = {}
 	_switch_view(VIEW_MAP)
 
@@ -4715,6 +4887,9 @@ func _refresh_city_space() -> void:
 			if cid.is_empty():
 				cid = _comer_id_for_city(str(_city_space.get("city_id", "")))
 			visitor_labels[slot] = str(ContentLoader.get_comer(cid).get("displayName", "乱入者"))
+			continue
+		if slot == _ANCHOR_SLOT:
+			visitor_labels[slot] = str(ContentLoader.get_anchor(_anchor_present).get("displayName", "锚点"))
 			continue
 		var entry: Dictionary = _wanderer_entry(slot)
 		var spec: Dictionary = WandererPool.fill_spec(
@@ -4770,6 +4945,11 @@ func _city_space_interact() -> void:
 	if not comer_id.is_empty():
 		_open_comer(comer_id)
 		return
+	# 锚点 NPC 次之（D2）：站在锚点旁按回车，开揭示对话。
+	var anchor_id: String = _near_anchor()
+	if not anchor_id.is_empty():
+		_open_anchor(anchor_id)
+		return
 	var near_b: Dictionary = CitySpace.near_building(layout, pos)
 	if not near_b.is_empty():
 		# 龙骸冰川入口（B2）：功能是 adventure 的建筑只有这一座，走进去就是瓦洛克。
@@ -4808,6 +4988,20 @@ func _near_comer() -> String:
 		var key: String = "%d,%d" % [pos.x + dir.x, pos.y + dir.y]
 		if int(cells.get("visitor_cell", {}).get(key, -1)) == _COMER_SLOT:
 			return _comer_present
+	return ""
+
+
+## 锚点 NPC 是否在玩家四邻的格子上（visitor 层的锚点 slot）。命中返回 anchorId，否则空串。
+func _near_anchor() -> String:
+	if _city_space.is_empty() or _anchor_present.is_empty():
+		return ""
+	var cells: Dictionary = _city_space["layout"]
+	var pos: Vector2i = _city_space["player"]
+	var ortho: Array = [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
+	for dir: Vector2i in ortho:
+		var key: String = "%d,%d" % [pos.x + dir.x, pos.y + dir.y]
+		if int(cells.get("visitor_cell", {}).get(key, -1)) == _ANCHOR_SLOT:
+			return _anchor_present
 	return ""
 
 
@@ -4996,6 +5190,10 @@ func _city_space_click(point: Vector2) -> void:
 			if vslot == _COMER_SLOT and not _comer_present.is_empty():
 				_city_space_walk_to(hit.get("grid", Vector2i()))
 				_open_comer(_comer_present)
+				return
+			if vslot == _ANCHOR_SLOT and not _anchor_present.is_empty():
+				_city_space_walk_to(hit.get("grid", Vector2i()))
+				_open_anchor(_anchor_present)
 				return
 			_city_space_walk_to(hit.get("grid", Vector2i()))
 			_open_wanderer_menu(int(hit.get("slot", -1)))
@@ -5945,6 +6143,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_varok_input(key_event)
 			elif _comer_active:
 				_comer_input(key_event)
+			elif _anchor_active:
+				_anchor_input(key_event)
 			elif not _hidden_event.is_empty():
 				_hidden_input(key_event)
 			else:
@@ -6731,6 +6931,8 @@ func _draw() -> void:
 				VarokPanel.draw(self, _varok_view, _content_rect(), _hover)
 			elif _comer_active:
 				ComerDialogPanel.draw(self, _comer_view, _content_rect(), _hover)
+			elif _anchor_active:
+				ComerDialogPanel.draw(self, _anchor_view, _content_rect(), _hover)
 			else:
 				EventPanel.draw(self,
 					_pray_view if _pray_active else (_hidden_view if not _hidden_event.is_empty() else _event_view),

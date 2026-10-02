@@ -33,6 +33,7 @@ const WEATHER_FILE: String = "weather.json"
 const COMER_FILE: String = "comers.json"
 const CROSSOVER_FILE: String = "crossovers.json"
 const MAINLINE_FILE: String = "mainline.json"
+const ANCHOR_FILE: String = "anchors.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -117,6 +118,7 @@ var _rumors: Dictionary = {}
 var _comers: Dictionary = {}
 var _crossovers: Dictionary = {}
 var _mainline: Dictionary = {}
+var _anchors: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -159,6 +161,7 @@ func load_all() -> Dictionary:
 	_affixes = {}
 	_monsters = {}
 	_crossovers = {}
+	_anchors = {}
 	_hidden_events.clear()
 	_personalities = {}
 	_faiths = {}
@@ -318,6 +321,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("交叉任务配置为空或读取失败")
 
+	var anchor_root: Dictionary = _read_json(ANCHOR_FILE, "锚点配置")
+	if not anchor_root.is_empty():
+		_validate_anchors(anchor_root)
+		_anchors = anchor_root
+	else:
+		_errors.append("锚点配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -343,6 +353,7 @@ func load_all() -> Dictionary:
 			"faiths": _personalities.get("faiths", []).size(),
 			"comers": _comers.get("comers", []).size(),
 			"crossovers": _crossovers.get("crossovers", []).size(),
+			"anchors": _anchors.get("anchors", []).size(),
 			"shards": _mainline.get("shards", []).size(),
 		},
 		"errors": _errors.duplicate(),
@@ -851,6 +862,32 @@ func get_crossovers() -> Array:
 func get_crossover(template_id: String) -> Dictionary:
 	for entry in get_crossovers():
 		if str(entry.get("templateId", "")) == template_id:
+			return entry
+	return {}
+
+
+## 锚点 NPC 配置（第四阶段 D2 / D-200~D-202）。返回 anchors.json 的根对象。
+func get_anchor_config() -> Dictionary:
+	return _anchors
+
+
+## 全部锚点。main.gd 摆城内锚点与规则层 AnchorLine 都读它。
+func get_anchors() -> Array:
+	return _anchors.get("anchors", [])
+
+
+## 按 anchorId 取一位锚点；查不到给空字典。
+func get_anchor(anchor_id: String) -> Dictionary:
+	for entry in get_anchors():
+		if str(entry.get("anchorId", "")) == anchor_id:
+			return entry
+	return {}
+
+
+## 在给定城里摆着的锚点（至多一位）。无则空字典。
+func get_anchor_in_city(city_id: String) -> Dictionary:
+	for entry in get_anchors():
+		if str(entry.get("cityId", "")) == city_id:
 			return entry
 	return {}
 
@@ -1508,6 +1545,86 @@ func _validate_crossover_profile(config: Dictionary, path: String) -> void:
 			_validate_event_rewards(fail, "%s.fail" % bpath, str(config.get("cityId", "")))
 		if (branch as Dictionary).has("comerAffinity") and not ((branch as Dictionary)["comerAffinity"] is int):
 			_errors.append("交叉任务分支的 comerAffinity 必须是整数：%s.comerAffinity" % bpath)
+
+
+## 锚点 NPC 配置（第四阶段 D2 / D-200~D-202）。
+##
+## 锚点既是"可遇到的实体"（有城、有初见台词、有四档招呼），也是"揭示者"（揭示分支
+## 把主线真相说给玩家）。校验的落点是会**静默失效**的错：相遇城写错锚点永远见不到；
+## 揭示分支引用了不存在的主线线索/幕次 → 玩家听不到那句话；揭示分支缺 label → 面板上
+## 是个空选项；一位锚点没有任何揭示分支 → 它只是个摆设，装不上"揭示者"。
+func _validate_anchors(root: Dictionary) -> void:
+	var clue_ids: Dictionary = {}
+	for clue in get_mainline_clues():
+		clue_ids[str(clue.get("clueId", ""))] = true
+	var act_ids: Dictionary = {}
+	for act in get_mainline_acts():
+		act_ids[str(act.get("actId", ""))] = true
+
+	var list: Variant = root.get("anchors", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("锚点配置缺少非空的 anchors 数组")
+		return
+	var seen: Dictionary = {}
+	for i in range((list as Array).size()):
+		var path: String = "anchors[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("锚点配置 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var anchor_id: String = str(config.get("anchorId", ""))
+		if anchor_id.is_empty():
+			_errors.append("锚点配置缺少字段：%s.anchorId" % path)
+		elif seen.has(anchor_id):
+			_errors.append("锚点 anchorId 重复：%s" % anchor_id)
+		else:
+			seen[anchor_id] = true
+			path = "anchors[%s]" % anchor_id
+		if str(config.get("displayName", "")).is_empty():
+			_errors.append("锚点缺少字段：%s.displayName" % path)
+
+		var city_id: String = str(config.get("cityId", ""))
+		if city_id.is_empty():
+			_errors.append("锚点缺少相遇城：%s.cityId" % path)
+		elif get_city_config(city_id).is_empty():
+			_errors.append("锚点指向不存在的城市：%s.cityId = %s" % [path, city_id])
+
+		var greetings: Variant = config.get("greetings", null)
+		if not (greetings is Dictionary) or (greetings as Dictionary).is_empty():
+			_errors.append("锚点缺少招呼台词：%s.greetings" % path)
+
+		for ev in config.get("events", []):
+			if not (ev is Dictionary):
+				_errors.append("锚点好感事件必须是对象：%s.events" % path)
+				continue
+			if str((ev as Dictionary).get("eventId", "")).is_empty():
+				_errors.append("锚点好感事件缺少 eventId：%s.events" % path)
+			if str((ev as Dictionary).get("label", "")).is_empty():
+				_errors.append("锚点好感事件缺少 label：%s.events" % path)
+
+		var revelations: Variant = config.get("revelations", null)
+		if not (revelations is Array) or (revelations as Array).is_empty():
+			_errors.append("锚点没有任何揭示分支（它就不是『揭示者』了）：%s.revelations" % path)
+			continue
+		for rev in (revelations as Array):
+			if not (rev is Dictionary):
+				_errors.append("锚点揭示分支必须是对象：%s.revelations" % path)
+				continue
+			var r: Dictionary = rev
+			var rpath: String = "%s.revelations[%s]" % [path, str(r.get("revelationId", ""))]
+			if str(r.get("revelationId", "")).is_empty():
+				_errors.append("锚点揭示分支缺少 revelationId：%s.revelations" % path)
+			if str(r.get("label", "")).is_empty():
+				_errors.append("锚点揭示分支缺少 label：%s" % rpath)
+			var act_id: String = str(r.get("requiresAct", ""))
+			if not act_id.is_empty() and not act_ids.has(act_id):
+				_errors.append("锚点揭示分支引用了不存在的幕次：%s.requiresAct = %s" % [rpath, act_id])
+			for clue_id in r.get("revealClues", []):
+				if not clue_ids.has(str(clue_id)):
+					_errors.append("锚点揭示分支引用了不存在的主线线索：%s.revealClues = %s" % [rpath, clue_id])
+			if int(r.get("requiresShards", 0)) < 0:
+				_errors.append("锚点揭示分支 requiresShards 不能为负：%s" % rpath)
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。
