@@ -408,6 +408,10 @@ func run_all() -> int:
 	_test_d7_ending_view_pages()
 	_test_d7_ending_panel_buttons()
 	_test_d7_mainline_recall_button()
+	print("=== 里程碑 55 验收测试 ===")
+	_test_d8_brief_view()
+	_test_d8_brief_panel_buttons()
+	_test_d8_brief_reflects_wavering_and_allies()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -12340,4 +12344,78 @@ func _test_d7_mainline_recall_button() -> void:
 	_check(recall, "已抉择后摆出「重温终局」")
 	_check(not option_button, "已抉择后不再摆单个去向按钮")
 	_eq(str((MainlinePanel.buttons(rect, view)[0] as Dictionary)["id"]), "back", "返回仍在首位")
+
+
+# --- 里程碑 55：总攻简报页（第四阶段界面精修 · 下）---
+
+## 简报视图：阶段链四段 + 组成明细 + 灰袍者两阶段 + 共鸣；门槛写在门上。
+func _test_d8_brief_view() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d8v"
+	world.avatar = avatar
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var vm0: Dictionary = FinalBriefViewModel.build(soul, world, avatar, cfg)
+	_check(not bool(vm0.get("available", false)), "第一幕时简报标为不可发起")
+	_check(not str(vm0.get("reason", "")).is_empty(), "不可发起时给原因")
+	_eq((vm0.get("stages", []) as Array).size(), 4, "阶段链仍是四段")
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	for shard in ContentLoader.get_shards():
+		ShardLine.collect_shard(soul.main_quest_progress, str((shard as Dictionary)["shardId"]), main_cfg)
+	for clue in ["clue_echo", "clue_identity"]:
+		ShardLine.reveal_clue(soul.main_quest_progress, str(clue), main_cfg)
+	var vm: Dictionary = FinalBriefViewModel.build(soul, world, avatar, cfg)
+	_check(bool(vm.get("available", false)), "第三幕后简报标为可发起")
+	_eq(str(vm.get("needActLabel", "")), "第三幕·轮回", "门上写着所需幕次")
+	var stages: Array = vm["stages"]
+	_eq(str((stages[0] as Dictionary)["kindLabel"]), "波次", "第一段是波次")
+	_check(str((stages[0] as Dictionary)["detail"]).find("骷髅") >= 0, "第一波写出骷髅")
+	_check(str((stages[2] as Dictionary)["detail"]).find("堕落者") >= 0, "灰袍者一阶段召唤堕落者")
+	var boss: Dictionary = vm.get("boss", {})
+	_eq((boss.get("phases", []) as Array).size(), 2, "灰袍者两阶段")
+	_eq(int((boss.get("phases", []) as Array)[1]["selfDrainBp"]), 500, "二阶段带碎片反噬自损")
+	_eq(int((vm.get("resonance", {}) as Dictionary).get("everyRounds", 0)), 3, "共鸣每 3 回合")
+
+
+## 简报面板按钮：门槛没过时「发起总攻」置灰，过了可用且点得中；返回恒在首位。
+func _test_d8_brief_panel_buttons() -> void:
+	var rect: Rect2 = Rect2(0.0, 0.0, 1248.0, 568.0)
+	var locked: Dictionary = {"available": false}
+	var lb: Dictionary = {}
+	for b in FinalBriefPanel.buttons(rect, locked):
+		lb[str((b as Dictionary)["id"])] = b
+	_eq(str((FinalBriefPanel.buttons(rect, locked)[0] as Dictionary)["id"]), "back", "返回恒在首位")
+	_check(not bool((lb["start"] as Dictionary)["enabled"]), "门槛没过时发起按钮禁用")
+	var ready: Dictionary = {"available": true}
+	var rb: Dictionary = {}
+	for b in FinalBriefPanel.buttons(rect, ready):
+		rb[str((b as Dictionary)["id"])] = b
+	_check(bool((rb["start"] as Dictionary)["enabled"]), "门槛过后发起按钮可用")
+	var hit: Dictionary = FinalBriefPanel.hit_test(ready, rect, ((rb["start"] as Dictionary)["rect"] as Rect2).get_center())
+	_eq(str(hit.get("id", "")), "start", "点得中发起总攻")
+
+
+## 简报反映动摇与助阵：灵魂之力/线索到位才动摇，结盟/好感到位才有人助阵。
+func _test_d8_brief_reflects_wavering_and_allies() -> void:
+	var cfg: Dictionary = ContentLoader.get_final_battle_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d8w"
+	world.avatar = avatar
+	var soul: SoulRecord = _d6_ready_soul()
+	_check(not bool((FinalBriefViewModel.build(soul, world, avatar, cfg).get("wavering", {}) as Dictionary).get("ok", false)),
+		"灵魂之力不足时动摇未命中")
+	avatar.set_attribute(PlayerAvatar.ATTR_SOUL, 60)
+	var vm1: Dictionary = FinalBriefViewModel.build(soul, world, avatar, cfg)
+	_check(bool((vm1.get("wavering", {}) as Dictionary).get("ok", false)), "真相 + 灵魂之力齐了即动摇")
+	_check(not str((vm1.get("wavering", {}) as Dictionary).get("summary", "")).is_empty(), "动摇带结语")
+	_eq((vm1.get("allies", []) as Array).size(), 0, "未结盟时无人助阵")
+	soul.known_runes.append("rune_dov_true")
+	AnchorLine.set_affinity(soul, "elise", 50)
+	var vm2: Dictionary = FinalBriefViewModel.build(soul, world, avatar, cfg)
+	_eq((vm2.get("allies", []) as Array).size(), 2, "瓦洛克结盟 + 伊莉丝达档 → 两人助阵")
 

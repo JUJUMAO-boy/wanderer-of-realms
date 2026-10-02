@@ -103,6 +103,7 @@ const VIEW_MERCHANT: int = 15
 const VIEW_FAMILY: int = 16
 const VIEW_MAINLINE: int = 17
 const VIEW_ENDING: int = 18
+const VIEW_FINAL_BRIEF: int = 19
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -127,6 +128,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_FAMILY: "ESC 或 T 返回地图    「居民」里向亲密之人求婚",
 	VIEW_MAINLINE: "ESC/T 或点「返回地图」    地图上按 L 随时翻开",
 	VIEW_ENDING: "←/↑ 上一页    →/↓/空格/回车 下一页    ESC 或「返回主线」退回主线面板",
+	VIEW_FINAL_BRIEF: "回车 发起总攻    ESC 或「返回主线」退回主线面板",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -182,6 +184,7 @@ var _city_space_view: Dictionary = {} ## CitySpaceViewModel 的成品
 var _family_view: Dictionary = {}     ## FamilyViewModel 的成品（A3）
 var _mainline_view: Dictionary = {}   ## MainlineViewModel 的成品（第四阶段 D1）
 var _ending_view: Dictionary = {}     ## EndingViewModel 的成品（第四阶段界面精修 · 上 / 里程碑 54）
+var _final_brief_view: Dictionary = {} ## FinalBriefViewModel 的成品（第四阶段界面精修 · 下 / 里程碑 55）
 var _ending_page: int = 0             ## 结局演出页读到第几页（会话级、不落盘）
 
 # 终局战役（第四阶段 D5 / D-206~D-209）。会话级、不落盘——阶段推进只活在这一屏，
@@ -715,6 +718,8 @@ func _refresh() -> void:
 			_refresh_mainline()
 		VIEW_ENDING:
 			_refresh_ending()
+		VIEW_FINAL_BRIEF:
+			_refresh_final_brief()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -4518,6 +4523,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return MainlinePanel.hit_test(_mainline_view, _content_rect(), point)
 		VIEW_ENDING:
 			return EndingPanel.hit_test(_ending_view, PANEL_RECT, point)
+		VIEW_FINAL_BRIEF:
+			return FinalBriefPanel.hit_test(_final_brief_view, PANEL_RECT, point)
 	return {}
 
 
@@ -4585,6 +4592,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_mainline_click(event.position)
 		VIEW_ENDING:
 			_ending_click(event.position)
+		VIEW_FINAL_BRIEF:
+			_final_brief_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -6254,6 +6263,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_mainline_input(key_event)
 		VIEW_ENDING:
 			_ending_input(key_event)
+		VIEW_FINAL_BRIEF:
+			_final_brief_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -6890,9 +6901,45 @@ func _ending_goto(page: int) -> void:
 	_refresh()
 
 
-## 从地图/面板发起总攻：门槛过了就从简报直接进第一波。
+## 从主线面板「发起总攻」：先开总攻简报页，由简报页的按钮真正发起。
 func _mainline_start_final() -> void:
-	_start_final_battle()
+	_open_final_brief()
+
+
+# --- 总攻简报页（第四阶段界面精修 · 下 / 里程碑 55）---
+# 阶段链、灰袍者两阶段、动摇、助阵、共鸣整理成整屏简报，读清楚再发起。
+
+func _open_final_brief() -> void:
+	_switch_view(VIEW_FINAL_BRIEF)
+
+
+func _refresh_final_brief() -> void:
+	if _soul == null or _world == null or _world.avatar == null:
+		_final_brief_view = {}
+		return
+	_final_brief_view = FinalBriefViewModel.build(
+		_soul, _world, _world.avatar, ContentLoader.get_final_battle_config())
+
+
+func _final_brief_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			if bool(_final_brief_view.get("available", false)):
+				_start_final_battle()
+		KEY_ESCAPE, KEY_T, KEY_L:
+			_switch_view(VIEW_MAINLINE)
+
+
+func _final_brief_click(point: Vector2) -> void:
+	var hit: Dictionary = FinalBriefPanel.hit_test(_final_brief_view, PANEL_RECT, point)
+	if str(hit.get("kind", "")) != "button":
+		return
+	match str(hit.get("id", "")):
+		"back":
+			_switch_view(VIEW_MAINLINE)
+		"start":
+			if bool(hit.get("enabled", false)):
+				_start_final_battle()
 
 
 # --- 终局战役接线（第四阶段 D5 / D-206~D-209）---
@@ -7283,6 +7330,8 @@ func _draw() -> void:
 			MainlinePanel.draw(self, _mainline_view, _content_rect(), _hover)
 		VIEW_ENDING:
 			EndingPanel.draw(self, _ending_view, PANEL_RECT, _hover)
+		VIEW_FINAL_BRIEF:
+			FinalBriefPanel.draw(self, _final_brief_view, PANEL_RECT, _hover)
 		_:
 			_draw_map()
 	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。

@@ -138,37 +138,21 @@ static func _draw_body(canvas: CanvasItem, font: Font, view: Dictionary, rect: R
 	_draw_ending(canvas, font, view, rect, Vector2(x, _draw_battle(canvas, font, view, Vector2(x, y))))
 
 
-## 总攻段（第四阶段 D5）：门槛未到时写一句「还差什么」；到了就把阶段链、动摇、助阵摊开。
-## 返回下一段该从哪一行往下画。
+## 总攻段（第四阶段 D5）：只留一行——细节（阶段链/灰袍者两阶段/动摇/助阵/共鸣）已移进
+## 独立的总攻简报页（FinalBriefPanel），面板这里只提示"可发起"或"还差什么"。
 static func _draw_battle(canvas: CanvasItem, font: Font, view: Dictionary, pos: Vector2) -> float:
 	var battle: Dictionary = view.get("battle", {})
 	var y: float = pos.y
 	if battle.is_empty() or bool(battle.get("won", false)):
 		return y
-	if not bool(battle.get("available", false)):
-		var reason: String = str(battle.get("reason", ""))
-		if not reason.is_empty():
-			_text(canvas, font, Vector2(pos.x, y), "总攻轮核：" + reason, COLOR_DIM, 14.0)
-		return y
-	_text(canvas, font, Vector2(pos.x, y), "总攻轮核·可发起", COLOR_ACCENT, 15.0)
-	y += LINE_HEIGHT
-	var parts: Array = []
-	for stage in battle.get("stages", []):
-		parts.append(str((stage as Dictionary).get("label", "")))
-	if not parts.is_empty():
-		_text(canvas, font, Vector2(pos.x, y), "阶段：" + " → ".join(PackedStringArray(parts)), COLOR_DIM, 14.0)
-		y += LINE_HEIGHT
-	var wavering: Dictionary = battle.get("wavering", {})
-	if bool(wavering.get("ok", false)):
-		_text(canvas, font, Vector2(pos.x, y), "灰袍者已动摇：攻 -30%、防 -20%，二阶段不再狂暴。", COLOR_ACCENT, 14.0)
-		y += LINE_HEIGHT
-	var allies: Array = battle.get("allies", [])
-	if not allies.is_empty():
-		var names: Array = []
-		for ally in allies:
-			names.append(str((ally as Dictionary).get("label", "")))
-		_text(canvas, font, Vector2(pos.x, y), "助阵：" + "、".join(PackedStringArray(names)), COLOR_ACCENT, 14.0)
-		y += LINE_HEIGHT
+	if bool(battle.get("available", false)):
+		_text(canvas, font, Vector2(pos.x, y),
+			"总攻轮核·可发起　—　点「发起总攻」看简报", COLOR_ACCENT, 14.0)
+		return y + LINE_HEIGHT
+	var reason: String = str(battle.get("reason", ""))
+	if not reason.is_empty():
+		_text(canvas, font, Vector2(pos.x, y), "总攻轮核：" + reason, COLOR_DIM, 14.0)
+		return y + LINE_HEIGHT
 	return y
 
 
