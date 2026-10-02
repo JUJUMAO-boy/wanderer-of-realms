@@ -326,6 +326,13 @@ func run_all() -> int:
 	_test_b3_comer_prereq_gate()
 	_test_b3_comer_recruit_ready()
 	_test_b3_comer_style_gate()
+	print("=== B4 交叉任务战斗·迷你游戏（第三阶段 / D-189）===")
+	_test_b4_ensemble_bands()
+	_test_b4_ensemble_synergy_and_leader()
+	_test_b4_ensemble_without_cfg()
+	_test_b4_match_outcome_and_score()
+	_test_b4_match_morale_decides_close_game()
+	_test_b4_match_pure_and_style_gate()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -10621,4 +10628,141 @@ func _comer_set_and_check(world: WorldState, cid: String, val: int, expect: int,
 
 func comer_set_aff(world: WorldState, cid: String, val: int) -> void:
 	ComerFavor.set_affinity(world, cid, val)
+
+
+# --- B4 交叉任务战斗·迷你游戏（第三阶段 / D-189~D-190）---
+
+## 便捷：取 balance.crossTrial（规则层判定全靠它）。
+func _b4_cfg() -> Dictionary:
+	return ContentLoader.get_balance_section("crossTrial")
+
+
+## 便捷：造一个合奏参与者。
+func _b4_partner(name: String, soul: int, skills: Dictionary, leader: bool = false) -> Dictionary:
+	return {"name": name, "attributes": {"soul": soul}, "skills": skills, "leader": leader}
+
+
+func _test_b4_ensemble_bands() -> void:
+	var cfg: Dictionary = _b4_cfg().get("ensemble", {})
+	var trial := CrossTrial.new()
+	# 缺省空输入：无人应和，最低档，ok=false。
+	var empty: Dictionary = trial.ensemble([], cfg)
+	_eq(empty.get("ok", false), false, "空输入 -> 不应和")
+	_eq(empty.get("band", ""), CrossTrial.BAND_MOUTH, "空输入 -> 最低档 m_out_of_tune")
+	# 单人 leader 高熟练（soul_spark 100 → voice 40 × leaderWeight 2 = 80）→ resonance_crit。
+	var strong: Dictionary = trial.ensemble([
+		_b4_partner("你", 0, {"soul_spark": 100}, true)
+	], cfg)
+	_check(strong.get("ok", false), "高熟练单人 -> 能共鸣")
+	_check(strong.get("score", 0) >= 75, "高熟练单人共鸣分够 75")
+	_eq(strong.get("band", ""), CrossTrial.BAND_RESONANCE_CRIT, "高熟练单人 -> resonance_crit 档")
+	# 中熟练单人（soul_spark 25 → voice 25）→ resonance（>=45 才共鸣，20~44 quaver）需多一步验证：
+	# voice 25 落在 20~44 → quaver。
+	var weak: Dictionary = trial.ensemble([
+		_b4_partner("你", 0, {"soul_spark": 25})
+	], cfg)
+	_eq(weak.get("band", ""), CrossTrial.BAND_QUAVER, "中熟练单人 -> quaver 档")
+	# 低熟练（soul_spark 10 → voice 10 < 20）→ m::out_of_tune。
+	var foil: Dictionary = trial.ensemble([
+		_b4_partner("你", 0, {"soul_spark": 10})
+	], cfg)
+	_eq(foil.get("band", ""), CrossTrial.BAND_MOUTH, "低熟练单人 -> m_out_of_tune 档")
+
+
+func _test_b4_ensemble_synergy_and_leader() -> void:
+	var cfg: Dictionary = _b4_cfg().get("ensemble", {})
+	var trial := CrossTrial.new()
+	# 两人同源（都点魂系）vs 一人异源（火系），都不 leader，低值避免顶格。
+	# 同源：30 + 30 + synergySame10 = 70；异源：30 + 30 + synergyForeign2 = 62。
+	var same: Dictionary = trial.ensemble([
+		_b4_partner("A", 0, {"soul_spark": 30}),
+		_b4_partner("B", 0, {"soul_pierce": 30}),
+	], cfg)
+	var foreign: Dictionary = trial.ensemble([
+		_b4_partner("A", 0, {"soul_spark": 30}),
+		_b4_partner("B", 0, {"fire_fireball": 30}),
+	], cfg)
+	_check(int(same.get("score", 0)) > int(foreign.get("score", 0)),
+		"同源默契分高于异源")
+	# leader 权重：同一人领奏（×leaderWeight）比不领奏得分更高；低值避免顶格。
+	var lead: Dictionary = trial.ensemble([
+		_b4_partner("A", 0, {"soul_spark": 40}, true),
+	], cfg)
+	var solo: Dictionary = trial.ensemble([
+		_b4_partner("A", 0, {"soul_spark": 40}, false),
+	], cfg)
+	_check(int(lead.get("score", 0)) > int(solo.get("score", 0)),
+		"leader 权重加成生效")
+
+
+func _test_b4_ensemble_without_cfg() -> void:
+	# 不传 cfg 也不能崩（走缺省 bands / 默认数值），应保守判最低档且不抛错。
+	var trial := CrossTrial.new()
+	var empty: Dictionary = trial.ensemble([], {})
+	_eq(empty.get("band", ""), CrossTrial.BAND_MOUTH, "空输入无 cfg -> 最低档")
+	var anything: Dictionary = trial.ensemble([
+		{"name": "X", "attributes": {}, "skills": {}}
+	], {})
+	_check(anything.has("score"), "无 cfg 单人 -> 有 score")
+
+
+func _test_b4_match_outcome_and_score() -> void:
+	var cfg: Dictionary = _b4_cfg()
+	var trial := CrossTrial.new()
+	# 悬殊：主队强、客队弱，强队应明显领先。
+	var home: Dictionary = {
+		"name": "绿柳少年", "morale": 80,
+		"attributes": {"dexterity": 80, "constitution": 70, "intelligence": 40},
+		"skills": {"ball_drive": 60},
+	}
+	var away: Dictionary = {
+		"name": "废墟难民", "morale": 20,
+		"attributes": {"dexterity": 20, "constitution": 20, "intelligence": 10},
+		"skills": {},
+	}
+	var res: Dictionary = trial.match(home, away, cfg)
+	_check(int(res["score"][0]) > int(res["score"][1]), "强队比分队更高")
+	_eq(res.get("outcome", ""), CrossTrial.MATCH_HOME, "悬殊 -> 主队胜")
+	_check((res["log"] as Array).size() >= 3, "赛况流水至少三段")
+
+
+func _test_b4_match_morale_decides_close_game() -> void:
+	var cfg: Dictionary = _b4_cfg()
+	var trial := CrossTrial.new()
+	# strengthDiv=150 → 150 恰好进一球、147 不进球：净差仅 1，属 marginGoal 内的胶着局，
+	# 胜负改由 (strength + morale) 合值定。士气低但实力略高的一方对士气爆棚的一方翻转。
+	var strong_slack: Dictionary = {
+		"name": "甲队", "morale": 0,
+		"attributes": {"dexterity": 50, "constitution": 0, "intelligence": 0},
+		"skills": {},
+	}
+	var weak_fired: Dictionary = {
+		"name": "乙队", "morale": 90,
+		"attributes": {"dexterity": 49, "constitution": 0, "intelligence": 0},
+		"skills": {},
+	}
+	# 乙士气压倒，虽实力略低仍翻盘（主队输在涣散）→ 客队(甲)胜出。
+	var res: Dictionary = trial.match(strong_slack, weak_fired, cfg)
+	_eq(res.get("outcome", ""), CrossTrial.MATCH_AWAY, "胶着局 + 客队士气高 -> 客队胜")
+	# 对调主场：强实力但士气崩盘的一方也赢不了赛事。
+	var res_rev: Dictionary = trial.match(weak_fired, strong_slack, cfg)
+	_eq(res_rev.get("outcome", ""), CrossTrial.MATCH_HOME, "对调后主队士气足 -> 主队胜")
+
+
+func _test_b4_match_pure_and_style_gate() -> void:
+	var cfg: Dictionary = _b4_cfg()
+	var trial := CrossTrial.new()
+	# 确定性：同一输入跑两次比分一致（不引入随机）。
+	var a: Dictionary = {"name": "X", "morale": 50,
+		"attributes": {"dexterity": 40, "constitution": 30, "intelligence": 20}, "skills": {}}
+	var b: Dictionary = {"name": "Y", "morale": 50,
+		"attributes": {"dexterity": 35, "constitution": 30, "intelligence": 20}, "skills": {}}
+	var r1: Dictionary = trial.match(a, b, cfg)
+	var r2: Dictionary = trial.match(a, b, cfg)
+	_eq(r1.get("outcome", ""), r2.get("outcome", ""), "同输入 -> 同赛果")
+	_eq(r1["score"][0], r2["score"][0], "同输入 -> 同比分 h")
+	_eq(r1["score"][1], r2["score"][1], "同输入 -> 同比分 a")
+	# 台词过 A1 文风闸（Ball 对白不该是套路腔）。
+	var audit: Dictionary = MenuStyle.audit("\n".join(PackedStringArray(r1["log"])), 80)
+	_check((audit["flags"] as Array).is_empty(), "球赛对白无套路腔 flag")
 

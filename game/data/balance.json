@@ -694,6 +694,53 @@
       "allianceRune": "rune_dov_true"
     }
   },
+  "crossTrial": {
+    "_comment": "交叉任务战斗·迷你游戏（B4，D-189~D-190）：乱入者与主线的交会不总是『打一场』，也可能是『合一段奏 / 踢一场球』（《乱入者交叉任务剧本》CX-01 诗剑镇龙、CX-03 原力问道、CX-06 足球精神）。这里只放两类迷你判定纯规则的数值系数；判定逻辑在 cross_trial.gd 规则层为单一来源，产出可无头钉测、不引入随机——同一输入恒得同一共鸣档 / 同一比分。",
+    "ensemble": {
+      "_comment_bands": "共鸣档位（低到高）。band 名对应 cross_trial.gd 的 BAND_* 常量，min 是该档的最低共鸣分；从高到低逐一判定，>=min 即落档。",
+      "bands": [
+        { "band": "resonance_crit", "min": 75 },
+        { "band": "resonance", "min": 45 },
+        { "band": "quaver", "min": 20 },
+        { "band": "m_out_of_tune", "min": 0 }
+      ],
+      "_comment_effect": "各档对『结果的效力』倍率（毫，1000 = 无加成）：共鸣越高，这件交会办成的把握越大。",
+      "bandEffectMilli": {
+        "resonance_crit": 1500,
+        "resonance": 1200,
+        "quaver": 800,
+        "m_out_of_tune": 400
+      },
+      "_comment_voice": "独奏得分：本职技能树每 1 点熟练换共鸣分；个别人声顶到 voiceCap（独奏分封顶，多人合奏的厚度由人数与默契撑起来）。tree 是本件默认声部（魂系｜与乱入者共鸣多走灵魂）。leaderWeight：领奏者的声部按此倍数放大（队伍听主音）。",
+      "tree": "soul",
+      "skillToScore": 1,
+      "voiceCap": 40,
+      "leaderWeight": 2,
+      "bodyWeight": 0,
+      "_comment_synergy": "同源加成：大家都点同一棵树，声气不易断，给一个默契分；各自异源则只剩一点点余音（近乎不给）。",
+      "synergySame": 10,
+      "synergyForeign": 2
+    },
+    "match": {
+      "_comment": "球赛迷你模拟（大空翼『足球是朋友』）。攻防完全由双方属性/技能派生，不掷骰；强度越高同一档越可能多进一球。",
+      "base": {
+        "_comment": "强度折算：敏捷（跑动）×dexWeight + 体质（耐力）×conWeight + 智力（视野）×intWeight + 球系技能点数。home/away 各自的基础进球数；强度每够 strengthDiv 点再多进一球（把比分压在卡通量级）；比分差距超过 marginGoal 才直接判强队胜，否则看强度+士气的合值。",
+        "dexWeight": 3,
+        "conWeight": 2,
+        "intWeight": 1,
+        "strengthDiv": 150,
+        "homeGoals": 1,
+        "awayGoals": 1,
+        "marginGoal": 2,
+        "moraleDefault": 50
+      },
+      "extraTime": {
+        "_comment": "分出胜负时若净差在 withinGoals 内（哨响时胶着），台词里加一句『加时锁定胜局』。",
+        "enabled": true,
+        "withinGoals": 1
+      }
+    }
+  },
   "deity": {
     "_comment": "代神机制（M-A 深化，D-152~D-155）：恩惠/改信/圣物的数值系数全部集中在这。恩惠有效期是『绝对自然日』(blessingDays)，与 DisguiseGate 的 disguise_until_day 同一套时钟通路，main 每日 boundary 调 Pontiff.sync 剥掉到期的。改信是『背一柱投另一柱』：接过多少旧圣物就按 perRelicPenalty 逐件咬善恶（karma 扣到 -100 以下就没法改），换回旧柱付 refundCost 铜币。圣物跨世保留由 SoulRecord.relics 携带。",
     "blessingDays": 3,
