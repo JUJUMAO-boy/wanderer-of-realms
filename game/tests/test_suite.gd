@@ -404,6 +404,10 @@ func run_all() -> int:
 	_test_d6_chronicle_entry_and_style()
 	_test_d6_briefing()
 	_test_d6_panel_ending_button()
+	print("=== 里程碑 54 验收测试 ===")
+	_test_d7_ending_view_pages()
+	_test_d7_ending_panel_buttons()
+	_test_d7_mainline_recall_button()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -12248,4 +12252,92 @@ func _test_d6_panel_ending_button() -> void:
 	if not found.is_empty():
 		var hit: Dictionary = MainlinePanel.hit_test(view, rect, (found["rect"] as Rect2).get_center())
 		_eq(str(hit.get("id", "")), "ending:return", "点中归还按钮")
+
+
+# --- 里程碑 54：结局演出页（第四阶段界面精修 · 上）---
+
+## 造出一份"已选归还"的 chosen（可附带关系分支），供演出页测试。
+func _d7_chosen(with_relations: bool) -> Dictionary:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var soul: SoulRecord = _d6_ready_soul()
+	FinalBattle.mark_won(soul)
+	if with_relations:
+		AnchorLine.set_affinity(soul, "crow", 60)
+		soul.known_runes.append("rune_dov_true")
+	EndingLine.resolve(soul, world, null, cfg, "return")
+	return EndingLine.briefing(soul, world, cfg).get("chosen", {}) as Dictionary
+
+
+## 视图模型：标题页 → 逐段后日谈 → 结局之后页；有关系再插一页关系页；页码钳制。
+func _test_d7_ending_view_pages() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var epilogue: Array = ContentLoader.get_mainline_ending("return").get("epilogue", [])
+	var vm: Dictionary = EndingViewModel.build(_d7_chosen(false), 0)
+	_eq(int(vm["pageCount"]), 1 + epilogue.size() + 1, "标题页 + 每段后日谈一页 + 结局之后页")
+	_eq(str((vm["pages"][0] as Dictionary)["kind"]), "title", "首页是标题")
+	_eq(str((vm["pages"][vm["pageCount"] - 1] as Dictionary)["kind"]), "after", "末页是结局之后")
+	_check(not bool(vm["canPrev"]), "首页不能上一页")
+	_check(bool(vm["canNext"]), "首页能下一页")
+	_eq(str(vm["label"]), "归还·秩序", "带着结局标题")
+	var last: Dictionary = EndingViewModel.build(_d7_chosen(false), 999)
+	_eq(int(last["page"]), int(vm["pageCount"]) - 1, "越界页码钳到末页")
+	_check(not bool(last["canNext"]), "末页不能下一页")
+	_check(bool(last["canPrev"]), "末页能上一页")
+	var vm_rel: Dictionary = EndingViewModel.build(_d7_chosen(true), 0)
+	var kinds: Array = []
+	for page in vm_rel["pages"]:
+		kinds.append(str((page as Dictionary).get("kind", "")))
+	_check(kinds.has("relations"), "有关系分支时插一页关系页")
+	_eq(int(EndingViewModel.build({}, 0)["pageCount"]), 0, "没有结局时页数为 0")
+
+
+## 演出面板按钮：空内容只留返回；有内容给上一页/下一页，首页上一页禁用、末页下一页禁用。
+func _test_d7_ending_panel_buttons() -> void:
+	var rect: Rect2 = Rect2(0.0, 0.0, 1248.0, 568.0)
+	var empty: Array = EndingPanel.buttons(rect, {})
+	_eq(empty.size(), 1, "空内容只摆返回")
+	_eq(str((empty[0] as Dictionary)["id"]), "back", "空内容那个按钮是返回")
+	var vm: Dictionary = EndingViewModel.build(_d7_chosen(false), 0)
+	var by_id: Dictionary = {}
+	for b in EndingPanel.buttons(rect, vm):
+		by_id[str((b as Dictionary)["id"])] = b
+	_check(by_id.has("prev") and by_id.has("next") and by_id.has("back"), "三键齐（返回 + 上一页 + 下一页）")
+	_check(not bool((by_id["prev"] as Dictionary)["enabled"]), "首页上一页禁用")
+	_check(bool((by_id["next"] as Dictionary)["enabled"]), "首页下一页可用")
+	var hit: Dictionary = EndingPanel.hit_test(vm, rect, ((by_id["next"] as Dictionary)["rect"] as Rect2).get_center())
+	_eq(str(hit.get("id", "")), "next", "点得中下一页")
+	var last: Dictionary = EndingViewModel.build(_d7_chosen(false), 999)
+	var last_by_id: Dictionary = {}
+	for b in EndingPanel.buttons(rect, last):
+		last_by_id[str((b as Dictionary)["id"])] = b
+	_check(not bool((last_by_id["next"] as Dictionary)["enabled"]), "末页下一页禁用")
+	_check(bool((last_by_id["prev"] as Dictionary)["enabled"]), "末页上一页可用")
+
+
+## 主线面板：已抉择后不再摆单个去向按钮，改摆「重温终局」。
+func _test_d7_mainline_recall_button() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var rect: Rect2 = Rect2(0.0, 0.0, 1200.0, 560.0)
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d7r"
+	var soul: SoulRecord = _d6_ready_soul()
+	FinalBattle.mark_won(soul)
+	EndingLine.resolve(soul, world, world.avatar, cfg, "return")
+	var ending: Dictionary = EndingLine.briefing(soul, world, cfg)
+	var view: Dictionary = MainlineViewModel.build(soul.main_quest_progress, cfg, {}, ending)
+	var recall: bool = false
+	var option_button: bool = false
+	for b in MainlinePanel.buttons(rect, view):
+		var bid: String = str((b as Dictionary)["id"])
+		if bid == "ending_recall":
+			recall = true
+		if bid.begins_with("ending:"):
+			option_button = true
+	_check(recall, "已抉择后摆出「重温终局」")
+	_check(not option_button, "已抉择后不再摆单个去向按钮")
+	_eq(str((MainlinePanel.buttons(rect, view)[0] as Dictionary)["id"]), "back", "返回仍在首位")
 

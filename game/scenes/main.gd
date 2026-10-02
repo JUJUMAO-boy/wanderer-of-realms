@@ -102,6 +102,7 @@ const VIEW_DUNGEON: int = 14
 const VIEW_MERCHANT: int = 15
 const VIEW_FAMILY: int = 16
 const VIEW_MAINLINE: int = 17
+const VIEW_ENDING: int = 18
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -125,6 +126,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_MERCHANT: "↑↓ 选货    回车 成交    Tab 换买/卖    ESC/T 离开",
 	VIEW_FAMILY: "ESC 或 T 返回地图    「居民」里向亲密之人求婚",
 	VIEW_MAINLINE: "ESC/T 或点「返回地图」    地图上按 L 随时翻开",
+	VIEW_ENDING: "←/↑ 上一页    →/↓/空格/回车 下一页    ESC 或「返回主线」退回主线面板",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -179,6 +181,8 @@ var _city_space: Dictionary = {}     ## { city_id, layout, player:Vector2i }
 var _city_space_view: Dictionary = {} ## CitySpaceViewModel 的成品
 var _family_view: Dictionary = {}     ## FamilyViewModel 的成品（A3）
 var _mainline_view: Dictionary = {}   ## MainlineViewModel 的成品（第四阶段 D1）
+var _ending_view: Dictionary = {}     ## EndingViewModel 的成品（第四阶段界面精修 · 上 / 里程碑 54）
+var _ending_page: int = 0             ## 结局演出页读到第几页（会话级、不落盘）
 
 # 终局战役（第四阶段 D5 / D-206~D-209）。会话级、不落盘——阶段推进只活在这一屏，
 # 达成标记落 _soul.main_quest_progress["finalWon"]（跨世保留，供 D6 分结局）。
@@ -709,6 +713,8 @@ func _refresh() -> void:
 			_refresh_family()
 		VIEW_MAINLINE:
 			_refresh_mainline()
+		VIEW_ENDING:
+			_refresh_ending()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -4510,6 +4516,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return MerchantPanel.hit_test(_merchant_view, _content_rect(), point)
 		VIEW_MAINLINE:
 			return MainlinePanel.hit_test(_mainline_view, _content_rect(), point)
+		VIEW_ENDING:
+			return EndingPanel.hit_test(_ending_view, PANEL_RECT, point)
 	return {}
 
 
@@ -4575,6 +4583,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_family_click(event.position)
 		VIEW_MAINLINE:
 			_mainline_click(event.position)
+		VIEW_ENDING:
+			_ending_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -6242,6 +6252,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_family_input(key_event)
 		VIEW_MAINLINE:
 			_mainline_input(key_event)
+		VIEW_ENDING:
+			_ending_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -6765,11 +6777,15 @@ func _mainline_input(key_event: InputEventKey) -> void:
 			_switch_view(VIEW_MAP)
 
 
-## 回车/空格的默认动作：终局门槛到了就先做（推荐的那一个）抉择，否则发起总攻。
+## 回车/空格的默认动作：已抉择就重温终局演出；终局门槛到了就先做（推荐的那一个）抉择，
+## 否则发起总攻。
 func _mainline_confirm() -> void:
 	var ending: Dictionary = _mainline_view.get("ending", {})
 	var chosen: Dictionary = ending.get("chosen", {}) if ending.get("chosen", null) is Dictionary else {}
-	if chosen.is_empty() and bool(ending.get("ready", false)):
+	if not chosen.is_empty():
+		_open_ending_view()
+		return
+	if bool(ending.get("ready", false)):
 		var pick: String = ""
 		for option in ending.get("options", []):
 			var row: Dictionary = option
@@ -6799,9 +6815,11 @@ func _mainline_click(point: Vector2) -> void:
 			_switch_view(VIEW_MAP)
 		"final":
 			_start_final_battle()
+		"ending_recall":
+			_open_ending_view()
 
 
-## 做出终局抉择（第四阶段 D6）：落账 + 世界标记 + 记史书，面板随即铺开后日谈。
+## 做出终局抉择（第四阶段 D6）：落账 + 世界标记 + 记史书，随即进入结局演出页。
 func _choose_ending(ending_id: String) -> void:
 	if _soul == null or _world == null or _world.avatar == null:
 		return
@@ -6817,7 +6835,58 @@ func _choose_ending(ending_id: String) -> void:
 		_sim.chronicle.record(_world, EndingLine.chronicle_entry(
 			_world, EndingLine.find(cfg, ending_id), month, _sim.chronicle.year_label(month)))
 	_status.text = "%s。%s" % [str(result.get("label", "")), str(result.get("worldAfter", ""))]
-	_refresh_mainline()
+	_open_ending_view()
+
+
+# --- 结局演出页（第四阶段界面精修 · 上 / 里程碑 54）---
+# 后日谈与关系分支字多，独立成一屏一页的演出：标题页 → 逐段后日谈 → 关系页 → 结局之后页。
+
+## 打开结局演出页：从头读起。
+func _open_ending_view() -> void:
+	_ending_page = 0
+	_switch_view(VIEW_ENDING)
+
+
+func _refresh_ending() -> void:
+	if _soul == null or _world == null:
+		_ending_view = {}
+		return
+	var brief: Dictionary = EndingLine.briefing(_soul, _world, ContentLoader.get_mainline_config())
+	var chosen: Dictionary = brief.get("chosen", {}) if brief.get("chosen", null) is Dictionary else {}
+	_ending_view = EndingViewModel.build(chosen, _ending_page)
+	_ending_page = int(_ending_view.get("page", 0))
+
+
+func _ending_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_LEFT, KEY_UP, KEY_A, KEY_W:
+			_ending_goto(_ending_page - 1)
+		KEY_RIGHT, KEY_DOWN, KEY_S, KEY_D, KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
+			_ending_goto(_ending_page + 1)
+		KEY_ESCAPE, KEY_T, KEY_L:
+			_switch_view(VIEW_MAINLINE)
+
+
+func _ending_click(point: Vector2) -> void:
+	var hit: Dictionary = EndingPanel.hit_test(_ending_view, PANEL_RECT, point)
+	if str(hit.get("kind", "")) != "button":
+		return
+	match str(hit.get("id", "")):
+		"back":
+			_switch_view(VIEW_MAINLINE)
+		"prev":
+			_ending_goto(_ending_page - 1)
+		"next":
+			_ending_goto(_ending_page + 1)
+
+
+## 翻到某一页（钳在页范围内）。
+func _ending_goto(page: int) -> void:
+	var count: int = int(_ending_view.get("pageCount", 0))
+	if count <= 0:
+		return
+	_ending_page = clampi(page, 0, count - 1)
+	_refresh_ending()
 	_refresh()
 
 
@@ -7212,6 +7281,8 @@ func _draw() -> void:
 			FamilyPanel.draw(self, _family_view, _content_rect(), _hover)
 		VIEW_MAINLINE:
 			MainlinePanel.draw(self, _mainline_view, _content_rect(), _hover)
+		VIEW_ENDING:
+			EndingPanel.draw(self, _ending_view, PANEL_RECT, _hover)
 		_:
 			_draw_map()
 	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。

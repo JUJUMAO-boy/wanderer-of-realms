@@ -38,7 +38,7 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 
 
 ## 按钮行。返回按钮恒在首位（index 0），门槛过了（view.battle.available）再追加「发起总攻」，
-## 终局门槛到了（view.ending.ready）再逐个追加可选去向（尚未做出终结性抉择时）。
+## 终局门槛到了（view.ending.ready）再逐个追加可选去向；已抉择后改为一个「重温终局」。
 static func buttons(rect: Rect2, view: Dictionary = {}) -> Array:
 	var list: Array = [{"id": "back", "label": "返回地图"}]
 	var battle: Dictionary = view.get("battle", {})
@@ -46,7 +46,9 @@ static func buttons(rect: Rect2, view: Dictionary = {}) -> Array:
 		list.append({"id": "final", "label": "发起总攻"})
 	var ending: Dictionary = view.get("ending", {})
 	var chosen: Dictionary = ending.get("chosen", {}) if ending.get("chosen", null) is Dictionary else {}
-	if bool(ending.get("ready", false)) and str(chosen.get("endingId", "")).is_empty():
+	if not str(chosen.get("endingId", "")).is_empty():
+		list.append({"id": "ending_recall", "label": "重温终局"})
+	elif bool(ending.get("ready", false)):
 		for option in ending.get("options", []):
 			if bool((option as Dictionary).get("available", false)):
 				list.append({
@@ -170,8 +172,9 @@ static func _draw_battle(canvas: CanvasItem, font: Font, view: Dictionary, pos: 
 	return y
 
 
-## 终局段（第四阶段 D6）：尚未抉择时摊开四个去向与推荐；已抉择则铺开后日谈正文，
-## 再把玩家确实走过的关系分支追加在末尾（剧本 12.5）。
+## 终局段（第四阶段 D6）：尚未抉择时摊开四个去向与推荐；已抉择只留一行摘要——
+## 后日谈正文与关系分支字多，改由独立的结局演出页（EndingPanel）翻页承担，
+## 免得把正文铺出面板底沿、读不全。
 static func _draw_ending(canvas: CanvasItem, font: Font, view: Dictionary, rect: Rect2, pos: Vector2) -> void:
 	var ending: Dictionary = view.get("ending", {})
 	if ending.is_empty() or not bool(ending.get("ready", false)):
@@ -180,40 +183,23 @@ static func _draw_ending(canvas: CanvasItem, font: Font, view: Dictionary, rect:
 	var y: float = pos.y
 	var wrap: float = maxf(240.0, rect.size.x - MARGIN * 2.0 - 16.0)
 	var chosen: Dictionary = ending.get("chosen", {}) if ending.get("chosen", null) is Dictionary else {}
-	if chosen.is_empty():
-		_text(canvas, font, Vector2(x, y), "终局·轮核之前，该你选了。", COLOR_ACCENT, 15.0)
-		y += LINE_HEIGHT * 1.2
-		for option in ending.get("options", []):
-			var row: Dictionary = option
-			var available: bool = bool(row.get("available", false))
-			var mark: String = "◆" if bool(row.get("suggested", false)) else ("·" if available else "×")
-			var color: Color = COLOR_ACCENT if available else COLOR_DIM
-			var line: String = "%s %s　—　%s" % [mark, str(row.get("label", "")), str(row.get("note", ""))]
-			if not available:
-				line += "（%s）" % str(row.get("reason", ""))
-			y += _wrap(canvas, font, Vector2(x, y), line, wrap, color, 14.0) + 4.0
-		_text(canvas, font, Vector2(x, y), "点上方按钮做出抉择。", COLOR_DIM, 13.0)
-		return
-
-	_text(canvas, font, Vector2(x, y), "终局·%s" % str(chosen.get("label", "")), COLOR_ACCENT, 15.0)
-	y += LINE_HEIGHT * 1.2
-	for para in chosen.get("epilogue", []):
-		y += _wrap(canvas, font, Vector2(x, y), str(para), wrap, COLOR_TEXT, 14.0) + 6.0
-	var relations: Array = chosen.get("relationLines", [])
-	if not relations.is_empty():
-		y += 4.0
-		_text(canvas, font, Vector2(x, y), "—— 你走过的关系 ——", COLOR_DIM, 13.0)
+	if not chosen.is_empty():
+		_text(canvas, font, Vector2(x, y), "终局·%s" % str(chosen.get("label", "")), COLOR_ACCENT, 15.0)
 		y += LINE_HEIGHT
-		for rel in relations:
-			var row: Dictionary = rel
-			_text(canvas, font, Vector2(x, y), str(row.get("label", "")), COLOR_ACCENT, 14.0)
-			y += LINE_HEIGHT
-			for line in row.get("lines", []):
-				y += _wrap(canvas, font, Vector2(x, y), str(line), wrap, COLOR_TEXT, 14.0) + 4.0
-	var after: String = str(chosen.get("worldAfter", ""))
-	if not after.is_empty():
-		y += 4.0
-		y += _wrap(canvas, font, Vector2(x, y), "结局之后：" + after, wrap, COLOR_DIM, 13.0) + 4.0
+		y += _wrap(canvas, font, Vector2(x, y), str(chosen.get("note", "")), wrap, COLOR_TEXT, 14.0) + 4.0
+		_text(canvas, font, Vector2(x, y), "后日谈与关系分支留在「重温终局」里。", COLOR_DIM, 13.0)
+		return
+	_text(canvas, font, Vector2(x, y), "终局·轮核之前，该你选了。", COLOR_ACCENT, 15.0)
+	y += LINE_HEIGHT * 1.2
+	for option in ending.get("options", []):
+		var row: Dictionary = option
+		var available: bool = bool(row.get("available", false))
+		var mark: String = "◆" if bool(row.get("suggested", false)) else ("·" if available else "×")
+		var color: Color = COLOR_ACCENT if available else COLOR_DIM
+		var line: String = "%s %s　—　%s" % [mark, str(row.get("label", "")), str(row.get("note", ""))]
+		if not available:
+			line += "（%s）" % str(row.get("reason", ""))
+		y += _wrap(canvas, font, Vector2(x, y), line, wrap, color, 14.0) + 3.0
 
 
 ## 画一段会自动折行的正文，返回它占的高度（供面板往下排版）。
