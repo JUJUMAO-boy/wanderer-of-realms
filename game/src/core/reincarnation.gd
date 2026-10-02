@@ -364,6 +364,13 @@ func settle_death(soul: SoulRecord, avatar: PlayerAvatar, cause: String, month: 
 	soul.luck_carry = clampi(soul.luck_carry + avatar.luck, -100, 100)
 	soul.dragonization_carry = avatar.dragonization
 
+	# 主线碎片跨世继承（D1 / D-196，剧本 13 节）：碎片与灵魂绑定、恒不丢；线索需 SOU
+	# 达标（clueSoulThreshold）才完整保留，否则按 clueLossRatio 丢掉最近学到的一部分。
+	# 幕次不回退（真相学会了不会忘）——所以这里只动线索，不动 main_quest_progress.act。
+	var mainline_cfg: Dictionary = ContentLoader.get_mainline_config()
+	if not mainline_cfg.is_empty():
+		ShardLine.inheritance_on_death(soul.main_quest_progress, sou_value, mainline_cfg)
+
 	# M35 代神圣物跨世（D-152）：接过的神柱圣物由灵魂看管，换体不清零——
 	# 这正是「背柱投柱时的逐件咬」与「跨世唯一硬通货」的落点。并集合并去重。
 	for god_id in avatar.accepted_relics:

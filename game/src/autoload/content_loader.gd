@@ -31,6 +31,7 @@ const GOD_FILE: String = "gods.json"
 const RUMOR_FILE: String = "rumors.json"
 const WEATHER_FILE: String = "weather.json"
 const COMER_FILE: String = "comers.json"
+const MAINLINE_FILE: String = "mainline.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -113,6 +114,7 @@ var _gods: Dictionary = {}
 var _weather: Dictionary = {}
 var _rumors: Dictionary = {}
 var _comers: Dictionary = {}
+var _mainline: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -299,6 +301,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("乱入者配置为空或读取失败")
 
+	var mainline_root: Dictionary = _read_json(MAINLINE_FILE, "主线碎片配置")
+	if not mainline_root.is_empty():
+		_validate_mainline(mainline_root)
+		_mainline = mainline_root
+	else:
+		_errors.append("主线碎片配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -323,6 +332,7 @@ func load_all() -> Dictionary:
 			"personalities": _personalities.get("personalities", []).size(),
 			"faiths": _personalities.get("faiths", []).size(),
 			"comers": _comers.get("comers", []).size(),
+			"shards": _mainline.get("shards", []).size(),
 		},
 		"errors": _errors.duplicate(),
 		"warnings": _warnings.duplicate(),
@@ -924,6 +934,42 @@ func get_comer(comer_id: String) -> Dictionary:
 	return {}
 
 
+## 主线碎片配置（第四阶段 D1 / D-194~D-196）。返回 mainline.json 的根对象。
+func get_mainline_config() -> Dictionary:
+	return _mainline
+
+
+## 七片碎片。ShardLine 规则层与主线面板读取。
+func get_shards() -> Array:
+	return _mainline.get("shards", [])
+
+
+## 按 shardId 取一片碎片；查不到给空字典。
+func get_shard(shard_id: String) -> Dictionary:
+	for entry in get_shards():
+		if str(entry.get("shardId", "")) == shard_id:
+			return entry
+	return {}
+
+
+## 全部线索定义。
+func get_mainline_clues() -> Array:
+	return _mainline.get("clues", [])
+
+
+## 按 clueId 取一条线索；查不到给空字典。
+func get_mainline_clue(clue_id: String) -> Dictionary:
+	for entry in get_mainline_clues():
+		if str(entry.get("clueId", "")) == clue_id:
+			return entry
+	return {}
+
+
+## 四幕定义（有序）。
+func get_mainline_acts() -> Array:
+	return _mainline.get("acts", [])
+
+
 ## 人格池校验（M18）。查的都是会"静默失效"的错：人格 id 重复、谈话文案缺项、
 ## 送礼口味引用了不存在的物品类别（category 写错 → 永远是"中立"）、语气档位名
 ## 与好感档位对不上。信仰更简单，只查 id 唯一。
@@ -1183,6 +1229,122 @@ func _validate_comers(root: Dictionary) -> void:
 					or (reply is Array and not (reply as Array).is_empty())
 				if not reply_ok:
 					_errors.append("好感事件缺少非空 reply（字符串或数组均可）：%s" % epath)
+
+
+## 主线碎片配置校验（第四阶段 D1 / D-194~D-196）。
+##
+## 查的都是会"静默失效"的错：碎片/线索/幕次 id 重复（收集或揭示落错账）、幕次引用了
+## 不存在的线索（那一幕永远推不上去）、碎片关联城写在 cities.json 之外（去处永远找不到）、
+## 幕次门槛没有非递减（"够得着的幕"判定会取到错的档）。
+func _validate_mainline(root: Dictionary) -> void:
+	var shards: Variant = root.get("shards", null)
+	if not (shards is Array) or (shards as Array).is_empty():
+		_errors.append("主线配置缺少非空的 shards 数组")
+	else:
+		var city_ids: Dictionary = {}
+		for city in get_city_configs():
+			city_ids[str(city.get("cityId", ""))] = true
+		var seen_s: Dictionary = {}
+		for i in range((shards as Array).size()):
+			var spath: String = "shards[%d]" % i
+			var sh: Variant = (shards as Array)[i]
+			if not (sh is Dictionary):
+				_errors.append("碎片 %s 必须是对象" % spath)
+				continue
+			var shard_cfg: Dictionary = sh
+			var sid: String = str(shard_cfg.get("shardId", ""))
+			if sid.is_empty():
+				_errors.append("碎片缺少 shardId：%s" % spath)
+			elif seen_s.has(sid):
+				_errors.append("碎片 shardId 重复：%s" % sid)
+			else:
+				seen_s[sid] = true
+				spath = "shards[%s]" % sid
+			if str(shard_cfg.get("name", "")).is_empty():
+				_errors.append("碎片缺少 name：%s" % spath)
+			var cid: String = str(shard_cfg.get("cityId", ""))
+			if not cid.is_empty() and not city_ids.has(cid):
+				_errors.append("碎片关联城不在 cities.json：%s.cityId=%s" % [spath, cid])
+
+	var clues: Variant = root.get("clues", null)
+	var clue_ids: Dictionary = {}
+	if not (clues is Array) or (clues as Array).is_empty():
+		_errors.append("主线配置缺少非空的 clues 数组")
+	else:
+		for i in range((clues as Array).size()):
+			var cp: Variant = (clues as Array)[i]
+			if not (cp is Dictionary):
+				_errors.append("线索 clues[%d] 必须是对象" % i)
+				continue
+			var clue_id: String = str((cp as Dictionary).get("clueId", ""))
+			if clue_id.is_empty():
+				_errors.append("线索缺少 clueId：clues[%d]" % i)
+			elif clue_ids.has(clue_id):
+				_errors.append("线索 clueId 重复：%s" % clue_id)
+			else:
+				clue_ids[clue_id] = true
+
+	var acts: Variant = root.get("acts", null)
+	if not (acts is Array) or (acts as Array).is_empty():
+		_errors.append("主线配置缺少非空的 acts 数组")
+	else:
+		var seen_a: Dictionary = {}
+		var last_need: int = -1
+		for i in range((acts as Array).size()):
+			var ap: Variant = (acts as Array)[i]
+			if not (ap is Dictionary):
+				_errors.append("幕次 acts[%d] 必须是对象" % i)
+				continue
+			var act_cfg: Dictionary = ap
+			var aid: String = str(act_cfg.get("actId", ""))
+			var apath: String = "acts[%d]" % i
+			if aid.is_empty():
+				_errors.append("幕次缺少 actId：%s" % apath)
+			elif seen_a.has(aid):
+				_errors.append("幕次 actId 重复：%s" % aid)
+			else:
+				seen_a[aid] = true
+				apath = "acts[%s]" % aid
+			var need: int = int(act_cfg.get("requiresShards", -1))
+			if need < 0:
+				_errors.append("幕次 requiresShards 不能为负：%s" % apath)
+			elif need < last_need:
+				_errors.append("幕次 requiresShards 必须非递减：%s（%d < 前一幕 %d）" % [apath, need, last_need])
+			last_need = maxi(last_need, need)
+			var need_clues: Variant = act_cfg.get("requiresClues", [])
+			if need_clues is Array:
+				for need_clue in (need_clues as Array):
+					if not clue_ids.has(str(need_clue)):
+						_errors.append("幕次引用了不存在的线索：%s.requiresClues=%s" % [apath, need_clue])
+
+	var endings: Variant = root.get("endings", null)
+	if not (endings is Array) or (endings as Array).is_empty():
+		_errors.append("主线配置缺少非空的 endings 数组")
+	else:
+		var seen_e: Dictionary = {}
+		for i in range((endings as Array).size()):
+			var ep: Variant = (endings as Array)[i]
+			if not (ep is Dictionary):
+				_errors.append("结局 endings[%d] 必须是对象" % i)
+				continue
+			var eid: String = str((ep as Dictionary).get("endingId", ""))
+			if eid.is_empty():
+				_errors.append("结局缺少 endingId：endings[%d]" % i)
+			elif seen_e.has(eid):
+				_errors.append("结局 endingId 重复：%s" % eid)
+			else:
+				seen_e[eid] = true
+
+	var inh: Variant = root.get("inheritance", null)
+	if not (inh is Dictionary):
+		_errors.append("主线配置缺少 inheritance 段")
+	else:
+		var thr: int = int((inh as Dictionary).get("clueSoulThreshold", -1))
+		if thr < 0 or thr > 100:
+			_errors.append("inheritance.clueSoulThreshold 越界 [0,100]：%d" % thr)
+		var ratio: float = float((inh as Dictionary).get("clueLossRatio", -1.0))
+		if ratio < 0.0 or ratio > 1.0:
+			_errors.append("inheritance.clueLossRatio 越界 [0,1]：%f" % ratio)
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。

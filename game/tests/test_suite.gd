@@ -340,6 +340,15 @@ func run_all() -> int:
 	_test_c1_war_blocks_and_breaks_routes()
 	_test_c1_war_entry_chronicle_and_style()
 	_test_c1_city_view_ambition_diplomacy()
+	print("=== D1 主线碎片系统（第四阶段 / D-194）===")
+	_test_d1_mainline_data_wellformed()
+	_test_d1_shard_collect_idempotent()
+	_test_d1_dual_condition_advance()
+	_test_d1_inheritance_on_death()
+	_test_d1_next_requirement_and_complete()
+	_test_d1_chronicle_entry_and_style()
+	_test_d1_view_model_and_panel()
+	_test_d1_settle_death_keeps_shards()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -7763,7 +7772,7 @@ func _test_walk_path_grid() -> void:
 func _test_hud_nav_layout_hit() -> void:
 	var rect := Rect2(16.0, 48.0, 150.0, 568.0)
 	var items: Array = HudNav.layout(rect)
-	_eq(items.size(), 12, "导航侧栏有 12 个进入项")
+	_eq(items.size(), 13, "导航侧栏有 13 个进入项")
 	_eq(int(items[0]["view"]), HudNav.VIEW_MAP, "第一项是返回世界地图")
 	for i in range(items.size()):
 		var center: Vector2 = (items[i]["rect"] as Rect2).get_center()
@@ -10918,4 +10927,156 @@ func _test_c1_city_view_ambition_diplomacy() -> void:
 		if str(row.get("ambitionLabel", "")).is_empty():
 			all_tagged = false
 	_check(all_tagged, "列表每行带野心标签")
+
+
+# --- D1 主线碎片系统（第四阶段 / D-194~D-196）---
+
+## mainline.json 装载：七片碎片 / 八条线索 / 四幕 / 四结局，碎片所在城都在 cities.json。
+func _test_d1_mainline_data_wellformed() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	_check(not cfg.is_empty(), "主线数据已装载")
+	_eq(ContentLoader.get_shards().size(), 7, "七片碎片")
+	_eq(ContentLoader.get_mainline_clues().size(), 8, "八条线索")
+	_eq(ContentLoader.get_mainline_acts().size(), 4, "四幕")
+	_eq((cfg.get("endings", []) as Array).size(), 4, "四结局")
+	var ids: Dictionary = {}
+	var city_ok: bool = true
+	for shard in ContentLoader.get_shards():
+		var sid: String = str((shard as Dictionary).get("shardId", ""))
+		ids[sid] = true
+		var cid: String = str((shard as Dictionary).get("cityId", ""))
+		if not cid.is_empty() and ContentLoader.get_city_config(cid).is_empty():
+			city_ok = false
+		_eq(str(ContentLoader.get_shard(sid).get("shardId", "")), sid, "按 id 取回碎片 %s" % sid)
+	_eq(ids.size(), 7, "碎片 id 唯一")
+	_check(city_ok, "碎片所在城都在 cities.json")
+	_check(not ContentLoader.get_mainline_clue("clue_echo").is_empty(), "线索 clue_echo 可取回")
+
+
+## 碎片收集幂等：同一片收两次，第二次 already=true，计数不变；未知名不落账。
+func _test_d1_shard_collect_idempotent() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	var first: Dictionary = ShardLine.collect_shard(progress, "shard_fire", cfg)
+	_check(bool(first.get("ok", false)), "首次收集成功")
+	_eq(ShardLine.collected_count(progress), 1, "收集后计数为 1")
+	var again: Dictionary = ShardLine.collect_shard(progress, "shard_fire", cfg)
+	_eq(bool(again.get("ok", true)), false, "重复收集 ok=false")
+	_check(bool(again.get("already", false)), "重复收集标记 already")
+	_eq(ShardLine.collected_count(progress), 1, "重复收集计数不变")
+	var bogus: Dictionary = ShardLine.collect_shard(progress, "shard_nope", cfg)
+	_check(not bool(bogus.get("ok", false)), "未知名碎片不落账")
+
+
+## 双条件推进：光集碎片不进幕，得配上关键揭示动作；反之亦然。
+func _test_d1_dual_condition_advance() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	_eq(ShardLine.current_act(progress), ShardLine.ACT_ECHO, "初始在第一幕·回声")
+	ShardLine.collect_shard(progress, "shard_fire", cfg)
+	_eq(ShardLine.current_act(progress), ShardLine.ACT_ECHO, "只集碎片、无线索→不进幕")
+	var r: Dictionary = ShardLine.reveal_clue(progress, "clue_echo", cfg)
+	_check(bool(r.get("advanced", false)), "双条件满足即推进")
+	_eq(ShardLine.current_act(progress), ShardLine.ACT_SHARDS, "进到第二幕·碎片")
+	ShardLine.reveal_clue(progress, "clue_identity", cfg)
+	_eq(ShardLine.current_act(progress), ShardLine.ACT_SHARDS, "线索齐但碎片不够→不进第三幕")
+	for sid in ["shard_water", "shard_wind", "shard_earth"]:
+		ShardLine.collect_shard(progress, str(sid), cfg)
+	_eq(ShardLine.current_act(progress), ShardLine.ACT_CYCLE, "4 片 + clue_identity → 第三幕·轮回")
+
+
+## 跨世继承：碎片恒不丢；线索在 SOU 低于门槛时按比例丢最近的一部分；幕次不回退。
+func _test_d1_inheritance_on_death() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	for sid in ["shard_fire", "shard_water", "shard_wind"]:
+		ShardLine.collect_shard(progress, str(sid), cfg)
+	for cid in ["clue_echo", "clue_varok", "clue_memory", "clue_voice"]:
+		ShardLine.reveal_clue(progress, str(cid), cfg)
+	var act_before: String = ShardLine.current_act(progress)
+	var low: Dictionary = ShardLine.inheritance_on_death(progress, 10, cfg)
+	_eq((low["cluesLost"] as Array).size(), 2, "低 SOU 丢一半线索")
+	_eq(ShardLine.collected_count(progress), 3, "碎片恒不丢")
+	_eq((progress["clues"] as Array).size(), 2, "线索剩两条")
+	_check(not ShardLine.has_clue(progress, "clue_voice"), "最近学的 clue_voice 先丢")
+	_check(ShardLine.has_clue(progress, "clue_echo"), "最早的 clue_echo 留下")
+	_eq(ShardLine.current_act(progress), act_before, "幕次不回退")
+	var high: Dictionary = ShardLine.inheritance_on_death(progress, 80, cfg)
+	_eq((high["cluesLost"] as Array).size(), 0, "高 SOU 无线索损失")
+
+
+## 下一道门槛描述与「走完」判定。
+func _test_d1_next_requirement_and_complete() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	var nxt: Dictionary = ShardLine.next_requirement(progress, cfg)
+	_eq(str(nxt["actId"]), ShardLine.ACT_SHARDS, "初始下一幕是第二幕")
+	_eq(int(nxt["needShards"]), 1, "第二幕需 1 片")
+	_eq(int(nxt["missingShards"]), 1, "还缺 1 片")
+	_eq((nxt["needClues"] as Array).size(), 1, "第二幕需 1 条线索")
+	for shard in ContentLoader.get_shards():
+		ShardLine.collect_shard(progress, str((shard as Dictionary)["shardId"]), cfg)
+	for clue in ContentLoader.get_mainline_clues():
+		ShardLine.reveal_clue(progress, str((clue as Dictionary)["clueId"]), cfg)
+	_eq(ShardLine.current_act(progress), ShardLine.ACT_CHOICE, "全收进第四幕·抉择")
+	_check(ShardLine.is_complete(progress, cfg), "七片归位即走完")
+	_check(bool(ShardLine.next_requirement(progress, cfg).get("done", false)), "走完后下一门槛 done")
+
+
+## 主线史书条目：kind/权重达标，文案过 A1 去套路筛；史书角标为「主线」。
+func _test_d1_chronicle_entry_and_style() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var se: Dictionary = ShardLine.shard_entry(world, "shard_fire", 12, "第 2 年")
+	_eq(str(se["kind"]), Chronicle.KIND_MAINLINE, "碎片条目 kind 正确")
+	_check(int(se["weight"]) >= Chronicle.DEFAULT_MIN_WEIGHT, "碎片权重达标进史书")
+	var ae: Dictionary = ShardLine.act_entry(world, ShardLine.ACT_SHARDS, 12, "第 2 年")
+	_eq(str(ae["kind"]), Chronicle.KIND_MAINLINE, "幕次条目 kind 正确")
+	_check(int(ae["weight"]) >= Chronicle.DEFAULT_MIN_WEIGHT, "幕次权重达标进史书")
+	var audit: Dictionary = MenuStyle.audit(
+		str(se["title"]) + "\n" + str(se["detail"]) + "\n" + str(ae["title"]) + "\n" + str(ae["detail"]), 40)
+	_check((audit["flags"] as Array).is_empty(), "主线文案无套路腔 flag")
+	_eq(ChronicleViewModel.kind_label(Chronicle.KIND_MAINLINE), "主线", "史书角标为主线")
+
+
+## 面板视图模型与命中测试：幕次/碎片/线索装配正确，返回按钮可点。
+func _test_d1_view_model_and_panel() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	ShardLine.collect_shard(progress, "shard_fire", cfg)
+	var view: Dictionary = MainlineViewModel.build(progress, cfg)
+	_eq(str(view["actId"]), ShardLine.ACT_ECHO, "只集碎片时当前幕仍是回声")
+	_eq((view["shards"] as Array).size(), 7, "面板列七片碎片")
+	_eq(int(view["collected"]), 1, "面板已集计数为 1")
+	_eq((view["clues"] as Array).size(), 8, "面板列八条线索")
+	var got_fire: bool = false
+	for shard in view["shards"]:
+		if str(shard["shardId"]) == "shard_fire":
+			got_fire = bool(shard["collected"])
+	_check(got_fire, "火之碎片在面板上标为已集")
+	var rect: Rect2 = Rect2(0.0, 0.0, 1200.0, 560.0)
+	var btn: Dictionary = (MainlinePanel.buttons(rect) as Array)[0]
+	var center: Vector2 = (btn["rect"] as Rect2).get_center()
+	var hit: Dictionary = MainlinePanel.hit_test(view, rect, center)
+	_eq(str(hit.get("id", "")), "back", "点返回按钮命中 back")
+
+
+## 转生结算接线：濒死 SOU 高时线索完整保留、碎片恒在（D-196 真路径）。
+func _test_d1_settle_death_keeps_shards() -> void:
+	var reinc: Reincarnation = _new_reincarnation(11)
+	var soul := SoulRecord.new()
+	soul.soul_id = "soul-mainline"
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var progress: Dictionary = ShardLine.progress_template()
+	ShardLine.collect_shard(progress, "shard_fire", cfg)
+	ShardLine.collect_shard(progress, "shard_water", cfg)
+	ShardLine.reveal_clue(progress, "clue_echo", cfg)
+	soul.main_quest_progress = progress
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-mainline"
+	avatar.set_attribute(PlayerAvatar.ATTR_SOUL, 80)
+	reinc.settle_death(soul, avatar, Reincarnation.CAUSE_NATURAL, 24)
+	_eq(ShardLine.collected_count(soul.main_quest_progress), 2, "转生后碎片不丢")
+	_check(ShardLine.has_clue(soul.main_quest_progress, "clue_echo"), "高 SOU 线索完整保留")
+	_eq(ShardLine.current_act(soul.main_quest_progress), ShardLine.ACT_SHARDS, "转生后幕次保持")
 

@@ -16,6 +16,7 @@ const KIND_SOUL: String = "soul"
 const KIND_HIRE: String = "hire"     ## NPC雇佣为随从（M18）
 const KIND_FALLEN: String = "fallen" ## 随从战殁/解约（M18）
 const KIND_WAR: String = "war"       ## 城际开战（第三阶段 C1）
+const KIND_MAINLINE: String = "mainline" ## 主线碎片推进（第四阶段 D1）
 
 const DEFAULT_MIN_WEIGHT: int = 250
 const DEFAULT_MAX_ENTRIES: int = 400

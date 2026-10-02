@@ -101,6 +101,7 @@ const VIEW_CITY_SPACE: int = 13
 const VIEW_DUNGEON: int = 14
 const VIEW_MERCHANT: int = 15
 const VIEW_FAMILY: int = 16
+const VIEW_MAINLINE: int = 17
 
 ## 状态行左边的键位参考。按视图给一份，免得切换视图后提示还停在上一屏。
 ## 八个视图都能用鼠标，但键位仍然写全——两套输入并存时，键位是"操作全集"，
@@ -123,6 +124,7 @@ const VIEW_HINTS: Dictionary = {
 	VIEW_DUNGEON: "方向键/WASD 或点格 行走    走到敌人旁按回车 交战    踩宝箱 拾取    到楼梯按回车 下潜    ESC/右下角 离开",
 	VIEW_MERCHANT: "↑↓ 选货    回车 成交    Tab 换买/卖    ESC/T 离开",
 	VIEW_FAMILY: "ESC 或 T 返回地图    「居民」里向亲密之人求婚",
+	VIEW_MAINLINE: "ESC/T 或点「返回地图」    地图上按 L 随时翻开",
 }
 
 ## 训练战里最多拉几个居民当对手。取 2 是为了让"多对多"的回合顺序
@@ -176,6 +178,7 @@ var _npc_view: Dictionary = {}       ## NpcInteractionViewModel 的成品（M18�
 var _city_space: Dictionary = {}     ## { city_id, layout, player:Vector2i }
 var _city_space_view: Dictionary = {} ## CitySpaceViewModel 的成品
 var _family_view: Dictionary = {}     ## FamilyViewModel 的成品（A3）
+var _mainline_view: Dictionary = {}   ## MainlineViewModel 的成品（第四阶段 D1）
 var _notable: Array = []
 var _last_deltas: Dictionary = {}
 var _panel: Dictionary = {}
@@ -677,6 +680,8 @@ func _refresh() -> void:
 			_refresh_merchant()
 		VIEW_FAMILY:
 			_refresh_family()
+		VIEW_MAINLINE:
+			_refresh_mainline()
 		_:
 			_refresh_map_panel()
 	if _notable_label != null and _view == VIEW_MAP:
@@ -4018,6 +4023,8 @@ func _finish_varok(outcome: String, detail: String) -> void:
 	match outcome:
 		VarokTrial.OUTCOME_ALLIANCE:
 			notices.append({"month": month, "text": "你以凡人之躯通过瓦洛克的三幕试炼，与他结为盟友：习得龙语符文。"})
+			# 主线 D1：结盟即拾得火之碎片，并从瓦洛克口中听到「天坠的真相」与「世界的回声」。
+			_mainline_gain("shard_fire", ["clue_echo", "clue_varok"], month)
 		VarokTrial.OUTCOME_FAIL:
 			notices.append({"month": month, "text": "你在瓦洛克面前嘴硬到底，被古龙一击送出了冰川。"})
 		_:
@@ -4030,6 +4037,26 @@ func _finish_varok(outcome: String, detail: String) -> void:
 	_switch_view(VIEW_CITY_SPACE)
 	if not detail.is_empty():
 		_status.text = str(detail)
+
+
+## 主线收账：拾一片碎片、揭示若干线索，并把碎片拾得与幕次推进记进史书。
+## 已收过的不重复落账（ShardLine 幂等），因此重复结盟不会记两遍。
+func _mainline_gain(shard_id: String, clue_ids: Array, month: int) -> void:
+	if _soul == null or _world == null or _sim == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	if cfg.is_empty():
+		return
+	var year: String = _sim.chronicle.year_label(month)
+	var before_act: String = ShardLine.current_act(_soul.main_quest_progress)
+	var got: Dictionary = ShardLine.collect_shard(_soul.main_quest_progress, shard_id, cfg)
+	if bool(got.get("ok", false)):
+		_sim.chronicle.record(_world, ShardLine.shard_entry(_world, shard_id, month, year))
+	for clue_id in clue_ids:
+		ShardLine.reveal_clue(_soul.main_quest_progress, str(clue_id), cfg)
+	var after_act: String = ShardLine.current_act(_soul.main_quest_progress)
+	if after_act != before_act:
+		_sim.chronicle.record(_world, ShardLine.act_entry(_world, after_act, month, year))
 
 
 # --- 乱入者好感对话（B3 / D-187~D-188）---
@@ -4233,6 +4260,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 			return DungeonPanel.hit_test(_dungeon_view, _content_rect(), point)
 		VIEW_MERCHANT:
 			return MerchantPanel.hit_test(_merchant_view, _content_rect(), point)
+		VIEW_MAINLINE:
+			return MainlinePanel.hit_test(_mainline_view, _content_rect(), point)
 	return {}
 
 
@@ -4294,6 +4323,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 			_merchant_click(event.position)
 		VIEW_FAMILY:
 			_family_click(event.position)
+		VIEW_MAINLINE:
+			_mainline_click(event.position)
 		_:
 			_map_click(event.position)
 
@@ -5926,6 +5957,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_merchant_input(key_event)
 		VIEW_FAMILY:
 			_family_input(key_event)
+		VIEW_MAINLINE:
+			_mainline_input(key_event)
 		_:
 			_handle_map_input(key_event)
 
@@ -5967,6 +6000,8 @@ func _handle_map_input(key_event: InputEventKey) -> void:
 			_enter_event()
 		KEY_H:
 			_enter_history()
+		KEY_L:
+			_open_mainline()
 		KEY_R:
 			_enter_trade()
 		KEY_V:
@@ -6415,6 +6450,36 @@ func _family_click(point: Vector2) -> void:
 		_switch_view(VIEW_CITY)
 
 
+# --- 主线·永恒者灵魂碎片（第四阶段 D1 / D-194~D-196）---
+# 只读面板：幕次、七片碎片、线索、下一道门槛。进度在 _soul.main_quest_progress，
+# 随灵魂存档跨世携带。地图上按 L 随时翻开，也可从左侧导航进。
+
+func _open_mainline() -> void:
+	if _soul == null:
+		return
+	_switch_view(VIEW_MAINLINE)
+
+
+func _refresh_mainline() -> void:
+	if _soul == null:
+		_mainline_view = {}
+		return
+	_mainline_view = MainlineViewModel.build(
+		_soul.main_quest_progress, ContentLoader.get_mainline_config())
+
+
+func _mainline_input(key_event: InputEventKey) -> void:
+	match key_event.keycode:
+		KEY_ESCAPE, KEY_T, KEY_L:
+			_switch_view(VIEW_MAP)
+
+
+func _mainline_click(point: Vector2) -> void:
+	var hit: Dictionary = MainlinePanel.hit_test(_mainline_view, _content_rect(), point)
+	if str(hit.get("kind", "")) == "button" and str(hit.get("id", "")) == "back":
+		_switch_view(VIEW_MAP)
+
+
 func _npc_input(key_event: InputEventKey) -> void:
 	var actions: Array = _npc_view.get("actions", [])
 	if _npc_choose_item:
@@ -6678,6 +6743,8 @@ func _draw() -> void:
 			MerchantPanel.draw(self, _merchant_view, _content_rect(), _hover)
 		VIEW_FAMILY:
 			FamilyPanel.draw(self, _family_view, _content_rect(), _hover)
+		VIEW_MAINLINE:
+			MainlinePanel.draw(self, _mainline_view, _content_rect(), _hover)
 		_:
 			_draw_map()
 	# 二级面板在渲完自己之后，最上层叠一条左侧导航（M20 阶段一）。
@@ -6708,7 +6775,7 @@ func _is_secondary_view(view: int) -> bool:
 		or view == VIEW_QUEST or view == VIEW_EVENT or view == VIEW_AVATAR \
 		or view == VIEW_CRAFTING or view == VIEW_HISTORY or view == VIEW_NPC \
 		or view == VIEW_CITY_SPACE or view == VIEW_DUNGEON or view == VIEW_MERCHANT \
-		or view == VIEW_FAMILY
+		or view == VIEW_FAMILY or view == VIEW_MAINLINE
 
 
 ## 侧栏入口按下。所有入口共用切视图这一条路，「返回世界地图」（VIEW_MAP）也在列。

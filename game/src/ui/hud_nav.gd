@@ -25,6 +25,7 @@ const VIEW_HISTORY: int = 11
 const VIEW_NPC: int = 12
 const VIEW_CITY_SPACE: int = 13
 const VIEW_FAMILY: int = 16
+const VIEW_MAINLINE: int = 17
 
 ## 竖排项高与侧栏宽度。字号 14 的标签在 34px 行高里居中绰绰有余。
 const ITEM_HEIGHT: float = 34.0
@@ -46,6 +47,7 @@ static func entries() -> Array:
 		{"view": VIEW_NPC, "label": "居民"},
 		{"view": VIEW_CITY_SPACE, "label": "城内"},
 		{"view": VIEW_FAMILY, "label": "家族"},
+		{"view": VIEW_MAINLINE, "label": "主线"},
 	]
 
 

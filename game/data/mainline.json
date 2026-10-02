@@ -1,0 +1,39 @@
+{
+  "_comment": "永恒者灵魂碎片主线（第四阶段 D1 / D-194~D-196）。这条暗线横贯多世、可被选择是否深挖（剧本 1 节：不锁进程）。这里放两件数据：**七片碎片**（剧本 3 节表：元素/别称/所在地/关联城/关联锚点）与**四幕 + 线索**（剧本 5、6 节）。四幕推进按「已集碎片数 + 关键揭示动作」双条件（D-195），判定与跨世继承的规则在规则层 ShardLine 为单一来源。",
+  "shards": [
+    { "shardId": "shard_fire", "name": "火之碎片", "element": "fire", "aspect": "野心", "place": "龙骸冰川·龙墓", "cityId": "frostspeak_keep", "anchorNpcId": "varok", "note": "天坠那夜烧起来的第一簇火，至今还在龙墓底下不灭。" },
+    { "shardId": "shard_water", "name": "水之碎片", "element": "water", "aspect": "记忆", "place": "索恩港·远洋", "cityId": "port_thorne", "anchorNpcId": "elise", "note": "沉在航路最深处，水手说它会把淹过的人的名字一个个念出来。" },
+    { "shardId": "shard_wind", "name": "风之碎片", "element": "wind", "aspect": "声音", "place": "十字路", "cityId": "crossroad", "anchorNpcId": "collector", "note": "界缝漏出来的那阵风里夹着一段谁也没听过的话。" },
+    { "shardId": "shard_earth", "name": "土之碎片", "element": "earth", "aspect": "骸骨", "place": "铁锤堡·矿脉深处", "cityId": "hammerhold", "anchorNpcId": "", "note": "埋在矿脉最底下，压着它的是巨人的一根指骨。" },
+    { "shardId": "shard_light", "name": "光之碎片", "element": "light", "aspect": "执念", "place": "艾德兰·王座殿下", "cityId": "aedran", "anchorNpcId": "orta", "note": "旧帝国的王座下面压着一句没说完的话，光就是从缝里漏的。" },
+    { "shardId": "shard_dark", "name": "暗之碎片", "element": "dark", "aspect": "诱惑", "place": "赤沙·地下", "cityId": "red_sands", "anchorNpcId": "", "note": "深渊教团把它供在神龛里，日日对着一个空位磕头。" },
+    { "shardId": "shard_soul", "name": "魂之碎片", "element": "soul", "aspect": "核心", "place": "无固定地点（寄生轮回之轮）", "cityId": "", "anchorNpcId": "crow", "note": "七片的枢纽，没有形状，只在最靠近它的灵魂上留下执念。" }
+  ],
+  "clues": [
+    { "clueId": "clue_echo", "label": "世界的回声", "source": "第一幕", "text": "亡灵该走没走、界缝一年比一年松——世界在堵着一口气，却没人说得清堵在哪。" },
+    { "clueId": "clue_varok", "label": "天坠的真相", "source": "古龙瓦洛克", "text": "龙与巨人争世界的那个纪元，天空裂开过一次；瓦洛克是那场火里活下来的。" },
+    { "clueId": "clue_god_left", "label": "神为何离开", "source": "古树精欧尔塔", "text": "轮回之轮原本有意志。为了封住那道缝，它把自己散进了法则，从此只转、不再有'我'。" },
+    { "clueId": "clue_eternal_rite", "label": "永恒者仪式", "source": "返魂者伊莉丝", "text": "旧帝国末代皇帝怕死，更怕像神那样失去自我，于是去吞轮回之轮的力量——仪式在最后一刻崩了。" },
+    { "clueId": "clue_identity", "label": "你是谁", "source": "魂之碎片", "text": "你的灵魂被魂之碎片擦过，才记得前世。你一直走向碎片，是因为它在无意识地叫你。" },
+    { "clueId": "clue_grey", "label": "灰袍者的来历", "source": "第三幕", "text": "教团拜的那个'神'，其实是永恒者散不掉的执念；而灰袍者自己，就是它在凡世的投影。" },
+    { "clueId": "clue_memory", "label": "赎回的前世记忆", "source": "无貌者收债人", "text": "记忆可以赎，代价是替人背一笔说不清的债——收债人从不告诉你债主是谁。" },
+    { "clueId": "clue_voice", "label": "界缝里的声音", "source": "漂移者", "text": "穿过界缝的人偶尔带回同一句话，七个字，谁也没听全过。" }
+  ],
+  "acts": [
+    { "actId": "echo", "label": "第一幕·回声", "requiresShards": 0, "requiresClues": [] },
+    { "actId": "shards", "label": "第二幕·碎片", "requiresShards": 1, "requiresClues": ["clue_echo"] },
+    { "actId": "cycle", "label": "第三幕·轮回", "requiresShards": 4, "requiresClues": ["clue_identity"] },
+    { "actId": "choice", "label": "第四幕·抉择", "requiresShards": 7, "requiresClues": ["clue_grey"] }
+  ],
+  "endings": [
+    { "endingId": "return", "label": "归还·秩序", "note": "把碎片还回轮上，让那道缝自己长合。" },
+    { "endingId": "inherit", "label": "继承·轮回", "note": "接过神散去的位置，成为下一段法则。" },
+    { "endingId": "break", "label": "打破·自由", "note": "把轮砸了，让灵魂第一次不用被谁牵着走。" },
+    { "endingId": "turn", "label": "转身·自由", "note": "既不还也不接，带着碎片走你自己的路。" }
+  ],
+  "inheritance": {
+    "_comment": "跨世继承（剧本 13 节）：碎片与灵魂绑定、跨世不丢；线索需 SOU ≥ clueSoulThreshold 才完整保留，否则按 clueLossRatio 丢掉最近的一部分（越靠后的越留不住）。",
+    "clueSoulThreshold": 50,
+    "clueLossRatio": 0.5
+  }
+}
