@@ -6747,31 +6747,78 @@ func _refresh_mainline() -> void:
 	if _soul == null:
 		_mainline_view = {}
 		return
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
 	var battle: Dictionary = {}
+	var ending: Dictionary = {}
 	if _world != null and _world.avatar != null:
 		battle = FinalBattle.briefing(
 			_soul, _world, _world.avatar, ContentLoader.get_final_battle_config())
-	_mainline_view = MainlineViewModel.build(
-		_soul.main_quest_progress, ContentLoader.get_mainline_config(), battle)
+		ending = EndingLine.briefing(_soul, _world, cfg)
+	_mainline_view = MainlineViewModel.build(_soul.main_quest_progress, cfg, battle, ending)
 
 
 func _mainline_input(key_event: InputEventKey) -> void:
 	match key_event.keycode:
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
-			_mainline_start_final()
+			_mainline_confirm()
 		KEY_ESCAPE, KEY_T, KEY_L:
 			_switch_view(VIEW_MAP)
+
+
+## 回车/空格的默认动作：终局门槛到了就先做（推荐的那一个）抉择，否则发起总攻。
+func _mainline_confirm() -> void:
+	var ending: Dictionary = _mainline_view.get("ending", {})
+	var chosen: Dictionary = ending.get("chosen", {}) if ending.get("chosen", null) is Dictionary else {}
+	if chosen.is_empty() and bool(ending.get("ready", false)):
+		var pick: String = ""
+		for option in ending.get("options", []):
+			var row: Dictionary = option
+			if not bool(row.get("available", false)):
+				continue
+			if bool(row.get("suggested", false)):
+				pick = str(row.get("endingId", ""))
+				break
+			if pick.is_empty():
+				pick = str(row.get("endingId", ""))
+		if not pick.is_empty():
+			_choose_ending(pick)
+			return
+	_mainline_start_final()
 
 
 func _mainline_click(point: Vector2) -> void:
 	var hit: Dictionary = MainlinePanel.hit_test(_mainline_view, _content_rect(), point)
 	if str(hit.get("kind", "")) != "button":
 		return
-	match str(hit.get("id", "")):
+	var button_id: String = str(hit.get("id", ""))
+	if button_id.begins_with("ending:"):
+		_choose_ending(button_id.substr("ending:".length()))
+		return
+	match button_id:
 		"back":
 			_switch_view(VIEW_MAP)
 		"final":
 			_start_final_battle()
+
+
+## 做出终局抉择（第四阶段 D6）：落账 + 世界标记 + 记史书，面板随即铺开后日谈。
+func _choose_ending(ending_id: String) -> void:
+	if _soul == null or _world == null or _world.avatar == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var result: Dictionary = EndingLine.resolve(_soul, _world, _world.avatar, cfg, ending_id)
+	if not bool(result.get("ok", false)):
+		_status.text = str(result.get("error", "这个抉择现在做不了。"))
+		_refresh_mainline()
+		_refresh()
+		return
+	if _sim != null:
+		var month: int = Clock.total_months()
+		_sim.chronicle.record(_world, EndingLine.chronicle_entry(
+			_world, EndingLine.find(cfg, ending_id), month, _sim.chronicle.year_label(month)))
+	_status.text = "%s。%s" % [str(result.get("label", "")), str(result.get("worldAfter", ""))]
+	_refresh_mainline()
+	_refresh()
 
 
 ## 从地图/面板发起总攻：门槛过了就从简报直接进第一波。

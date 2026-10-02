@@ -348,6 +348,9 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("终局战役配置为空或读取失败")
 
+	# 结局后日谈的关系分支引锚点/乱入者，得等两者都装载完再查（此时才查得到）。
+	_validate_ending_relation_targets()
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -1094,6 +1097,20 @@ func get_mainline_acts() -> Array:
 	return _mainline.get("acts", [])
 
 
+## 四种结局（有序：归还 / 继承 / 打破 / 转身）。第四阶段 D6，规则层 EndingLine 与
+## 主线面板读取。
+func get_mainline_endings() -> Array:
+	return _mainline.get("endings", [])
+
+
+## 按 endingId 取一个结局；查不到给空字典。
+func get_mainline_ending(ending_id: String) -> Dictionary:
+	for entry in get_mainline_endings():
+		if str(entry.get("endingId", "")) == ending_id:
+			return entry
+	return {}
+
+
 ## 人格池校验（M18）。查的都是会"静默失效"的错：人格 id 重复、谈话文案缺项、
 ## 送礼口味引用了不存在的物品类别（category 写错 → 永远是"中立"）、语气档位名
 ## 与好感档位对不上。信仰更简单，只查 id 唯一。
@@ -1446,18 +1463,48 @@ func _validate_mainline(root: Dictionary) -> void:
 		_errors.append("主线配置缺少非空的 endings 数组")
 	else:
 		var seen_e: Dictionary = {}
+		var seen_flag: Dictionary = {}
+		var act_ids: Dictionary = {}
+		for act in root.get("acts", []):
+			if act is Dictionary:
+				act_ids[str((act as Dictionary).get("actId", ""))] = true
 		for i in range((endings as Array).size()):
+			var path: String = "endings[%d]" % i
 			var ep: Variant = (endings as Array)[i]
 			if not (ep is Dictionary):
-				_errors.append("结局 endings[%d] 必须是对象" % i)
+				_errors.append("结局 %s 必须是对象" % path)
 				continue
-			var eid: String = str((ep as Dictionary).get("endingId", ""))
+			var ending: Dictionary = ep
+			var eid: String = str(ending.get("endingId", ""))
 			if eid.is_empty():
-				_errors.append("结局缺少 endingId：endings[%d]" % i)
+				_errors.append("结局缺少 endingId：%s" % path)
 			elif seen_e.has(eid):
 				_errors.append("结局 endingId 重复：%s" % eid)
 			else:
 				seen_e[eid] = true
+				path = "endings[%s]" % eid
+			if str(ending.get("label", "")).is_empty():
+				_errors.append("结局缺少 label：%s" % path)
+			if str(ending.get("note", "")).is_empty():
+				_errors.append("结局缺少 note：%s" % path)
+			var kind: String = str(ending.get("kind", ""))
+			if not [EndingLine.KIND_ORDER, EndingLine.KIND_CYCLE, EndingLine.KIND_FREE].has(kind):
+				_errors.append("结局 kind 必须是 order/cycle/free：%s.kind = %s" % [path, kind])
+			var epilogue: Variant = ending.get("epilogue", null)
+			if not (epilogue is Array) or (epilogue as Array).is_empty():
+				_errors.append("结局缺少非空的 epilogue（后日谈正文）：%s" % path)
+			if str(ending.get("worldAfter", "")).is_empty():
+				_errors.append("结局缺少 worldAfter（结局后世界状态）：%s" % path)
+			var world_flag: String = str(ending.get("worldFlag", ""))
+			if world_flag.is_empty():
+				_errors.append("结局缺少 worldFlag：%s" % path)
+			elif seen_flag.has(world_flag):
+				_errors.append("结局 worldFlag 重复：%s" % world_flag)
+			else:
+				seen_flag[world_flag] = true
+			var need_act: String = str(ending.get("requiresAct", ""))
+			if not need_act.is_empty() and not act_ids.has(need_act):
+				_errors.append("结局引用了不存在的幕次：%s.requiresAct = %s" % [path, need_act])
 
 	var inh: Variant = root.get("inheritance", null)
 	if not (inh is Dictionary):
@@ -1469,6 +1516,75 @@ func _validate_mainline(root: Dictionary) -> void:
 		var ratio: float = float((inh as Dictionary).get("clueLossRatio", -1.0))
 		if ratio < 0.0 or ratio > 1.0:
 			_errors.append("inheritance.clueLossRatio 越界 [0,1]：%f" % ratio)
+
+
+## 结局的后日谈关系分支校验（第四阶段 D6 / D-213~D-215，剧本 12.5）。
+##
+## 每条关系分支要么引一位锚点、要么引一位乱入者、要么要一支符文——引错了它永远不显，
+## 也就等于这段专属后日谈白写。查的都是这类"静默失效"：relId 重复、lines 为空、
+## 引用了不存在的锚点/乱入者。
+func _validate_ending_relation_targets() -> void:
+	var anchor_ids: Dictionary = {}
+	for anchor in get_anchors():
+		anchor_ids[str(anchor.get("anchorId", ""))] = true
+	var comer_ids: Dictionary = {}
+	for comer in get_comers():
+		comer_ids[str(comer.get("comerId", ""))] = true
+	for entry in get_mainline_endings():
+		if not (entry is Dictionary):
+			continue
+		var ending: Dictionary = entry
+		_validate_ending_relations(
+			ending, "endings[%s]" % str(ending.get("endingId", "")), anchor_ids, comer_ids)
+
+
+## 单个结局的关系分支校验：先查形，再查它引的锚点/乱入者确实在册。
+func _validate_ending_relations(
+	ending: Dictionary, path: String, anchor_ids: Dictionary, comer_ids: Dictionary
+) -> void:
+	var relations: Variant = ending.get("relations", [])
+	if not (relations is Array):
+		_errors.append("结局的关系分支必须是数组：%s.relations" % path)
+		return
+	var seen: Dictionary = {}
+	for j in range((relations as Array).size()):
+		var rpath: String = "%s.relations[%d]" % [path, j]
+		var raw: Variant = (relations as Array)[j]
+		if not (raw is Dictionary):
+			_errors.append("结局关系分支必须是对象：%s" % rpath)
+			continue
+		var rel: Dictionary = raw
+		var rel_id: String = str(rel.get("relId", ""))
+		if rel_id.is_empty():
+			_errors.append("结局关系分支缺少 relId：%s" % rpath)
+		elif seen.has(rel_id):
+			_errors.append("结局关系分支 relId 重复：%s" % rel_id)
+		else:
+			seen[rel_id] = true
+			rpath = "%s.relations[%s]" % [path, rel_id]
+		if str(rel.get("label", "")).is_empty():
+			_errors.append("结局关系分支缺少 label：%s" % rpath)
+		var lines: Variant = rel.get("lines", null)
+		if not (lines is Array) or (lines as Array).is_empty():
+			_errors.append("结局关系分支缺少非空的 lines：%s" % rpath)
+		var rel_kind: String = str(rel.get("kind", ""))
+		if not ["anchor", "comer", "rune", "flag"].has(rel_kind):
+			_errors.append("结局关系分支 kind 必须是 anchor/comer/rune/flag：%s.kind = %s" % [rpath, rel_kind])
+			continue
+		if rel_kind == "anchor":
+			var target: String = str(rel.get("targetId", ""))
+			if not anchor_ids.has(target):
+				_errors.append("结局关系分支引用了不存在的锚点：%s.targetId = %s" % [rpath, target])
+		elif rel_kind == "comer":
+			var comer_target: String = str(rel.get("targetId", ""))
+			if not comer_ids.has(comer_target):
+				_errors.append("结局关系分支引用了不存在的乱入者：%s.targetId = %s" % [rpath, comer_target])
+		elif rel_kind == "rune":
+			if str(rel.get("requiresRune", "")).is_empty():
+				_errors.append("结局关系分支（rune）缺少 requiresRune：%s" % rpath)
+		elif rel_kind == "flag":
+			if str(rel.get("requiresFlag", "")).is_empty():
+				_errors.append("结局关系分支（flag）缺少 requiresFlag：%s" % rpath)
 
 
 ## 交叉任务配置（第四阶段 D3 / D-197~D-199）。

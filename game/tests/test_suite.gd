@@ -393,6 +393,17 @@ func run_all() -> int:
 	_test_d5_chronicle_entry_and_style()
 	_test_d5_briefing()
 	_test_d5_panel_battle_button()
+	print("=== 里程碑 53 验收测试 ===")
+	_test_d6_endings_loaded()
+	_test_d6_gate_requires_victory()
+	_test_d6_gate_after_victory_and_terminal()
+	_test_d6_resolve_records_and_world_flag()
+	_test_d6_turn_not_terminal()
+	_test_d6_relation_lines()
+	_test_d6_suggested()
+	_test_d6_chronicle_entry_and_style()
+	_test_d6_briefing()
+	_test_d6_panel_ending_button()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -12025,4 +12036,216 @@ func _final_profile_ok(raw: Variant) -> bool:
 		if int((attrs as Dictionary).get(attribute, 0)) <= 0:
 			return false
 	return int(p.get("hp", 0)) > 0 and int(p.get("attack", 0)) > 0 and int(p.get("attackRange", 0)) >= 1
+
+
+# --- 里程碑 53：四种结局与后日谈（第四阶段 D6）---
+
+## 一个已推进到第四幕·抉择的灵魂（七片齐 + clue_grey），跨 D6 测试共用。
+func _d6_ready_soul() -> SoulRecord:
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var main_cfg: Dictionary = ContentLoader.get_mainline_config()
+	for shard in ContentLoader.get_shards():
+		ShardLine.collect_shard(soul.main_quest_progress, str((shard as Dictionary)["shardId"]), main_cfg)
+	ShardLine.reveal_clue(soul.main_quest_progress, "clue_grey", main_cfg)
+	return soul
+
+
+## 数据：四个结局都有标题、后日谈正文、关系分支与唯一的 worldFlag。
+func _test_d6_endings_loaded() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var list: Array = EndingLine.endings(cfg)
+	_eq(list.size(), 4, "四个结局")
+	var kinds: Dictionary = {}
+	var flags: Dictionary = {}
+	for entry in list:
+		var e: Dictionary = entry
+		var eid: String = str(e.get("endingId", ""))
+		_check(not str(e.get("label", "")).is_empty(), "结局有标题：%s" % eid)
+		_check(not (e.get("epilogue", []) as Array).is_empty(), "结局有后日谈正文：%s" % eid)
+		_check(not (e.get("relations", []) as Array).is_empty(), "结局有关系分支：%s" % eid)
+		kinds[str(e.get("kind", ""))] = true
+		flags[str(e.get("worldFlag", ""))] = true
+	_eq(kinds.size(), 3, "三种结局类型（order/cycle/free）")
+	_eq(flags.size(), 4, "四个 worldFlag 互不相同")
+	_eq(str(EndingLine.find(cfg, "turn").get("endingId", "")), "turn", "按 id 取得到转身")
+
+
+## 资格：终结性结局要已打赢总攻；转身只要到抉择幕（不锁进程）。
+func _test_d6_gate_requires_victory() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d6g"
+	var soul := SoulRecord.new()
+	soul.main_quest_progress = ShardLine.progress_template()
+	var ret: Dictionary = EndingLine.find(cfg, "return")
+	var g0: Dictionary = EndingLine.gate(soul, world, cfg, ret)
+	_check(not bool(g0.get("ok", false)), "未打赢总攻时归还不可选")
+	_check(str(g0.get("reason", "")).find("灰袍者") >= 0, "给出「还没站到轮核之前」的原因")
+	var turn: Dictionary = EndingLine.find(cfg, "turn")
+	_check(not bool(EndingLine.gate(soul, world, cfg, turn).get("ok", false)), "第一幕时转身也不可选")
+	var ready: SoulRecord = _d6_ready_soul()
+	_eq(ShardLine.current_act(ready.main_quest_progress), ShardLine.ACT_CHOICE, "已到第四幕·抉择")
+	_check(not bool(EndingLine.gate(ready, world, cfg, ret).get("ok", false)), "到抉择幕但未打赢，归还仍不可选")
+	_check(bool(EndingLine.gate(ready, world, cfg, turn).get("ok", false)), "到抉择幕即可转身（不锁进程）")
+
+
+## 资格：打赢后三个终结性去向全开；做过一次终结性抉择后其余关闭。
+func _test_d6_gate_after_victory_and_terminal() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d6h"
+	var soul: SoulRecord = _d6_ready_soul()
+	FinalBattle.mark_won(soul)
+	_check(bool(EndingLine.gate(soul, world, cfg, EndingLine.find(cfg, "return")).get("ok", false)), "打赢后归还可选")
+	_check(bool(EndingLine.gate(soul, world, cfg, EndingLine.find(cfg, "inherit")).get("ok", false)), "打赢后继承可选")
+	_check(bool(EndingLine.gate(soul, world, cfg, EndingLine.find(cfg, "break")).get("ok", false)), "打赢后打破可选")
+	var res: Dictionary = EndingLine.resolve(soul, world, world.avatar, cfg, "return")
+	_check(bool(res.get("ok", false)), "归还落账成功")
+	_check(EndingLine.has_ended(soul, cfg), "做过终结性抉择")
+	_check(not bool(EndingLine.gate(soul, world, cfg, EndingLine.find(cfg, "inherit")).get("ok", false)), "终结性抉择后其余关闭")
+
+
+## 落账：记进 progress["endings"]、落世界标记、交回正文；存档往返后仍记着。
+func _test_d6_resolve_records_and_world_flag() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d6r"
+	var soul: SoulRecord = _d6_ready_soul()
+	FinalBattle.mark_won(soul)
+	var res: Dictionary = EndingLine.resolve(soul, world, world.avatar, cfg, "return")
+	_check(bool(res.get("ok", false)), "归还落账成功")
+	_check(EndingLine.chosen(soul).has("return"), "记进 progress[KEY_ENDINGS]")
+	_check(bool(world.world_flags.get("mainline_end_return", false)), "落世界标记")
+	_check(not (res.get("epilogue", []) as Array).is_empty(), "交回后日谈正文")
+	_check(not str(res.get("worldAfter", "")).is_empty(), "交回结局后世界状态")
+	var restored := SoulRecord.from_dict(soul.to_dict())
+	_check(EndingLine.has_chosen(restored, "return"), "存档往返后仍记着抉择")
+
+
+## 转身不锁：terminal=false 记一笔但不封主线，之后仍可做出终结性抉择。
+func _test_d6_turn_not_terminal() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d6t"
+	var soul: SoulRecord = _d6_ready_soul()
+	_check(bool(EndingLine.gate(soul, world, cfg, EndingLine.find(cfg, "turn")).get("ok", false)), "到抉择幕即可转身")
+	var res: Dictionary = EndingLine.resolve(soul, world, world.avatar, cfg, "turn")
+	_check(bool(res.get("ok", false)), "转身落账成功")
+	_check(not bool(res.get("terminal", true)), "转身不是终结性结局")
+	_check(not EndingLine.has_ended(soul, cfg), "转身不锁主线")
+	FinalBattle.mark_won(soul)
+	_check(bool(EndingLine.gate(soul, world, cfg, EndingLine.find(cfg, "return")).get("ok", false)), "转身之后仍可归还")
+
+
+## 后日谈关系分支（剧本 12.5）：关系达标才追加，绝不硬凑。
+func _test_d6_relation_lines() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var soul: SoulRecord = _d6_ready_soul()
+	_eq(EndingLine.relation_lines(soul, world, cfg, "return").size(), 0, "无关系时后日谈不追加")
+	AnchorLine.set_affinity(soul, "crow", 60)
+	AnchorLine.set_affinity(soul, "elise", 60)
+	soul.known_runes.append("rune_dov_true")
+	ComerFavor.set_affinity(world, "comer_taibai", 60)
+	var rels: Array = EndingLine.relation_lines(soul, world, cfg, "return")
+	_eq(rels.size(), 4, "四段关系分支全显")
+	var ids: Dictionary = {}
+	for rel in rels:
+		ids[str((rel as Dictionary).get("relId", ""))] = true
+	_check(ids.has("crow") and ids.has("elise") and ids.has("varok") and ids.has("taibai"),
+		"鸦 / 伊莉丝 / 瓦洛克 / 李白都在")
+	_eq(EndingLine.relation_lines(soul, world, cfg, "break").size(), 4, "换一个结局同样按关系过滤")
+
+
+## 建议（纯提示）：按形迹推荐——干净→归还、得龙魂→继承、吞龙魂→打破。
+func _test_d6_suggested() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "avatar-d6s"
+	world.avatar = avatar
+	var soul: SoulRecord = _d6_ready_soul()
+	FinalBattle.mark_won(soul)
+	_eq(EndingLine.suggested(soul, world, cfg), "return", "干干净净时推荐归还")
+	avatar.dragon_soul = 1
+	_eq(EndingLine.suggested(soul, world, cfg), "inherit", "得了龙魂（结盟瓦洛克）时推荐继承")
+	avatar.dragon_soul = 0
+	avatar.dragonization = 1
+	_eq(EndingLine.suggested(soul, world, cfg), "break", "吞过龙魂时推荐打破")
+	avatar.dragonization = 0
+	_eq(EndingLine.suggested(soul, world, cfg), "return", "同一存档恒得同一结果")
+
+
+## 终局史书条目：kind 正确、权重达标、标题过 A1 去套路筛。
+func _test_d6_chronicle_entry_and_style() -> void:
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var entry: Dictionary = EndingLine.chronicle_entry(world, EndingLine.find(cfg, "return"), 12, "第 2 年")
+	_eq(str(entry["kind"]), Chronicle.KIND_MAINLINE, "终局条目 kind 正确")
+	_check(int(entry["weight"]) >= Chronicle.DEFAULT_MIN_WEIGHT, "终局权重达标进史书")
+	var audit: Dictionary = MenuStyle.audit(str(entry["title"]) + "\n" + str(entry["detail"]), 40)
+	_check((audit["flags"] as Array).is_empty(), "终局标题无套路腔 flag")
+
+
+## 简报（接线/界面共用）：到抉择幕即 ready、列出四去向；抉择后带 chosen 正文。
+func _test_d6_briefing() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d6b"
+	var soul: SoulRecord = _d6_ready_soul()
+	var b0: Dictionary = EndingLine.briefing(soul, world, cfg)
+	_check(bool(b0.get("ready", false)), "到抉择幕即可见终局段")
+	_eq((b0.get("options", []) as Array).size(), 4, "列出四个去向")
+	_check((b0.get("chosen", {}) as Dictionary).is_empty(), "还没抉择时 chosen 为空")
+	FinalBattle.mark_won(soul)
+	EndingLine.resolve(soul, world, world.avatar, cfg, "return")
+	var b1: Dictionary = EndingLine.briefing(soul, world, cfg)
+	_check(not (b1.get("chosen", {}) as Dictionary).is_empty(), "抉择后有 chosen")
+	_check(not ((b1.get("chosen", {}) as Dictionary).get("epilogue", []) as Array).is_empty(),
+		"chosen 带后日谈正文")
+
+
+## 主线面板：终局 ready 后逐个摆去向按钮；返回恒在首位；点得中。
+func _test_d6_panel_ending_button() -> void:
+	var cfg: Dictionary = ContentLoader.get_mainline_config()
+	var rect: Rect2 = Rect2(0.0, 0.0, 1200.0, 560.0)
+	var progress: Dictionary = ShardLine.progress_template()
+	var plain: Array = MainlinePanel.buttons(rect, MainlineViewModel.build(progress, cfg))
+	var no_ending: bool = false
+	for b in plain:
+		if str((b as Dictionary)["id"]).begins_with("ending:"):
+			no_ending = true
+	_check(not no_ending, "终局不 ready 时不摆去向按钮")
+	var built: Dictionary = _new_sim()
+	var world: WorldState = built["world"]
+	world.avatar = PlayerAvatar.new()
+	world.avatar.avatar_id = "avatar-d6p"
+	var soul: SoulRecord = _d6_ready_soul()
+	FinalBattle.mark_won(soul)
+	var ending: Dictionary = EndingLine.briefing(soul, world, cfg)
+	var view: Dictionary = MainlineViewModel.build(soul.main_quest_progress, cfg, {}, ending)
+	var buttons: Array = MainlinePanel.buttons(rect, view)
+	_eq(str((buttons[0] as Dictionary)["id"]), "back", "加了去向按钮后返回仍在首位")
+	var found: Dictionary = {}
+	for b in buttons:
+		if str((b as Dictionary)["id"]) == "ending:return":
+			found = b
+	_check(not found.is_empty(), "打赢后摆出归还按钮")
+	if not found.is_empty():
+		var hit: Dictionary = MainlinePanel.hit_test(view, rect, (found["rect"] as Rect2).get_center())
+		_eq(str(hit.get("id", "")), "ending:return", "点中归还按钮")
 

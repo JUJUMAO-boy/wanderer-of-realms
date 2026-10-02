@@ -26,10 +26,132 @@
     { "actId": "choice", "label": "第四幕·抉择", "requiresShards": 7, "requiresClues": ["clue_grey"] }
   ],
   "endings": [
-    { "endingId": "return", "label": "归还·秩序", "note": "把碎片还回轮上，让那道缝自己长合。" },
-    { "endingId": "inherit", "label": "继承·轮回", "note": "接过神散去的位置，成为下一段法则。" },
-    { "endingId": "break", "label": "打破·自由", "note": "把轮砸了，让灵魂第一次不用被谁牵着走。" },
-    { "endingId": "turn", "label": "转身·自由", "note": "既不还也不接，带着碎片走你自己的路。" }
+    {
+      "endingId": "return",
+      "label": "归还·秩序",
+      "note": "把碎片还回轮上，让那道缝自己长合。",
+      "kind": "order",
+      "terminal": true,
+      "requiresVictory": true,
+      "requiresAct": "",
+      "worldFlag": "mainline_end_return",
+      "suggest": { "dragonizationAtMost": 0, "dragonSoulAtMost": 0 },
+      "epilogue": [
+        "界缝合拢的那天，索恩港的钟楼第一次没有再敲响十三下。赤沙的掘金向导们，从此再也没在沙漠里见过“骑着铁马的异乡人”。",
+        "漂移者们一个接一个地消失了，像潮水退去时带走的泡沫。有的回到了自己的世界，有的在艾尔泽拉安然终老，把异乡的记忆埋进了这里。",
+        "亡灵不再作祟。旧帝国的士兵们终于放下了剑，回到了轮回里去。铁锤堡的矿工说，矿坑深处再也听不见那些“不属于龙的火焰”的灼响。",
+        "而那个曾经记得一切的人，转生成了一户农家的孩子。他不再记得前世，不再记得七片碎片，也不再记得自己曾是“觉者”。",
+        "只是偶尔，在转生的间隙，他会看见一个戴黑鸦面具的旅者，朝他点头，然后说——",
+        "“去吧。这一次，你终于可以忘了。”"
+      ],
+      "worldAfter": "界缝平静，漂移者减少，亡灵异常消退；锚点 NPC 鸦、伊莉丝的存在意义随之改变。",
+      "relations": [
+        { "relId": "crow", "label": "守轮人·鸦", "kind": "anchor", "targetId": "crow", "minAffinity": 50,
+          "lines": [
+            "转生间隙，他不再递铜币，只是静静看着你，低声道别。",
+            "鸦：“从前我总给你谜语。可这一次，我没什么要你记的了。”他顿了顿，“忘了我，也忘了我给过的所有答案。”"
+          ] },
+        { "relId": "elise", "label": "返魂者·伊莉丝", "kind": "anchor", "targetId": "elise", "minAffinity": 50,
+          "lines": ["她在帝国史的末页，替你补上了一行。"] },
+        { "relId": "varok", "label": "古龙·瓦洛克", "kind": "rune", "requiresRune": "rune_dov_true",
+          "lines": ["龙墓归于平静。风穿过骸骨，像一声很长的呼气。"] },
+        { "relId": "taibai", "label": "谪仙·李白", "kind": "comer", "targetId": "comer_taibai", "minAffinity": 50,
+          "lines": ["他那首写不完的诗，终于写完了。"] }
+      ]
+    },
+    {
+      "endingId": "inherit",
+      "label": "继承·轮回",
+      "note": "接过神散去的位置，成为下一段法则。",
+      "kind": "cycle",
+      "terminal": true,
+      "requiresVictory": true,
+      "requiresAct": "",
+      "worldFlag": "mainline_end_inherit",
+      "suggest": { "dragonSoulAtLeast": 1 },
+      "epilogue": [
+        "你成为了轮。你不再有身体，不再有名字，不再有“我”——你只有俯瞰。",
+        "你看见旧日的朋友在世界的某个角落活着、死去、转生。你看见古龙瓦洛克在龙骸冰川遥望天空，低声说：“那个灵魂，终究还是走了。”",
+        "你看见新的觉者出现，他们像你当年一样，困惑于自己的记忆，挣扎于自己的执念。你可以选择指引他们，也可以选择冷眼旁观。",
+        "你是轮。你维持着生灭的平衡。但偶尔，在无数灵魂沉眠的间隙，你会想起自己曾经也是一个活人——",
+        "曾经也怕过死，也爱过谁，也为一片碎片、一句谜语，跑遍了整个艾尔泽拉。"
+      ],
+      "worldAfter": "你成了隐藏的轮回意志，世界进入新的循环——你曾活过的世界，从此在你俯瞰之下。",
+      "relations": [
+        { "relId": "crow", "label": "守轮人·鸦", "kind": "anchor", "targetId": "crow", "minAffinity": 50,
+          "lines": ["鸦融入了轮，成为你意志的一部分。他不再需要面具了。"] },
+        { "relId": "elise", "label": "返魂者·伊莉丝", "kind": "anchor", "targetId": "elise", "minAffinity": 50,
+          "lines": ["她接替你，成为新的守轮人。她写下的每一条史，你都读得到。"] },
+        { "relId": "varok", "label": "古龙·瓦洛克", "kind": "rune", "requiresRune": "rune_dov_true",
+          "lines": ["他低语：“那个灵魂，终究还是走了。”"] },
+        { "relId": "taibai", "label": "谪仙·李白", "kind": "comer", "targetId": "comer_taibai", "minAffinity": 50,
+          "lines": ["他的诗化入了轮回，成为新的一环。"] }
+      ]
+    },
+    {
+      "endingId": "break",
+      "label": "打破·自由",
+      "note": "把轮砸了，让灵魂第一次不用被谁牵着走。",
+      "kind": "free",
+      "terminal": true,
+      "requiresVictory": true,
+      "requiresAct": "",
+      "worldFlag": "mainline_end_break",
+      "suggest": { "dragonizationAtLeast": 1 },
+      "epilogue": [
+        "轮停下的那一刻，整个世界都听见了一声极轻的、像是松了口气的叹息。",
+        "界缝崩塌，诸界不再相连。漂移者再也无法来到艾尔泽拉，那些来自小说、动漫、游戏世界的人，成了永远无法归乡的孤客。",
+        "亡灵与返魂者缓缓消散。返魂者伊莉丝在最后一刻放下笔，露出释然的微笑：“我终于……可以写完那部史书了。”她的帝国史，永远停在了最后一页的空白上。",
+        "从此，死亡是真正的终结。人们不再期待来世，于是更用力地活这一世。",
+        "世界失去了轮回，却获得了“真实”。"
+      ],
+      "worldAfter": "死亡成为终结，轮回法则失效；返魂者与亡灵逐渐消散，锚点 NPC 的结构剧变。",
+      "relations": [
+        { "relId": "crow", "label": "守轮人·鸦", "kind": "anchor", "targetId": "crow", "minAffinity": 50,
+          "lines": ["鸦消散之前，第一次“笑”了。面具碎在地上，露出后面什么也没有。"] },
+        { "relId": "elise", "label": "返魂者·伊莉丝", "kind": "anchor", "targetId": "elise", "minAffinity": 50,
+          "lines": [
+            "她放下羽毛笔，随亡灵一同消散。",
+            "伊莉丝（微笑）：“我终于……可以写完那部史书了。可惜，最后一页只能留白。”"
+          ] },
+        { "relId": "varok", "label": "古龙·瓦洛克", "kind": "rune", "requiresRune": "rune_dov_true",
+          "lines": ["龙族随轮停止而陷入沉睡。"] },
+        { "relId": "taibai", "label": "谪仙·李白", "kind": "comer", "targetId": "comer_taibai", "minAffinity": 50,
+          "lines": ["他的诗，随着界缝的崩塌残缺了。"] }
+      ]
+    },
+    {
+      "endingId": "turn",
+      "label": "转身·自由",
+      "note": "既不还也不接，带着碎片走你自己的路。",
+      "kind": "free",
+      "terminal": false,
+      "requiresVictory": false,
+      "requiresAct": "choice",
+      "worldFlag": "mainline_turned_once",
+      "suggest": { "defaultSuggested": true },
+      "epilogue": [
+        "你没有选择。你只是转身，走回了那个还在动荡的世界。",
+        "界缝依旧不安分，漂移者依旧在增多，深渊教团依旧在追寻那个不存在的“神”。世界没有因为你的犹豫而停摆——它从不为任何人停摆。",
+        "你回到十字路的酒馆，李白还在那里，醉眼朦胧地吟着那首写不完的诗。你回到银月塔，伊莉丝还在那里，用一支羽毛笔，写着那部永远写不完的帝国史。你回到龙骸冰川，瓦洛克睁开一只眼睛：“你回来了。三场雪，还没下完。”",
+        "碎片还在。谜语还在。那个戴黑鸦面具的旅者，还会在转生的间隙等你。",
+        "轮回会等你。世界也是。"
+      ],
+      "worldAfter": "世界维持现状，主线永不封闭——你随时可以回来，继续推进。",
+      "relations": [
+        { "relId": "crow", "label": "守轮人·鸦", "kind": "anchor", "targetId": "crow", "minAffinity": 50,
+          "lines": ["鸦：“我早知你会转身。没关系。轮回会等你。”"] },
+        { "relId": "elise", "label": "返魂者·伊莉丝", "kind": "anchor", "targetId": "elise", "minAffinity": 50,
+          "lines": ["她抬起头：“还在写。等你回来。”"] },
+        { "relId": "varok", "label": "古龙·瓦洛克", "kind": "rune", "requiresRune": "rune_dov_true",
+          "lines": [
+            "他睁开一只眼睛：“你回来了。三场雪，还没下完。”",
+            "瓦洛克（重新合眼）：“去走你的路吧。轮，会等你。”"
+          ] },
+        { "relId": "taibai", "label": "谪仙·李白", "kind": "comer", "targetId": "comer_taibai", "minAffinity": 50,
+          "lines": ["他还在酒馆里，醉眼朦胧地看着你。"] }
+      ]
+    }
   ],
   "inheritance": {
     "_comment": "跨世继承（剧本 13 节）：碎片与灵魂绑定、跨世不丢；线索需 SOU ≥ clueSoulThreshold 才完整保留，否则按 clueLossRatio 丢掉最近的一部分（越靠后的越留不住）。",

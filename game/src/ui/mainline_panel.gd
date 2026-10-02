@@ -37,12 +37,22 @@ static func draw(canvas: CanvasItem, view: Dictionary, rect: Rect2, hover: Dicti
 	_draw_body(canvas, font, view, rect)
 
 
-## 按钮行。返回按钮恒在首位（index 0），门槛过了（view.battle.available）再追加「发起总攻」。
+## 按钮行。返回按钮恒在首位（index 0），门槛过了（view.battle.available）再追加「发起总攻」，
+## 终局门槛到了（view.ending.ready）再逐个追加可选去向（尚未做出终结性抉择时）。
 static func buttons(rect: Rect2, view: Dictionary = {}) -> Array:
 	var list: Array = [{"id": "back", "label": "返回地图"}]
 	var battle: Dictionary = view.get("battle", {})
 	if bool(battle.get("available", false)):
 		list.append({"id": "final", "label": "发起总攻"})
+	var ending: Dictionary = view.get("ending", {})
+	var chosen: Dictionary = ending.get("chosen", {}) if ending.get("chosen", null) is Dictionary else {}
+	if bool(ending.get("ready", false)) and str(chosen.get("endingId", "")).is_empty():
+		for option in ending.get("options", []):
+			if bool((option as Dictionary).get("available", false)):
+				list.append({
+					"id": "ending:%s" % str((option as Dictionary).get("endingId", "")),
+					"label": str((option as Dictionary).get("label", "")),
+				})
 	return UiTheme.button_row(
 		UiTheme.draw_font(),
 		rect.position.x + rect.size.x - MARGIN,
@@ -123,20 +133,21 @@ static func _draw_body(canvas: CanvasItem, font: Font, view: Dictionary, rect: R
 		_text(canvas, font, Vector2(x, y), need, COLOR_DIM, 14.0)
 		y += LINE_HEIGHT * 1.5
 
-	_draw_battle(canvas, font, view, Vector2(x, y))
+	_draw_ending(canvas, font, view, rect, Vector2(x, _draw_battle(canvas, font, view, Vector2(x, y))))
 
 
 ## 总攻段（第四阶段 D5）：门槛未到时写一句「还差什么」；到了就把阶段链、动摇、助阵摊开。
-static func _draw_battle(canvas: CanvasItem, font: Font, view: Dictionary, pos: Vector2) -> void:
+## 返回下一段该从哪一行往下画。
+static func _draw_battle(canvas: CanvasItem, font: Font, view: Dictionary, pos: Vector2) -> float:
 	var battle: Dictionary = view.get("battle", {})
-	if battle.is_empty() or bool(battle.get("won", false)):
-		return
 	var y: float = pos.y
+	if battle.is_empty() or bool(battle.get("won", false)):
+		return y
 	if not bool(battle.get("available", false)):
 		var reason: String = str(battle.get("reason", ""))
 		if not reason.is_empty():
 			_text(canvas, font, Vector2(pos.x, y), "总攻轮核：" + reason, COLOR_DIM, 14.0)
-		return
+		return y
 	_text(canvas, font, Vector2(pos.x, y), "总攻轮核·可发起", COLOR_ACCENT, 15.0)
 	y += LINE_HEIGHT
 	var parts: Array = []
@@ -155,6 +166,62 @@ static func _draw_battle(canvas: CanvasItem, font: Font, view: Dictionary, pos: 
 		for ally in allies:
 			names.append(str((ally as Dictionary).get("label", "")))
 		_text(canvas, font, Vector2(pos.x, y), "助阵：" + "、".join(PackedStringArray(names)), COLOR_ACCENT, 14.0)
+		y += LINE_HEIGHT
+	return y
+
+
+## 终局段（第四阶段 D6）：尚未抉择时摊开四个去向与推荐；已抉择则铺开后日谈正文，
+## 再把玩家确实走过的关系分支追加在末尾（剧本 12.5）。
+static func _draw_ending(canvas: CanvasItem, font: Font, view: Dictionary, rect: Rect2, pos: Vector2) -> void:
+	var ending: Dictionary = view.get("ending", {})
+	if ending.is_empty() or not bool(ending.get("ready", false)):
+		return
+	var x: float = pos.x
+	var y: float = pos.y
+	var wrap: float = maxf(240.0, rect.size.x - MARGIN * 2.0 - 16.0)
+	var chosen: Dictionary = ending.get("chosen", {}) if ending.get("chosen", null) is Dictionary else {}
+	if chosen.is_empty():
+		_text(canvas, font, Vector2(x, y), "终局·轮核之前，该你选了。", COLOR_ACCENT, 15.0)
+		y += LINE_HEIGHT * 1.2
+		for option in ending.get("options", []):
+			var row: Dictionary = option
+			var available: bool = bool(row.get("available", false))
+			var mark: String = "◆" if bool(row.get("suggested", false)) else ("·" if available else "×")
+			var color: Color = COLOR_ACCENT if available else COLOR_DIM
+			var line: String = "%s %s　—　%s" % [mark, str(row.get("label", "")), str(row.get("note", ""))]
+			if not available:
+				line += "（%s）" % str(row.get("reason", ""))
+			y += _wrap(canvas, font, Vector2(x, y), line, wrap, color, 14.0) + 4.0
+		_text(canvas, font, Vector2(x, y), "点上方按钮做出抉择。", COLOR_DIM, 13.0)
+		return
+
+	_text(canvas, font, Vector2(x, y), "终局·%s" % str(chosen.get("label", "")), COLOR_ACCENT, 15.0)
+	y += LINE_HEIGHT * 1.2
+	for para in chosen.get("epilogue", []):
+		y += _wrap(canvas, font, Vector2(x, y), str(para), wrap, COLOR_TEXT, 14.0) + 6.0
+	var relations: Array = chosen.get("relationLines", [])
+	if not relations.is_empty():
+		y += 4.0
+		_text(canvas, font, Vector2(x, y), "—— 你走过的关系 ——", COLOR_DIM, 13.0)
+		y += LINE_HEIGHT
+		for rel in relations:
+			var row: Dictionary = rel
+			_text(canvas, font, Vector2(x, y), str(row.get("label", "")), COLOR_ACCENT, 14.0)
+			y += LINE_HEIGHT
+			for line in row.get("lines", []):
+				y += _wrap(canvas, font, Vector2(x, y), str(line), wrap, COLOR_TEXT, 14.0) + 4.0
+	var after: String = str(chosen.get("worldAfter", ""))
+	if not after.is_empty():
+		y += 4.0
+		y += _wrap(canvas, font, Vector2(x, y), "结局之后：" + after, wrap, COLOR_DIM, 13.0) + 4.0
+
+
+## 画一段会自动折行的正文，返回它占的高度（供面板往下排版）。
+static func _wrap(canvas: CanvasItem, font: Font, pos: Vector2, text: String,
+		width: float, color: Color, size: float) -> float:
+	var flags: int = TextServer.BREAK_MANDATORY | TextServer.BREAK_GRAPHEME_BOUND | TextServer.BREAK_ADAPTIVE
+	canvas.draw_multiline_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, width, size, -1, color, flags)
+	return font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, width, size, -1, flags).y
 
 
 static func _text(canvas: CanvasItem, font: Font, pos: Vector2, text: String,
