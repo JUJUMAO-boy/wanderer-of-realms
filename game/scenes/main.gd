@@ -262,6 +262,24 @@ var _varok_session: Dictionary = {}
 var _varok_view: Dictionary = {}
 var _varok_cursor: int = 0
 
+# 乱入者好感对话（B3 / D-187~D-188）。会话级、不落盘（好感落账走 ComerFavor 写
+# world.player_relations），复用 VIEW_EVENT 的抉择形态（同 D-90 惯例）：走近相遇城
+# 里的乱入者按回车开对话 → 选一件事 → apply_event 落账并把 reply 追加到台上。
+# 会话只活在这一屏，出屏即弃，与神、瓦洛克、隐藏属性事件同处境。
+var _comer_active: bool = false
+var _comer_city: String = ""
+var _comer_id: String = ""
+var _comer_view: Dictionary = {}
+var _comer_cursor: int = 0
+## 本次会话里已回应过的 reply 台词，逐行追加在 lines 尾部（_refresh_comer 重建时留着）。
+var _comer_extra_lines: Array = []
+
+# 乱入者在城内空间 visitor 层的摆点：用一个大 slot 插进 visitors 名额，落在
+# VISITOR_SLOTS 的第 7 位（index 6，格 (7,10)），避开 WandererPool 常见的 0..5 slot。
+const _COMER_SLOT: int = 500
+## 当前城内空间在摆的乱入者 comerId（无则空串）。只与会话相关，不落盘。
+var _comer_present: String = ""
+
 # 商铺与黑市（M8）。界面只持有"在看哪座城、买还是卖、哪条渠道、光标在哪"——
 # 价格与货架每次都按当前城市状态重算，不落盘（物价随城长，存下来就会过期）。
 var _trade_city_id: String = ""
@@ -635,6 +653,8 @@ func _refresh() -> void:
 				_refresh_pray()
 			elif _varok_active:
 				_refresh_varok()
+			elif _comer_active:
+				_refresh_comer()
 			elif not _hidden_event.is_empty():
 				_refresh_hidden()
 			else:
@@ -4011,6 +4031,125 @@ func _finish_varok(outcome: String, detail: String) -> void:
 		_status.text = str(detail)
 
 
+# --- 乱入者好感对话（B3 / D-187~D-188）---
+# 会话级、不落盘，复用 VIEW_EVENT 的抉择形态（同 D-90）：走近相遇城里那位乱入者
+# 按回车开对话，选一件事把好感 delta 落账，只做好感与"会回应"；招募只给判定。
+
+func _open_comer(comer_id: String) -> void:
+	if _world == null or _world.avatar == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_comer(comer_id)
+	if cfg.is_empty():
+		_status.text = "那位乱入者不在此处。"
+		_refresh()
+		return
+	if str(cfg.get("meetCity", "")) != str(_city_space.get("city_id", "")):
+		_status.text = "%s不在你身边的这座城里。" % str(cfg.get("displayName", "乱入者"))
+		_refresh()
+		return
+	_comer_active = true
+	_comer_city = str(_city_space.get("city_id", ""))
+	_comer_id = comer_id
+	_comer_cursor = 0
+	_comer_extra_lines = []
+	_switch_view(VIEW_EVENT)
+	_status.text = str(cfg.get("meetHint", ""))
+	_refresh()
+
+
+func _refresh_comer() -> void:
+	if not _comer_active or _comer_id.is_empty() or _world == null:
+		_comer_view = {}
+		return
+	var cfg: Dictionary = ContentLoader.get_comer(_comer_id)
+	if cfg.is_empty():
+		_comer_view = {}
+		return
+	var lines: Array = []
+	lines.append(str(cfg.get("meetHint", "")))
+	var greet: String = ComerFavor.greeting(_world, _comer_id)
+	if not greet.is_empty():
+		lines.append(greet)
+	for extra in _comer_extra_lines:
+		lines.append(str(extra))
+	var branches: Array = []
+	for e in cfg.get("events", []):
+		branches.append({
+			"label": str(e.get("label", "")),
+			"detail": str(e.get("desc", "")),
+			"enabled": true,
+		})
+	var affinity: int = ComerFavor.affinity(_world, _comer_id)
+	var band_l: String = ComerFavor.band_label(ComerFavor.band(_world, _comer_id))
+	var threshold: int = ComerFavor.recruit_threshold(_comer_id)
+	var recruit_txt: String = "已可招募" if ComerFavor.recruit_ready(_world, _comer_id) \
+		else "还欠 %d 点" % maxi(0, threshold - affinity)
+	_comer_view = {
+		"title": "「%s」·%s" % [str(cfg.get("displayName", "")), str(cfg.get("archetype", ""))],
+		"lines": lines,
+		"branches": branches,
+		"tempLabel": "好感 %s (%d)  招募 %s" % [band_l, affinity, recruit_txt],
+	}
+	_comer_cursor = clampi(_comer_cursor, 0, maxi(0, branches.size() - 1))
+
+
+func _comer_input(key_event: InputEventKey) -> void:
+	if _comer_view.is_empty():
+		return
+	match key_event.keycode:
+		KEY_UP, KEY_W:
+			_comer_cursor = maxi(0, _comer_cursor - 1)
+			_refresh()
+		KEY_DOWN, KEY_S:
+			_comer_cursor = mini(_comer_view.get("branches", []).size() - 1, _comer_cursor + 1)
+			_refresh()
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			_comer_confirm()
+		KEY_ESCAPE, KEY_T:
+			_finish_comer()
+
+
+func _comer_click(point: Vector2) -> void:
+	var hit: Dictionary = ComerDialogPanel.hit_test(_comer_view, _content_rect(), point)
+	if str(hit.get("kind", "")) != "choice":
+		return
+	var index: int = int(hit.get("index", -1))
+	if index != _comer_cursor:
+		_comer_cursor = index
+		_refresh()
+		return
+	_comer_confirm()
+
+
+func _comer_confirm() -> void:
+	if not _comer_active or _world == null or _world.avatar == null:
+		return
+	var cfg: Dictionary = ContentLoader.get_comer(_comer_id)
+	if cfg.is_empty():
+		return
+	var events: Array = cfg.get("events", [])
+	if events.is_empty():
+		return
+	var event: Dictionary = events[clampi(_comer_cursor, 0, events.size() - 1)]
+	var result: Dictionary = ComerFavor.apply_event(_world, _world.avatar, _comer_id, event)
+	var reply: String = str(result.get("reply", ""))
+	if not reply.is_empty():
+		_comer_extra_lines.append(reply)
+	_refresh()
+
+
+func _finish_comer() -> void:
+	_comer_active = false
+	_comer_city = ""
+	_comer_id = ""
+	_comer_view = {}
+	_comer_cursor = 0
+	_comer_extra_lines = []
+	_switch_view(VIEW_CITY_SPACE)
+	_status.text = "你告辞，让那位乱入者接着赶他的路。"
+	_refresh()
+
+
 func _percent_bp(bp: int) -> int:
 	return int(round(float(bp) / 100.0))
 
@@ -4071,6 +4210,8 @@ func _hit_test_at(point: Vector2) -> Dictionary:
 		VIEW_EVENT:
 			if _varok_active:
 				return VarokPanel.hit_test(_varok_view, _content_rect(), point)
+			if _comer_active:
+				return ComerDialogPanel.hit_test(_comer_view, _content_rect(), point)
 			return EventPanel.hit_test(
 				_hidden_view if not _hidden_event.is_empty() else _event_view,
 				_content_rect(), point
@@ -4128,6 +4269,8 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 				_pray_click(event.position)
 			elif _varok_active:
 				_varok_click(event.position)
+			elif _comer_active:
+				_comer_click(event.position)
 			elif not _hidden_event.is_empty():
 				_hidden_click(event.position)
 			else:
@@ -4480,20 +4623,31 @@ func _enter_city_space(city_id: String) -> void:
 	for npc in _world.get_city_npcs(city_id):
 		npc_ids.append(npc.npc_id)
 	_leave_wanderer_menu()
+	# 相遇城在摆的乱入者，摆进 visitor 层的大 slot（B3），避开 WandererPool 的 0..5。
+	_comer_present = _comer_id_for_city(city_id)
+	var visitors: Array = WandererPool.city_visitors(int(_world.world_seed), city_id, _seen_bucket)
+	if not _comer_present.is_empty():
+		visitors.append(_COMER_SLOT)
 	_city_space = {
 		"city_id": city_id,
-		"layout": CitySpace.layout(
-			city_id, building_ids, npc_ids,
-			WandererPool.city_visitors(int(_world.world_seed), city_id, _seen_bucket)
-		),
+		"layout": CitySpace.layout(city_id, building_ids, npc_ids, visitors),
 		"player": CitySpace.SPAWN,
 	}
 	_selected_city = maxi(0, ids.find(city_id))
 	_switch_view(VIEW_CITY_SPACE)
-	_status.text = "进入%s。城内随你走：走到建筑/居民旁按回车互动，走到城门离开。" % city_id
+	_status.text = "进入%s。城内随你走：走到建筑/居民/乱入者旁按回车互动，走到城门离开。" % city_id
+
+
+## 这座城在摆一位乱入者吗？返回它的 comerId，无则空串。
+func _comer_id_for_city(city_id: String) -> String:
+	for c in ContentLoader.get_comers():
+		if str(c.get("meetCity", "")) == city_id:
+			return str(c.get("comerId", ""))
+	return ""
 
 
 func _leave_city_space() -> void:
+	_comer_present = ""
 	_city_space = {}
 	_switch_view(VIEW_MAP)
 
@@ -4514,6 +4668,12 @@ func _refresh_city_space() -> void:
 	var visitor_labels: Dictionary = {}
 	for v in layout.get("visitors", []):
 		var slot: int = int(v.get("slot", -1))
+		if slot == _COMER_SLOT:
+			var cid: String = _comer_present
+			if cid.is_empty():
+				cid = _comer_id_for_city(str(_city_space.get("city_id", "")))
+			visitor_labels[slot] = str(ContentLoader.get_comer(cid).get("displayName", "乱入者"))
+			continue
 		var entry: Dictionary = _wanderer_entry(slot)
 		var spec: Dictionary = WandererPool.fill_spec(
 			int(_world.world_seed), slot, int(entry.get("gen", 0)))
@@ -4563,6 +4723,11 @@ func _city_space_interact() -> void:
 		return
 	var layout: Dictionary = _city_space["layout"]
 	var pos: Vector2i = _city_space["player"]
+	# 乱入者优先（B3）：站在相遇城里乱入者旁按回车，就开好感对话。
+	var comer_id: String = _near_comer()
+	if not comer_id.is_empty():
+		_open_comer(comer_id)
+		return
 	var near_b: Dictionary = CitySpace.near_building(layout, pos)
 	if not near_b.is_empty():
 		# 龙骸冰川入口（B2）：功能是 adventure 的建筑只有这一座，走进去就是瓦洛克。
@@ -4587,6 +4752,21 @@ func _city_space_interact() -> void:
 		return
 	_status.text = "旁边没有可互动的建筑、居民或冒险者。"
 	_refresh()
+
+
+## 乱入者是否在玩家四邻的格子上（visitor 层里那个大 slot 靠近玩家）。命中返回
+## 当前城的 comerId，否则空串。与 CitySpace.near_* 用同一套四邻语义。
+func _near_comer() -> String:
+	if _city_space.is_empty() or _comer_present.is_empty():
+		return ""
+	var cells: Dictionary = _city_space["layout"]
+	var pos: Vector2i = _city_space["player"]
+	var ortho: Array = [Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0)]
+	for dir: Vector2i in ortho:
+		var key: String = "%d,%d" % [pos.x + dir.x, pos.y + dir.y]
+		if int(cells.get("visitor_cell", {}).get(key, -1)) == _COMER_SLOT:
+			return _comer_present
+	return ""
 
 
 ## 这座城里按 positionId 找训练师（职务由 professions.json 的 trainer 职位补上）。
@@ -4770,6 +4950,11 @@ func _city_space_click(point: Vector2) -> void:
 		"building":
 			_city_space_approach_building(int(hit.get("index", -1)))
 		"visitor":
+			var vslot: int = int(hit.get("slot", -1))
+			if vslot == _COMER_SLOT and not _comer_present.is_empty():
+				_city_space_walk_to(hit.get("grid", Vector2i()))
+				_open_comer(_comer_present)
+				return
 			_city_space_walk_to(hit.get("grid", Vector2i()))
 			_open_wanderer_menu(int(hit.get("slot", -1)))
 		"cell":
@@ -5716,6 +5901,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_pray_input(key_event)
 			elif _varok_active:
 				_varok_input(key_event)
+			elif _comer_active:
+				_comer_input(key_event)
 			elif not _hidden_event.is_empty():
 				_hidden_input(key_event)
 			else:
@@ -6466,6 +6653,8 @@ func _draw() -> void:
 		VIEW_EVENT:
 			if _varok_active:
 				VarokPanel.draw(self, _varok_view, _content_rect(), _hover)
+			elif _comer_active:
+				ComerDialogPanel.draw(self, _comer_view, _content_rect(), _hover)
 			else:
 				EventPanel.draw(self,
 					_pray_view if _pray_active else (_hidden_view if not _hidden_event.is_empty() else _event_view),

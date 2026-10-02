@@ -319,6 +319,13 @@ func run_all() -> int:
 	_test_b2_varok_lie_and_fail()
 	_test_b2_varok_rewards()
 	_test_b2_varok_style_gate()
+	print("=== B3 乱入者好感·会回应（第三阶段 / D-187）===")
+	_test_b3_comer_data_wellformed()
+	_test_b3_comer_affinity_and_band()
+	_test_b3_comer_event_apply()
+	_test_b3_comer_prereq_gate()
+	_test_b3_comer_recruit_ready()
+	_test_b3_comer_style_gate()
 	print("---")
 	print("通过 %d 项，失败 %d 项" % [_passed, _failed])
 	if _failed > 0:
@@ -10467,4 +10474,151 @@ func _test_b2_varok_style_gate() -> void:
 	_check(all_lines.size() >= 10, "瓦洛克台词总量不少于 10 句")
 	var audit: Dictionary = MenuStyle.audit("\n".join(PackedStringArray(all_lines)), 80)
 	_check((audit["flags"] as Array).is_empty(), "瓦洛克台词无套路腔 flag")
+
+
+## 造一个可读乱入者好感的世界（player_relations 为空的干净世界）。
+func _b3_world() -> WorldState:
+	var world := WorldState.new()
+	return world
+
+
+## 造一个能判定前置属性的化身。
+func _b3_avatar(attrs: Dictionary = {}) -> PlayerAvatar:
+	var avatar := PlayerAvatar.new()
+	avatar.avatar_id = "hero-comer"
+	avatar.display_name = "行者"
+	avatar.attributes[PlayerAvatar.ATTR_CHARISMA] = 40
+	avatar.attributes[PlayerAvatar.ATTR_STRENGTH] = 40
+	avatar.attributes[PlayerAvatar.ATTR_SOUL] = 40
+	avatar.skills = {"alchemy": 40, "forge": 40, "fire_fireball": 40}
+	avatar.karma = 10
+	for k in attrs:
+		avatar.attributes[str(k)] = int(attrs[k])
+	return avatar
+
+
+## 数据完形：8 位乱入者，每位都有相遇城/招募阈值/四档招呼/非空事件表，
+## 事件 delta 在 [-100,100] 内、eventId 唯一、前置引用能对上属性。
+func _test_b3_comer_data_wellformed() -> void:
+	var comers: Array = ContentLoader.get_comers()
+	_eq(comers.size(), 8, "乱入者共 8 位")
+	_check(comers.size() > 0, "乱入者表非空")
+	var cities: Array = ContentLoader.get_city_configs()
+	var city_ids: Dictionary = {}
+	for c in cities:
+		city_ids[str(c.get("cityId", ""))] = true
+	for comer in comers:
+		var cid: String = str(comer.get("comerId", ""))
+		var prefix: String = cid.substr(0, 6)
+		_check(prefix == "comer_", "%s 键以 comer_ 开头" % cid)
+		_check(not str(comer.get("displayName", "")).is_empty(), "%s 有名字" % cid)
+		_check(city_ids.has(str(comer.get("meetCity", ""))), "%s 相遇城在 cities.json 里" % cid)
+		var thr: int = int(comer.get("recruitThreshold", -1))
+		_check(thr >= 0 and thr <= 100, "%s 招募阈值在 [0,100]" % cid)
+		var g: Dictionary = comer.get("greetings", {})
+		for band in ["cold", "neutral", "friendly", "close"]:
+			_check(not str(g.get(band, "")).is_empty(), "%s 有四档招呼(%s)" % [cid, band])
+		var events: Array = comer.get("events", [])
+		_check(events.size() > 0, "%s 好感事件表非空" % cid)
+		var seen: Dictionary = {}
+		for e in events:
+			var eid: String = str(e.get("eventId", ""))
+			_check(not seen.has(eid), "%s 事件 eventId 不重复" % cid)
+			seen[eid] = true
+			var d: int = int(e.get("delta", 0))
+			_check(d >= -100 and d <= 100, "%s.%s 在初始 delta 范围" % [cid, eid])
+		_check(ComerFavor.key(cid).begins_with("comer_"), "%s 好感键前缀正确" % cid)
+
+
+## 好感读写与档位：复用 M18 的键与分界；未接触读 0，写入钳制。
+func _test_b3_comer_affinity_and_band() -> void:
+	var world: WorldState = _b3_world()
+	_eq(ComerFavor.affinity(world, "comer_taibai"), 0, "未见 -> 好感 0")
+	ComerFavor.set_affinity(world, "comer_taibai", 5)
+	var key: String = ComerFavor.key("comer_taibai")
+	_check(world.player_relations.has(key), "好感确实写在 player_relations['comer_<id>']")
+	_comer_set_and_check(world, "comer_taibai", 400, NpcInteractionSystem.aff_max(), "钳制上限")
+	_comer_set_and_check(world, "comer_taibai", -500, NpcInteractionSystem.aff_min(), "钳制下限")
+	comer_set_aff(world, "comer_taibai", 60)
+	_eq(str(ComerFavor.band(world, "comer_taibai")), NpcInteractionSystem.BAND_CLOSE, "60 -> close")
+	_eq(str(ComerFavor.band_label(NpcInteractionSystem.BAND_CLOSE)), "亲密", "close 中文标签")
+
+
+## 一桩事件：满足前置 -> 按 delta 落账、档位随好感移位、改了 world.player_relations。
+func _test_b3_comer_event_apply() -> void:
+	var world: WorldState = _b3_world()
+	var avatar: PlayerAvatar = _b3_avatar()
+	# 李白：陪酒（needCha:30，满足）恰给 +10
+	var r1: Dictionary = ComerFavor.apply_event(world, avatar, "comer_taibai", "sit_drink")
+	_check(bool(r1.get("ok", false)) and bool(r1.get("applied", false)), "陪酒落账")
+	_eq(int(r1.get("after", -1)), 10, "陪酒好感 +10")
+	# 再点一次「告辞」（delta 0）：好感不变。
+	var r2: Dictionary = ComerFavor.apply_event(world, avatar, "comer_taibai", "part_ways")
+	_check(not bool(r2.get("applied", false)) or int(r2.get("after", -1)) == 10, "告辞不加减（delta 0）")
+	# 连前缀不满足的事件：进场前好感不足，留给前置闸去拦；这里只看 deha 落账口径。
+	comer_set_aff(world, "comer_taibai", 30)
+	var r3: Dictionary = ComerFavor.apply_event(world, avatar, "comer_taibai", "spar_hurt")
+	_eq(int(r3.get("after", -1)), 10, "下狠手 -20（从 30 落到 10）")
+
+
+## 前置闸：属性/技能够才给好感，不够就不落账（返回 ok=false、applied=false）。
+func _test_b3_comer_prereq_gate() -> void:
+	var world: WorldState = _b3_world()
+	# 青玄「出手扶他」needSoulOrAlchemy:30 —— 灵魂或炼金够才给。
+	var a_soul: PlayerAvatar = _b3_avatar({})
+	var r_soul: Dictionary = ComerFavor.apply_event(world, a_soul, "comer_qingxuan", "help_stabilize")
+	_check(bool(r_soul.get("ok", false)), "灵魂 40/炼金 40 够 30 -> 好感可落")
+	var a_weak: PlayerAvatar = _b3_avatar({PlayerAvatar.ATTR_SOUL: 0})
+	a_weak.skills = {}
+	var r_weak: Dictionary = ComerFavor.apply_event(world, a_weak, "comer_qingxuan", "help_stabilize")
+	_check(not bool(r_weak.get("ok", false)) and not bool(r_weak.get("applied", false)), "灵魂/炼金都不够 -> 不落账")
+	_eq(int(r_weak.get("after", -1)), int(r_weak.get("before", -2)), "不落账好感不变")
+	# 卢克「心怀正义地切磋」needKarma:0 —— 善恶 ≥ 0 即可。
+	var a_karma: PlayerAvatar = _b3_avatar({})
+	a_karma.karma = 10
+	var r_karma: Dictionary = ComerFavor.apply_event(world, a_karma, "comer_luke", "spar_just")
+	_check(bool(r_karma.get("ok", false)) and bool(r_karma.get("applied", false)), "善恶 10>=0 -> 正义切磋落账")
+	var a_karma_bad: PlayerAvatar = _b3_avatar({})
+	a_karma_bad.karma = -10
+	var r_kb: Dictionary = ComerFavor.apply_event(world, a_karma_bad, "comer_luke", "spar_just")
+	_check(not bool(r_kb.get("applied", false)), "善恶 -10<0 -> 下不了黑手给好感")
+	# 乔峰「豪饮」needStrOrCha:40 —— 力量或魅力够才给。
+	var a_str: PlayerAvatar = _b3_avatar({PlayerAvatar.ATTR_STRENGTH: 60, PlayerAvatar.ATTR_CHARISMA: 10})
+	var r_str: Dictionary = ComerFavor.apply_event(world, a_str, "comer_qiaofeng", "drink_bold")
+	_check(bool(r_str.get("ok", false)), "力量 60 够 40 -> 豪饮落账")
+
+
+## 招募判定接口：好感到阈值才 ready；不足给"还欠 N 点"的档文案来源。
+func _test_b3_comer_recruit_ready() -> void:
+	var world: WorldState = _b3_world()
+	_check(not ComerFavor.recruit_ready(world, "comer_taibai"), "未见不ready")
+	comer_set_aff(world, "comer_taibai", int(ContentLoader.get_comer("comer_taibai").get("recruitThreshold", 0)) - 1)
+	_check(not ComerFavor.recruit_ready(world, "comer_taibai"), "差 1 还不ready")
+	comer_set_aff(world, "comer_taibai", int(ContentLoader.get_comer("comer_taibai").get("recruitThreshold", 0)))
+	_check(ComerFavor.recruit_ready(world, "comer_taibai"), "到阈值 ready")
+	_check(ComerFavor.recruit_threshold("comer_taibai") > 0, "招募阈值从数据读")
+
+
+## 文风闸：全部乱入者的招呼（四档）拼起来过 A1 的 MenuStyle；台词不过闸会被拦。
+func _test_b3_comer_style_gate() -> void:
+	var all_lines: Array = []
+	for comer in ContentLoader.get_comers():
+		var g: Dictionary = comer.get("greetings", {})
+		all_lines.append(str(g.get("cold", "")))
+		all_lines.append(str(g.get("neutral", "")))
+		all_lines.append(str(g.get("friendly", "")))
+		all_lines.append(str(g.get("close", "")))
+	_check(all_lines.size() >= 32, "8 位 × 四档招呼 ≥ 32 句")
+	var audit: Dictionary = MenuStyle.audit("\n".join(PackedStringArray(all_lines)), 80)
+	_check((audit["flags"] as Array).is_empty(), "乱入者四档招呼无套路腔 flag")
+
+
+## 便捷：写好感并断言（含钳制）。
+func _comer_set_and_check(world: WorldState, cid: String, val: int, expect: int, label: String) -> void:
+	ComerFavor.set_affinity(world, cid, val)
+	_eq(ComerFavor.affinity(world, cid), expect, label)
+
+
+func comer_set_aff(world: WorldState, cid: String, val: int) -> void:
+	ComerFavor.set_affinity(world, cid, val)
 

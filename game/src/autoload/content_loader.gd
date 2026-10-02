@@ -30,6 +30,7 @@ const PERSONALITY_FILE: String = "personality.json"
 const GOD_FILE: String = "gods.json"
 const RUMOR_FILE: String = "rumors.json"
 const WEATHER_FILE: String = "weather.json"
+const COMER_FILE: String = "comers.json"
 
 ## 允许的城市六维范围，由 balance.json 覆盖
 const DEFAULT_DIM_MIN: int = 0
@@ -111,6 +112,7 @@ var _faiths: Dictionary = {}
 var _gods: Dictionary = {}
 var _weather: Dictionary = {}
 var _rumors: Dictionary = {}
+var _comers: Dictionary = {}
 var _errors: Array[String] = []
 var _warnings: Array[String] = []
 var _loaded: bool = false
@@ -290,6 +292,13 @@ func load_all() -> Dictionary:
 	else:
 		_errors.append("天候配置为空或读取失败")
 
+	var comer_root: Dictionary = _read_json(COMER_FILE, "乱入者配置")
+	if not comer_root.is_empty():
+		_validate_comers(comer_root)
+		_comers = comer_root
+	else:
+		_errors.append("乱入者配置为空或读取失败")
+
 	_loaded = _errors.is_empty()
 	return {
 		"ok": _loaded,
@@ -313,6 +322,7 @@ func load_all() -> Dictionary:
 			"hiddenEvents": _hidden_events.get("events", []).size(),
 			"personalities": _personalities.get("personalities", []).size(),
 			"faiths": _personalities.get("faiths", []).size(),
+			"comers": _comers.get("comers", []).size(),
 		},
 		"errors": _errors.duplicate(),
 		"warnings": _warnings.duplicate(),
@@ -896,6 +906,24 @@ func get_weather(weather_id: String) -> Dictionary:
 	return {}
 
 
+## 乱入者配置（第三阶段 B3 / D-187~D-188）。返回 comers.json 的根对象。
+func get_comer_config() -> Dictionary:
+	return _comers
+
+
+## 全部乱入者。ComerFavor 规则层与主场景相遇入口读取。
+func get_comers() -> Array:
+	return _comers.get("comers", [])
+
+
+## 按 comerId 取一位乱入者；查不到给空字典。
+func get_comer(comer_id: String) -> Dictionary:
+	for entry in get_comers():
+		if str(entry.get("comerId", "")) == comer_id:
+			return entry
+	return {}
+
+
 ## 人格池校验（M18）。查的都是会"静默失效"的错：人格 id 重复、谈话文案缺项、
 ## 送礼口味引用了不存在的物品类别（category 写错 → 永远是"中立"）、语气档位名
 ## 与好感档位对不上。信仰更简单，只查 id 唯一。
@@ -1077,6 +1105,84 @@ func _validate_weather(root: Dictionary) -> void:
 			_errors.append("天候 enemyMult 必须 ≥ 1：%s" % path)
 		if int(config.get("movementCost", 0)) < 0:
 			_errors.append("天候 movementCost 必须 ≥ 0：%s" % path)
+
+
+## 乱入者配置（第三阶段 B3，D-187~D-188）。查会"静默失效"的错：
+## comerId 重复、meetCity 写错（相遇入口永远找不到人）、recruitThreshold 落在好感区间
+## [0,100] 外（招募接口永远/永不成立）、greetings 四档不齐（某档位回应落空）、
+## 事件表为空或 eventId 重复（好感永远攒不起来）、delta 越界 [-100,100]（好感一步跳到头）。meetCity
+## 以 cities.json 为准；前置属性判定在 ComerFavor 里会对不认识的属性一律判失败，
+## 所以这里不逐个校验前置字段名。
+func _validate_comers(root: Dictionary) -> void:
+	var list: Variant = root.get("comers", null)
+	if not (list is Array) or (list as Array).is_empty():
+		_errors.append("乱入者配置缺少非空的 comers 数组")
+		return
+	var city_ids: Dictionary = {}
+	for city in get_city_configs():
+		city_ids[str(city.get("cityId", ""))] = true
+	var seen: Dictionary = {}
+	var band_keys: Array = ["cold", "neutral", "friendly", "close"]
+	for i in range((list as Array).size()):
+		var path: String = "comers[%d]" % i
+		var entry: Variant = (list as Array)[i]
+		if not (entry is Dictionary):
+			_errors.append("乱入者 %s 必须是对象" % path)
+			continue
+		var config: Dictionary = entry
+		var cid: String = str(config.get("comerId", ""))
+		if cid.is_empty():
+			_errors.append("乱入者缺少字段：%s.comerId" % path)
+		elif seen.has(cid):
+			_errors.append("乱入者 comerId 重复：%s" % cid)
+		else:
+			seen[cid] = true
+			path = "comers[%s]" % cid
+		if str(config.get("displayName", "")).is_empty():
+			_errors.append("乱入者缺少字段：%s.displayName" % path)
+		var meet: String = str(config.get("meetCity", ""))
+		if meet.is_empty():
+			_errors.append("乱入者缺少相遇城：%s.meetCity" % path)
+		elif not city_ids.has(meet):
+			_errors.append("乱入者相遇城不在 cities.json：%s.meetCity=%s" % [path, meet])
+		var thr: int = int(config.get("recruitThreshold", -1))
+		if thr < 0 or thr > 100:
+			_errors.append("乱入者招募阈值越界 [0,100]：%s.recruitThreshold=%d" % [path, thr])
+		var greetings: Variant = config.get("greetings", null)
+		if not (greetings is Dictionary):
+			_errors.append("乱入者缺少 greetings：%s" % path)
+		else:
+			for band in band_keys:
+				if not (greetings as Dictionary).has(band):
+					_errors.append("乱入者 greetings 缺档：%s.greetings.%s" % [path, band])
+		var events: Variant = config.get("events", null)
+		if not (events is Array) or (events as Array).is_empty():
+			_errors.append("乱入者好感事件表为空：%s.events" % path)
+		else:
+			var seen_e: Dictionary = {}
+			for j in range((events as Array).size()):
+				var epath: String = "%s.events[%d]" % [path, j]
+				var ev: Variant = (events as Array)[j]
+				if not (ev is Dictionary):
+					_errors.append("好感事件 %s 必须是对象" % epath)
+					continue
+				var eid: String = str((ev as Dictionary).get("eventId", ""))
+				if eid.is_empty():
+					_errors.append("好感事件缺少字段：%s.eventId" % epath)
+				elif seen_e.has(eid):
+					_errors.append("好感事件 eventId 重复：%s" % eid)
+				else:
+					seen_e[eid] = true
+				if str((ev as Dictionary).get("desc", "")).is_empty():
+					_errors.append("好感事件缺少描述：%s.desc" % epath)
+				var delta: int = int((ev as Dictionary).get("delta", 0))
+				if delta < -100 or delta > 100:
+					_errors.append("好感事件 delta 越界 [-100,100]：%s" % epath)
+				var reply: Variant = (ev as Dictionary).get("reply", null)
+				var reply_ok: bool = (reply is String and not (reply as String).is_empty()) \
+					or (reply is Array and not (reply as Array).is_empty())
+				if not reply_ok:
+					_errors.append("好感事件缺少非空 reply（字符串或数组均可）：%s" % epath)
 
 
 ## 隐藏属性事件配置（M17，D-89~D-93）。

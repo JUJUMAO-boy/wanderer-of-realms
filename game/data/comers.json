@@ -1,0 +1,173 @@
+{
+  "_comment": "时空乱入者好感表（第三阶段 B3 / D-187~D-188）。乱入者是从异界跌进艾尔泽拉的旅人（《时空乱入角色图鉴》），他们不是 1600 名模拟居民、也不占冒险者名册——每位乱入者只在一座相遇城站着，走近能攀谈，好感按事件表落账。好感存进 world.player_relations 的 'comer_<id>' 键（复用 M18 的同一张表，好感受 world 落盘、随世界不随灵魂），档位沿用 M18 的 band 分界（hostile/cold/neutral/friendly/close）。本轮只做好感与『会回应』：按好感档位给不同台词、记事件流；招募判定只提供接口（recruitReady），入队/战斗/专属任务线留给后续。",
+  "comers": [
+    {
+      "comerId": "comer_taibai",
+      "displayName": "李白",
+      "archetype": "诗剑客",
+      "meetCity": "crossroad",
+      "meetPlace": "十字路酒馆",
+      "meetHint": "一个浑身酒气的剑客抱着酒坛，正对着一把剑喃喃自语。",
+      "recruitThreshold": 60,
+      "greetings": {
+        "cold": "李白（抬了抬眼皮）：『剑客的酒，一个人喝是苦的。你若只是想听苦，坐下也无妨。』",
+        "neutral": "李白：『来，陪我喝一杯。酒这东西，一个人喝是苦的，两个人喝……还是苦的，但至少有人听。』",
+        "friendly": "李白（眼底有了点热）：『你来了。酒温着，剑也闲着。』",
+        "close": "李白（难得不笑了）：『这世上有写不完的诗，也有喝不完的酒。能一起喝的人不多，你是其中一个。』"
+      },
+      "events": [
+        { "eventId": "sit_drink", "label": "坐下陪他喝酒", "desc": "需魅力或酒量，李白把这顿酒记在心里。", "delta": 10, "needCha": 30, "reply": "李白（仰头饮尽）：『好！喝酒的人，剑不会歪。』" },
+        { "eventId": "spar_restrained", "label": "切磋，点到为止", "desc": "不重伤他，只较量个分寸。", "delta": 20, "reply": "李白（收剑大笑）：『好！你的剑，有分寸。』" },
+        { "eventId": "spar_hurt", "label": "切磋，下狠手", "desc": "把这场切磋打出血来。", "delta": -20, "reply": "李白（收剑）：『你的剑没有分寸。酒可以再喝，剑不能再比。』" },
+        { "eventId": "spar_yield", "label": "切磋，主动认输", "desc": "诚实也是剑客的剑。", "delta": 10, "reply": "李白：『诚实也是剑客的剑。』" },
+        { "eventId": "part_ways", "label": "告辞", "desc": "转身离开酒馆。", "delta": 0, "reply": "李白也不恼，仰头饮尽杯中酒：『江湖路远，你我总会再见。到时，再喝一杯。』" }
+      ]
+    },
+    {
+      "comerId": "comer_qingxuan",
+      "displayName": "青玄",
+      "archetype": "御剑修士",
+      "meetCity": "silvermoon_spire",
+      "meetPlace": "银月塔月相天文台",
+      "meetHint": "一名青袍修士从雷光中跌出，周身灵气紊乱，却仍挺直腰背。",
+      "recruitThreshold": 55,
+      "greetings": {
+        "cold": "青玄（咳血仍不抬头）：『渡劫之人的狼狈，不必围观。』",
+        "neutral": "青玄：『此地……不是我的渡劫之地。我怎会坠落到此？』",
+        "friendly": "青玄（神色缓了缓）：『你又来了。修行路上能有个说话的人，是福分。』",
+        "close": "青玄：『剑已重铸，修为暂稳。若要寻路回我的世界，渡我的劫，你可愿同行？』"
+      },
+      "events": [
+        { "eventId": "help_stabilize", "label": "出手扶他", "desc": "以灵魂系或炼金手段稳住他的气息。", "delta": 10, "needSoulOrAlchemy": 30, "reply": "青玄（颔首）：『多谢。这一扶，我记下了。』" },
+        { "eventId": "ask_origin", "label": "询问他的来历", "desc": "听他讲渡劫失败、修为跌回筑基。", "delta": 2, "reply": "青玄（苦笑着简述）：『渡劫失败，修为跌回筑基。连本命飞剑都碎了。』" },
+        { "eventId": "seek_sword", "label": "助他寻回飞剑碎片", "desc": "寻回七片中的一部分，剑还没重铸。", "delta": 10, "reply": "青玄（看着你带回来的碎片）：『还差几片……你肯为这把剑奔走，我记在心里。』" },
+        { "eventId": "restore_sword", "label": "助他集齐七片飞剑", "desc": "集齐全部碎片，让他重铸本命飞剑。", "delta": 30, "reply": "青玄（重铸飞剑，长揖到地）：『剑已重铸。这份情，我以道心相记。』" },
+        { "eventId": "steal_shards", "label": "私藏剑片", "desc": "把碎片昧下几片。", "delta": -30, "reply": "青玄（目光骤冷）：『剑，是剑修的命。你偷我的命，还想与我同行？』" }
+      ]
+    },
+    {
+      "comerId": "comer_wastrel",
+      "displayName": "荒诞来客",
+      "archetype": "主角候补",
+      "meetCity": "greenwade",
+      "meetPlace": "绿荫精灵王庭前",
+      "meetHint": "一个穿着奇怪、说话跳脱的家伙从树洞里滚了出来。",
+      "recruitThreshold": 50,
+      "greetings": {
+        "cold": "荒诞来客（警惕地看你）：『你……你是反派派来的吧？别想抢我的主角光环！』",
+        "neutral": "荒诞来客（揉着头）：『疼疼疼……等等，这里不是我的世界！作者！作者你在吗！』",
+        "friendly": "荒诞来客（眼睛一亮）：『你来啦！我正缺个搭戏的。』",
+        "close": "荒诞来客（一本正经）：『我决定了！你就是我的新作者！走，一起去寻找主线！』"
+      },
+      "events": [
+        { "eventId": "find_halo", "label": "帮他找『丢失的主角光环』", "desc": "照办这桩离谱差事。", "delta": 10, "reply": "荒诞来客（感动得不行）：『我就知道！主角光环一定能找回来！』" },
+        { "eventId": "refuse_halo", "label": "拒绝这桩离谱差事", "desc": "谁会把这种东西当真。", "delta": -5, "reply": "荒诞来客（瘪嘴）：『哼，没有主角光环的主角，人生是残缺的！』" },
+        { "eventId": "act_revenge", "label": "陪他演『主角复仇戏』", "desc": "把普通农夫当魔王、把鸡当恶龙。", "delta": 15, "reply": "荒诞来客（入戏极深）：『看吧！正义终将战胜！……咳，台词怎么样？』" },
+        { "eventId": "ruin_revenge", "label": "拆台", "desc": "当场点破戏里的魔王是农夫。", "delta": -10, "reply": "荒诞来客（跳脚）：『你你你——戏都让你演砸了！』" },
+        { "eventId": "be_support", "label": "当他『拯救世界』时的配角", "desc": "接住他的独角戏。", "delta": 15, "reply": "荒诞来客（感动）：『配角是主角的翅膀！你就是我的翅膀！』" },
+        { "eventId": "decline_support", "label": "婉拒", "desc": "这戏谁接得住啊。", "delta": -5, "reply": "荒诞来客（失望）：『没有配角的主角……好孤独。』" }
+      ]
+    },
+    {
+      "comerId": "comer_bluecat",
+      "displayName": "圆手蓝猫",
+      "archetype": "四次元旅人",
+      "meetCity": "port_thorne",
+      "meetPlace": "索恩港一户人家的抽屉",
+      "meetHint": "一个圆滚滚的蓝色身影从抽屉里钻了出来，正四下找着什么。",
+      "recruitThreshold": 60,
+      "greetings": {
+        "cold": "圆手蓝猫（警惕地把口袋护住）：『你……你不会是来抢我口袋的吧？』",
+        "neutral": "圆手蓝猫：『糟了糟了，时间坐标又错了……咦？我的口袋呢？』",
+        "friendly": "圆手蓝猫（松了口气）：『是你啊！吓我一跳，我还以为口袋又被顺走了。』",
+        "close": "圆手蓝猫（拍胸脯）：『有你在，老鼠什么的……也不是那么可怕了！』"
+      },
+      "events": [
+        { "eventId": "scare_mouse", "label": "帮他赶走老鼠", "desc": "关键好感事件。", "delta": 20, "reply": "圆手蓝猫（惊魂未定地抱住你）：『救命之恩！大恩大德！』" },
+        { "eventId": "mock_mouse", "label": "嘲笑他怕老鼠", "desc": "一只老鼠而已。", "delta": -10, "reply": "圆手蓝猫（鼓起脸）：『才、才不是怕！只是……只是老鼠太突然了！』" },
+        { "eventId": "find_pocket", "label": "助他找回四次元口袋", "desc": "帮他把散落的道具找回来。", "delta": 15, "reply": "圆手蓝猫（把口袋翻来覆去看）：『口袋找回来了！谢谢你！』" },
+        { "eventId": "ask_gadget", "label": "问他口袋里的宝贝", "desc": "听他说竹蜻蜓、空气炮、任意门。", "delta": 3, "reply": "圆手蓝猫（得意）：『我的口袋里什么都有！只要……呃，电池还有电的话。』" }
+      ]
+    },
+    {
+      "comerId": "comer_xiaoyan",
+      "displayName": "萧炎",
+      "archetype": "异火少年",
+      "meetCity": "red_sands",
+      "meetPlace": "赤沙沙漠深处",
+      "meetHint": "一名少年从丹劫余烬中走出，周身缠绕着灼人的火焰。",
+      "recruitThreshold": 55,
+      "greetings": {
+        "cold": "萧炎（戒备地压着火焰）：『这地方的火焰，有点奇怪。你最好离远点。』",
+        "neutral": "萧炎：『这地方的火焰……好像被什么污染了。』",
+        "friendly": "萧炎（火焰温和了些）：『是你。这沙海里的火，认得你了。』",
+        "close": "萧炎：『火焰里的灼痕，我要查清楚。你要不要一起？』"
+      },
+      "events": [
+        { "eventId": "hunt_together", "label": "并肩讨伐火魔物", "desc": "深入赤沙，讨伐被污染的火属性魔物。", "delta": 25, "needFireOrForge": 30, "reply": "萧炎（看着魔物余烬里的灼痕）：『火焰里的灼痕……这笔账，我记下了。』" },
+        { "eventId": "hunt_alone", "label": "让萧炎独自面对", "desc": "他自己去了，受了伤但成了。", "delta": 5, "reply": "萧炎（擦着嘴角的血）：『我应付得来。不过……谢谢你还等着。』" },
+        { "eventId": "hoard_material", "label": "私吞异火材料", "desc": "把炼化异火的那味材料昧下。", "delta": -30, "reply": "萧炎（掌心火焰骤然一盛，又缓缓压下）：『修行之路，最忌贪字。你我道不同，不相为谋。』" }
+      ]
+    },
+    {
+      "comerId": "comer_luke",
+      "displayName": "卢克",
+      "archetype": "持光剑的游侠",
+      "meetCity": "silvermoon_spire",
+      "meetPlace": "银月塔月相天文台",
+      "meetHint": "一道光柱落下，一名手持光剑的年轻人走出，神色平静。",
+      "recruitThreshold": 60,
+      "greetings": {
+        "cold": "卢克（平静地按着光剑）：『你身上的力量，带着阴影。』",
+        "neutral": "卢克：『这里……不是我熟知的地方。但原力在这里也很强烈。』",
+        "friendly": "卢克（微微颔首）：『你的心，比上次明亮了些。』",
+        "close": "卢克：『这个世界的灵魂系魔法，与我的原力如此相似。你愿意与我一起寻找答案吗？』"
+      },
+      "events": [
+        { "eventId": "spar_just", "label": "心怀正义地切磋", "desc": "以光剑较量，不使恶意。", "delta": 25, "needKarma": 0, "reply": "卢克（收起光剑）：『你的剑里有光。我看到了。』" },
+        { "eventId": "spar_malice", "label": "下狠手", "desc": "让恶意在剑光里露出来。", "delta": -20, "reply": "卢克（眼神平静而失望）：『力量若被用来试探恶意，就已偏离了它本来的路。』" },
+        { "eventId": "spar_yield", "label": "主动认输", "desc": "承认自己的限度。", "delta": 10, "reply": "卢克：『承认自己的限度，也是勇气。』" }
+      ]
+    },
+    {
+      "comerId": "comer_qiaofeng",
+      "displayName": "乔峰",
+      "archetype": "北境豪侠",
+      "meetCity": "frostspeak_keep",
+      "meetPlace": "霜语堡北境雪原",
+      "meetHint": "一名大汉踏雪而来，掌风如龙，正在雪原上寻着什么。",
+      "recruitThreshold": 65,
+      "greetings": {
+        "cold": "乔峰（打量你一眼）：『江湖中人？还是先报个字号。』",
+        "neutral": "乔峰：『阁下可见过一个……不，算了。看你也是江湖中人，可愿陪我喝一碗？』",
+        "friendly": "乔峰（大笑）：『好酒！好汉！这朋友，我乔峰认了。』",
+        "close": "乔峰（放下酒碗，正色）：『我乔峰平生最重一个『义』字。你既已与我共饮，便是我乔峰的兄弟。』"
+      },
+      "events": [
+        { "eventId": "drink_bold", "label": "一饮而尽，豪爽相待", "desc": "需力量或魅力够豪迈。", "delta": 30, "needStrOrCha": 40, "reply": "乔峰（大笑，酒碗一磕）：『痛快！这天下，能痛快喝酒的人不多。你算一个！』" },
+        { "eventId": "decline_wine", "label": "婉拒酒，说明理由", "desc": "有理由，乔峰理解。", "delta": 10, "reply": "乔峰（点头）：『不勉强。有苦衷的婉拒，是聪明，不是懦弱。』" },
+        { "eventId": "pretend", "label": "扭捏作态", "desc": "端起架子，把酒推来推去。", "delta": -15, "reply": "乔峰（皱眉）：『江湖儿女，何必做作？』" }
+      ]
+    },
+    {
+      "comerId": "comer_tsubasa",
+      "displayName": "大空翼",
+      "archetype": "追球的少年",
+      "meetCity": "greenwade",
+      "meetPlace": "绿荫精灵王庭前",
+      "meetHint": "一颗足球从界缝飞出，一个追着球的少年冲了出来。",
+      "recruitThreshold": 50,
+      "greetings": {
+        "cold": "大空翼（抱着球，有点戒备）：『你是来踢球的，还是来抢球的？』",
+        "neutral": "大空翼（喘着气）：『呼……呼……这是哪里？不管了！足球滚到哪，我就在哪踢！』",
+        "friendly": "大空翼（眼睛发亮）：『你来得正好！陪我再踢一场！』",
+        "close": "大空翼：『我想在这个世界推广足球！让所有人都踢上球！你愿意当我的第一个队友吗？』"
+      },
+      "events": [
+        { "eventId": "play_kick", "label": "陪他踢一场球", "desc": "无论输赢，他都乐在其中。", "delta": 20, "reply": "大空翼（大汗淋漓却咧嘴笑）：『痛快！这才是足球！』" },
+        { "eventId": "play_win", "label": "认真踢并赢他", "desc": "堂堂正正赢下这场球。", "delta": 25, "reply": "大空翼（眼睛发亮）：『你很强！我们组队吧！』" },
+        { "eventId": "refuse_play", "label": "拒绝", "desc": "今天不想踢球。", "delta": 0, "reply": "大空翼（失望但尊重）：『那……下次？』" }
+      ]
+    }
+  ]
+}
